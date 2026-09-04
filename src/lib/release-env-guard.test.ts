@@ -421,10 +421,13 @@ describe('빌드 환경 점검 · G. 빌드 연결', () => {
 
   it('기존 명령이 그대로 남아 있다', () => {
     assert.equal(PACKAGE_JSON.scripts.start, 'expo start');
+    // 화면 테스트가 생기면서 test가 둘로 나뉘었다.
+    // 나뉘었을 뿐 기존 Node 명령은 글자 하나 바뀌지 않아야 한다.
     assert.equal(
-      PACKAGE_JSON.scripts.test,
+      PACKAGE_JSON.scripts['test:logic'],
       'node --test "src/lib/*.test.ts" "supabase/functions/**/*.test.ts"',
     );
+    assert.equal(PACKAGE_JSON.scripts.test, 'npm run test:logic && npm run test:ui');
     assert.equal(PACKAGE_JSON.scripts.ios, 'expo start --ios');
     assert.equal(PACKAGE_JSON.scripts.android, 'expo start --android');
     assert.equal(PACKAGE_JSON.scripts.web, 'expo start --web');
