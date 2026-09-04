@@ -8,9 +8,11 @@
     "scheme": "aroeda",
     "userInterfaceStyle": "automatic",
     "ios": {
+      "bundleIdentifier": "com.aroeda.app",
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.aroeda.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
