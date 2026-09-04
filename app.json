@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "아뢰다",
+    "slug": "aroeda",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": "aroeda",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"

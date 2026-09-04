@@ -31,7 +31,11 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
+.env.*
 .env*.local
+# 예시 파일은 실제 값이 없으므로 예외로 둡니다 (여기에 진짜 키를 적지 마세요)
+!.env.example
 
 # typescript
 *.tsbuildinfo
