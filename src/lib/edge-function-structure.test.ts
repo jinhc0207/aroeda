@@ -360,12 +360,28 @@ describe('Retry-After 계산 규칙 (SQL)', () => {
 });
 
 describe('Coverage Gap Collector', () => {
+  /**
+   * 통계 표를 만든 migration 하나만 읽는다.
+   *
+   * 예전에는 migrations 폴더의 모든 SQL을 이어 붙여서 봤다.
+   * 그런데 "통계 표에 사용자 정보가 없다"를 확인할 때
+   * 표 이름이 처음 나온 자리부터 이어 붙인 글의 맨 끝까지를 그 표의 것으로 보았다.
+   *
+   * 그래서 뒤에 오는 다른 migration이 통계와 아무 상관 없이
+   * user_id나 auth.uid()를 쓰면 통계 표의 잘못으로 잡혔다.
+   *
+   * 파일 이름으로 찾지 않는다. 그 표를 실제로 만든 SQL이 있는 파일을 찾는다.
+   * 이름은 바뀔 수 있지만 무엇을 만드는지는 바뀌지 않는다.
+   */
   const migrationSql = () => {
     const dir = path.join(projectRoot, 'supabase/migrations');
-    return readdirSync(dir)
+    const files = readdirSync(dir)
       .filter((name) => name.endsWith('.sql'))
       .map((name) => readFileSync(path.join(dir, name), 'utf8'))
-      .join('\n');
+      .filter((sql) => /create table (if not exists )?private\.coverage_gap_daily/.test(sql));
+
+    assert.equal(files.length, 1, '통계 표를 만든 migration이 하나가 아닙니다.');
+    return files[0] as string;
   };
 
   it('기록 가능한 영역은 기존 uncovered 정의 8개뿐이다', () => {
