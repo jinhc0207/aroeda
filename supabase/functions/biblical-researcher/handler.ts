@@ -30,9 +30,13 @@
  *   앞 단계를 다시 돌리지 않는다.
  *
  * DB에 대해:
- *   하는 일은 하나뿐이다. 꾸러미를 한 번 꺼내는 것.
- *   적어 두는 일은 자료 수집 단계의 몫이다. 여기서 하지 않는다.
+ *   하는 일은 둘이다. 꾸러미를 한 번 꺼내고, 연구 결과를 한 번 적는다.
+ *   꾸러미를 적어 두는 일은 자료 수집 단계의 몫이다. 여기서 하지 않는다.
  *   이 파일 자체는 DB에 닿지 않는다. 실제 연결은 index.ts에 있다.
+ *
+ *   적히지 않으면 성공이 아니다.
+ *   연구는 됐는데 남지 않은 결과는 이 응답과 함께 사라진다.
+ *   그것을 연구 완료라고 부르면, 나중에 아무도 그 말을 검수할 수 없다.
  *
  * 브라우저에서 부르는 기능이 아니므로 CORS 헤더를 붙이지 않는다.
  * POST가 아닌 요청(OPTIONS 포함)은 모두 거절한다.
@@ -53,6 +57,11 @@ import {
   executeBiblicalResearchRuntime,
   type BiblicalResearchResponsesTransport,
 } from '../_shared/biblical-researcher-runtime-contract.ts';
+import {
+  buildResearchResultProvenance,
+  storeBiblicalResearchResult,
+  type ResearchResultStoreRpc,
+} from '../_shared/research-result-store.ts';
 import type { BiblicalResearchResult } from '../_shared/biblical-researcher.ts';
 
 export type ErrorCode =
@@ -126,6 +135,11 @@ export type HandlerDeps = {
    * 요청당 최대 한 번 불린다. 없으면 꺼낼 수 없는 것으로 보고 끝낸다.
    */
   consumeHandoff?: BiblicalResearchHandoffRpc;
+  /**
+   * 연구 결과를 적어 두는 표 함수를 부른다. 적어 두기 하나뿐이다.
+   * 요청당 최대 한 번 불린다. 없으면 꾸러미를 꺼내기 전에 멈춘다.
+   */
+  storeResearchResult?: ResearchResultStoreRpc;
   /** 이유 코드만 남긴다. 번호, 꾸러미, 원본 응답은 남기지 않는다. */
   log?: (message: string) => void;
   requestId?: () => string;
@@ -185,6 +199,15 @@ export async function handleBiblicalResearch(
       return fail('RESEARCH_HANDOFF_STORE_UNAVAILABLE', 503);
     }
 
+    // 적어 둘 곳이 없으면 시작하지 않는다.
+    //
+    // API Key를 먼저 보는 것과 같은 이유다. 꾸러미는 한 번 꺼내면 사라진다.
+    // 연구를 마치고도 적지 못할 것이 뻔한데 멀쩡한 번호를 태울 이유가 없다.
+    if (!deps.storeResearchResult) {
+      log(`[${requestId}] research_result_store_not_configured`);
+      return fail('BIBLICAL_RESEARCH_FAILED', 503);
+    }
+
     // 7~8. 지금 카드가 다루는 영역은 서버가 정한다. 부르는 쪽에서 받지 않는다.
     let currentActiveCoveredHash: string;
     try {
@@ -231,7 +254,29 @@ export async function handleBiblicalResearch(
       return jsonResponse({ ok: false, error: 'BIBLICAL_RESEARCH_FAILED' }, 503);
     }
 
-    // 14. 나가는 것은 연구 결과뿐이다. 번호도 꾸러미도 함께 나가지 않는다.
+    // 14. 결과를 적어 둔다. 정확히 한 번. 다시 부르지 않는다.
+    //
+    // 오래 남길 근거는 꾸러미에서 필요한 것만 골라 담는다.
+    // 꾸러미 자체는 이미 사라졌고, 되살리지 않는다.
+    const stored = await storeBiblicalResearchResult({
+      result: outcome.result,
+      provenance: buildResearchResultProvenance(checked.handoff),
+      rpc: deps.storeResearchResult,
+    });
+
+    // 15. 적히지 않았으면 끝난 것이 아니다.
+    //
+    // 연구는 됐는데 남지 않았다면 그 결과는 이 응답과 함께 사라진다.
+    // 사람이 검수할 수도, 무엇을 보고 나온 말인지 물을 수도 없게 된다.
+    // 그런 것을 "연구 완료"라고 부르지 않는다.
+    //
+    // 왜 실패했는지는 서버 기록에만 남긴다. DB가 뭐라고 했는지 밖으로 옮기지 않는다.
+    if (!stored.ok) {
+      log(`[${requestId}] research_result_store_unavailable`);
+      return jsonResponse({ ok: false, error: 'BIBLICAL_RESEARCH_FAILED' }, 503);
+    }
+
+    // 16. 나가는 것은 연구 결과뿐이다. 번호도 꾸러미도 적힌 줄 번호도 함께 나가지 않는다.
     log(`[${requestId}] ready`);
     return jsonResponse({ ok: true, result: outcome.result }, 200);
   } catch {

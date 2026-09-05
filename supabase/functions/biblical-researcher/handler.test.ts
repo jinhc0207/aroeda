@@ -23,6 +23,11 @@ import {
   CREATE_BIBLICAL_RESEARCH_HANDOFF_RPC,
 } from '../_shared/biblical-research-handoff-store.ts';
 import {
+  STORE_BIBLICAL_RESEARCH_RESULT_RPC,
+  storeBiblicalResearchResult,
+} from '../_shared/research-result-store.ts';
+import { computeResearchResultHash } from '../_shared/research-result-store-contract.ts';
+import {
   buildBiblicalResearchHandoff,
   type BiblicalResearchHandoff,
 } from '../_shared/biblical-research-handoff.ts';
@@ -40,6 +45,8 @@ const stripComments = (source: string) =>
 const TOKEN = 'test-internal-token-not-real';
 const API_KEY = 'test-openai-key-not-real';
 const HANDOFF_ID = '3f2a1b4c-5d6e-4f70-8901-a2b3c4d5e6f7';
+/** 연구 결과를 적어 두면 표가 돌려주는 줄 번호. 시험용 값이다. */
+const STORED_RESULT_ID = '9a8b7c6d-5e4f-4012-b345-c6d7e8f90123';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const request = (options: { method?: string; token?: string | null; body?: unknown } = {}) => {
@@ -219,6 +226,12 @@ type Options = {
   consumeReturns?: unknown;
   /** 모델이 돌려주는 것. 기본은 올바른 답. */
   modelResult?: BiblicalResearchTransportResult;
+  /** 적어 두는 표 함수를 아예 주지 않는 경우. */
+  withoutStoreDep?: boolean;
+  /** 적어 두다가 터지는 경우. */
+  storeThrows?: boolean;
+  /** 적어 두기가 돌려주는 것. 기본은 올바른 줄 번호. */
+  storeReturns?: unknown;
 };
 
 const makeDeps = (options: Options = {}) => {
@@ -236,12 +249,27 @@ const makeDeps = (options: Options = {}) => {
     return 'consumeReturns' in options ? options.consumeReturns : STORED();
   };
 
+  const storeCallList: { functionName: string; params: Record<string, unknown> }[] = [];
+
+  const storeResearchResult = async (
+    functionName: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> => {
+    storeCallList.push({ functionName, params });
+    if (options.storeThrows) throw new Error('store_rpc_http_500');
+    return 'storeReturns' in options ? options.storeReturns : STORED_RESULT_ID;
+  };
+
   return {
     consumeCallList,
+    storeCallList,
     transportCalls,
     logged,
     get consumeCalls() {
       return consumeCallList.length;
+    },
+    get storeCalls() {
+      return storeCallList.length;
     },
     get modelCalls() {
       return transportCalls.length;
@@ -270,6 +298,7 @@ const makeDeps = (options: Options = {}) => {
         };
       },
       ...(options.withoutConsumeDep ? {} : { consumeHandoff }),
+      ...(options.withoutStoreDep ? {} : { storeResearchResult }),
       log: (message: string) => logged.push(message),
       requestId: () => 'testreq',
     },
@@ -750,12 +779,30 @@ describe('biblical-researcher · 바깥으로 나가는 길', () => {
     }
   });
 
-  it('DB로 가는 길은 꺼내 쓰기 하나뿐이다', () => {
+  it('DB로 가는 길은 꺼내 쓰기와 적어 두기 둘뿐이다', () => {
+    // 연구 결과를 적어 두는 길이 생겼다. 그래도 둘까지다.
     const paths = [...index.matchAll(/\/rest\/v1\/[a-z0-9_/]*/g)].map((match) => match[0]);
-    assert.deepEqual([...new Set(paths)], ['/rest/v1/rpc/consume_biblical_research_handoff']);
+    assert.deepEqual(
+      [...new Set(paths)].sort(),
+      [
+        '/rest/v1/rpc/consume_biblical_research_handoff',
+        '/rest/v1/rpc/store_biblical_research_result',
+      ],
+    );
     assert.ok(index.includes(`/rest/v1/rpc/${CONSUME_BIBLICAL_RESEARCH_HANDOFF_RPC}`));
+    assert.ok(index.includes(`/rest/v1/rpc/${STORE_BIBLICAL_RESEARCH_RESULT_RPC}`));
 
-    // 적어 두기는 자료 수집 단계의 몫이다.
+    // 연구 결과 표는 새로 적기만 한다. 읽는 길도 고치는 길도 만들지 않는다.
+    for (const banned of [
+      'get_research_result',
+      'list_research_result',
+      'update_research_result',
+      'delete_research_result',
+    ]) {
+      assert.equal(index.includes(banned), false, banned);
+    }
+
+    // 꾸러미를 적어 두기는 자료 수집 단계의 몫이다.
     assert.equal(index.includes(CREATE_BIBLICAL_RESEARCH_HANDOFF_RPC), false);
     assert.equal(handler.includes(CREATE_BIBLICAL_RESEARCH_HANDOFF_RPC), false);
 
@@ -801,10 +848,12 @@ describe('biblical-researcher · 바깥으로 나가는 길', () => {
   });
 
   it('기다리는 시간은 앞의 표들과 같다', () => {
-    assert.ok(index.includes('HANDOFF_RPC_TIMEOUT_MS = 5_000'));
-    // 꺼내기 5 + 모델 90 = 95초. 한도는 150초다.
-    assert.equal(5_000 + BIBLICAL_RESEARCH_MODEL_TIMEOUT_MS, 95_000);
-    assert.ok(95_000 < 150_000);
+    assert.ok(index.includes('RPC_TIMEOUT_MS = 5_000'));
+    // 표 함수 둘이 같은 값을 쓴다. 새 숫자를 만들지 않았다.
+    assert.equal((index.match(/RPC_TIMEOUT_MS = /g) ?? []).length, 1);
+    // 꺼내기 5 + 모델 90 + 적어 두기 5 = 100초. 한도는 150초다.
+    assert.equal(5_000 + BIBLICAL_RESEARCH_MODEL_TIMEOUT_MS + 5_000, 100_000);
+    assert.ok(100_000 < 150_000);
     // 다른 Edge Function을 가져다 쓰지 않는다.
     assert.equal(index.includes('source-harvester'), false);
     assert.equal(index.includes('research-prioritizer/'), false);
@@ -847,5 +896,197 @@ describe('biblical-researcher · 바깥으로 나가는 길', () => {
         assert.equal(source.includes(banned), false, banned);
       }
     }
+  });
+});
+
+/* ================================================================== */
+/* H. 적히지 않으면 끝난 것이 아니다                                    */
+/* ================================================================== */
+
+describe('biblical-researcher · 연구 결과 적어 두기', () => {
+  it('연구가 끝나면 정확히 한 번 적는다', async () => {
+    const { fake, parsed } = await run();
+
+    assert.equal(parsed.ok, true);
+    assert.equal(fake.storeCalls, 1);
+    assert.equal(fake.storeCallList[0]?.functionName, STORE_BIBLICAL_RESEARCH_RESULT_RPC);
+  });
+
+  it('보내는 값은 셋뿐이고 이름은 표 함수가 정한 그대로다', async () => {
+    const { fake } = await run();
+    const params = fake.storeCallList[0]?.params ?? {};
+
+    assert.deepEqual(Object.keys(params).sort(), ['p_provenance', 'p_result', 'p_result_hash']);
+  });
+
+  it('지문은 계약이 계산한 값 그대로다', async () => {
+    const { fake, parsed } = await run();
+    const params = fake.storeCallList[0]?.params ?? {};
+
+    // 여기서 다시 계산하지 않는다. 계약의 함수로 만든 값과 같아야 한다.
+    const expected = await computeResearchResultHash(
+      parsed.result as Parameters<typeof computeResearchResultHash>[0],
+    );
+    assert.equal(params.p_result_hash, expected);
+    assert.match(String(params.p_result_hash), /^rres_[0-9a-f]{64}$/);
+  });
+
+  it('적는 것은 응답으로 나가는 그 연구 결과다', async () => {
+    const { fake, parsed } = await run();
+    const params = fake.storeCallList[0]?.params ?? {};
+
+    // 응답과 저장이 다른 것이면 나중에 검수한 것과 사용자가 받은 것이 달라진다.
+    assert.deepEqual(params.p_result, parsed.result);
+  });
+
+  it('오래 남길 근거는 골라 담은 넷뿐이다', async () => {
+    const { fake } = await run();
+    const provenance = (fake.storeCallList[0]?.params.p_provenance ?? {}) as Record<
+      string,
+      unknown
+    >;
+
+    assert.deepEqual(Object.keys(provenance).sort(), [
+      'activeCoveredDomains',
+      'domainDescription',
+      'sourceUnresolvedQuestions',
+      'sources',
+    ]);
+  });
+
+  it('꾸러미를 통째로 옮기지 않는다', async () => {
+    const { fake } = await run();
+    const sent = JSON.stringify(fake.storeCallList[0]?.params ?? {});
+
+    // 사라지는 값과 한 번짜리 번호는 오래 남는 자리에 오면 안 된다.
+    for (const banned of [
+      'handoffId',
+      'expiresAt',
+      'decisionId',
+      'recoveryId',
+      'activeCoveredHash',
+      'relevanceNote',
+    ]) {
+      assert.equal(sent.includes(banned), false, banned);
+    }
+    assert.equal(sent.includes(HANDOFF_ID), false);
+  });
+
+  it('사용자 이야기와 게시용 문구는 오지 않는다', async () => {
+    const { fake } = await run();
+    const sent = JSON.stringify(fake.storeCallList[0]?.params ?? {});
+
+    // 항목 이름으로 본다. 조각으로 보면 안 된다.
+    // 영역 이름 중에 waiting_unanswered_prayer가 있어서, 'prayer'만 찾으면 멀쩡한 값이 걸린다.
+    for (const banned of [
+      'situation',
+      'prayer',
+      'prayerDraft',
+      'userId',
+      'authUserId',
+      'sessionId',
+      'userExplanation',
+      'prayerDirection',
+      'scriptureCardId',
+      'publishedAt',
+      'reviewedAt',
+    ]) {
+      assert.equal(sent.includes(`"${banned}":`), false, banned);
+    }
+  });
+
+  it('적힌 줄 번호는 응답에 나가지 않는다', async () => {
+    const { parsed, text } = await run();
+
+    assert.deepEqual(Object.keys(parsed).sort(), ['ok', 'result']);
+    assert.equal(text.includes(STORED_RESULT_ID), false);
+    assert.equal(text.includes('researchResultId'), false);
+    assert.equal(text.includes('resultHash'), false);
+    assert.equal(text.includes('provenance'), false);
+  });
+
+  it('적지 못하면 성공이 아니다', async () => {
+    const { fake, response, parsed, text } = await run({ storeThrows: true });
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(parsed, { ok: false, error: 'BIBLICAL_RESEARCH_FAILED' });
+
+    // 다시 부르지 않는다.
+    assert.equal(fake.storeCalls, 1);
+    // DB가 뭐라고 했는지 밖으로 옮기지 않는다.
+    assert.equal(text.includes('store_rpc_http_500'), false);
+    assert.equal(text.includes('500'), false);
+    // 어디에서 멈췄는지는 서버 기록에만 남는다.
+    assert.ok(fake.logged.some((line) => line.includes('research_result_store_unavailable')));
+  });
+
+  it('돌아온 값이 줄 번호가 아니면 성공이 아니다', async () => {
+    // 표가 이상한 것을 돌려줬을 때 "아마 됐겠지"로 넘기지 않는다.
+    for (const bad of [null, undefined, '', 'ok', 123, {}, ['x']]) {
+      const { response, parsed } = await run({ storeReturns: bad });
+      assert.equal(response.status, 503, JSON.stringify(bad));
+      assert.deepEqual(parsed, { ok: false, error: 'BIBLICAL_RESEARCH_FAILED' }, JSON.stringify(bad));
+    }
+  });
+
+  it('연구가 실패했으면 적으려 하지도 않는다', async () => {
+    const { fake, parsed } = await run({
+      modelResult: { ok: false, failure: 'model_transport_error' },
+    });
+
+    assert.equal(parsed.ok, false);
+    assert.equal(fake.storeCalls, 0);
+  });
+
+  it('적어 둘 곳이 없으면 꾸러미를 태우지 않는다', async () => {
+    // 꾸러미는 한 번 꺼내면 사라진다.
+    // 끝내도 적지 못할 것이 뻔한데 멀쩡한 번호를 쓰지 않는다.
+    const { fake, response, parsed } = await run({ withoutStoreDep: true });
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(parsed, { ok: false, error: 'BIBLICAL_RESEARCH_FAILED' });
+    assert.equal(fake.consumeCalls, 0);
+    assert.equal(fake.modelCalls, 0);
+    assert.ok(fake.logged.some((line) => line.includes('research_result_store_not_configured')));
+  });
+
+  it('보내도 되는 값이 아니면 표를 부르지 않는다', async () => {
+    // 표의 조건은 모양만 본다. 근거가 통째로 빠진 것은 보내기 전에 걸러야 한다.
+    const calls: { functionName: string; params: Record<string, unknown> }[] = [];
+
+    const stored = await storeBiblicalResearchResult({
+      result: {} as never,
+      provenance: {
+        domainDescription: '설명',
+        activeCoveredDomains: [],
+        // 근거를 통째로 빼면 나중에 번호가 가리킬 대상이 없어진다.
+        sources: [],
+        sourceUnresolvedQuestions: [],
+      },
+      rpc: async (functionName, params) => {
+        calls.push({ functionName, params });
+        return STORED_RESULT_ID;
+      },
+    });
+
+    assert.deepEqual(stored, { ok: false, failure: 'store_unavailable' });
+    // 표에 닿기 전에 멈춰야 한다.
+    assert.equal(calls.length, 0);
+  });
+
+  it('적어 두기 때문에 연구 방식이 바뀌지 않았다', async () => {
+    const { fake } = await run();
+
+    // 모델은 여전히 한 번만 부른다. 꾸러미도 한 번만 꺼낸다.
+    assert.equal(fake.modelCalls, 1);
+    assert.equal(fake.consumeCalls, 1);
+
+    // 지문 계산과 검사를 handler 안에서 다시 만들지 않았다.
+    const handlerSource = read('./handler.ts');
+    for (const banned of ['crypto.subtle', 'SHA-256', 'rres_', 'stableStringify']) {
+      assert.equal(handlerSource.includes(banned), false, banned);
+    }
+    assert.ok(handlerSource.includes('storeBiblicalResearchResult('));
+    assert.ok(handlerSource.includes('buildResearchResultProvenance('));
   });
 });
