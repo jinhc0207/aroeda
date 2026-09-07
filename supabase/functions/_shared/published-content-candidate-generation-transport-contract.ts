@@ -76,6 +76,10 @@ export const TRANSPORT_OUTCOMES = [
   'provider_unavailable',
   /** 그 밖의 문제. */
   'provider_error',
+  /** 모델이 답하기를 거절했다. 부르는 데 실패한 것이 아니다. */
+  'model_refusal',
+  /** 답이 오다 말았다. 끝까지 온 것이 아니다. */
+  'response_incomplete',
 ] as const;
 
 export type TransportOutcomeKind = (typeof TRANSPORT_OUTCOMES)[number];
@@ -88,6 +92,24 @@ export const PROVIDER_FAILURE_OUTCOMES = [
 ] as const;
 
 export type ProviderFailureKind = (typeof PROVIDER_FAILURE_OUTCOMES)[number];
+
+/**
+ * 모델은 닿았는데 쓸 답이 오지 않은 두 경우.
+ *
+ * 부르는 데 실패한 것이 아니라서 위의 셋과 다르다.
+ * 계약을 어긴 것도 아니라서 그것과도 다르다.
+ *
+ * 거절은 모델이 "이 요청에는 답하지 않겠다"고 한 것이다.
+ * 그것을 "연구 근거가 모자랍니다"로 적으면, 실제로는 요청 자체가 막힌 것인데
+ * 사람은 연구를 더 시키게 된다.
+ *
+ * 잘림은 답이 오다 만 것이다.
+ * 받은 데까지만 보고 넘기면 반쯤 쓰인 글이 통과할 수 있다.
+ * 그래서 여기서 끝낸다.
+ */
+export const MODEL_RESPONSE_OUTCOMES = ['model_refusal', 'response_incomplete'] as const;
+
+export type ModelResponseOutcomeKind = (typeof MODEL_RESPONSE_OUTCOMES)[number];
 
 type GenerateResponse = Extract<CandidateModelGenerationResponse, { decision: 'generate' }>;
 type DeferResponse = Extract<CandidateModelGenerationResponse, { decision: 'defer' }>;
@@ -106,7 +128,9 @@ export type CandidateGenerationTransportOutcome =
   | { outcome: 'response_contract_invalid'; errors: string[] }
   | { outcome: 'provider_timeout' }
   | { outcome: 'provider_unavailable' }
-  | { outcome: 'provider_error' };
+  | { outcome: 'provider_error' }
+  | { outcome: 'model_refusal' }
+  | { outcome: 'response_incomplete' };
 
 /**
  * 통과했다는 것이 글이 만들어졌다는 뜻은 아니다.
@@ -145,6 +169,10 @@ export const NO_SILENT_DOWNGRADE = {
   providerFailureBecomesDefer: false,
   providerFailureBecomesNeedsMoreResearch: false,
   deferTreatedAsFailure: false,
+  /** 모델이 답하기를 거절한 것은 연구가 부족한 것과 다르다. */
+  modelRefusalBecomesDefer: false,
+  /** 답이 오다 만 것도 연구가 부족한 것과 다르다. */
+  responseIncompleteBecomesDefer: false,
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -225,6 +253,10 @@ export const TRANSPORT_PERSISTENCE_POLICY = {
   promptIncludedInErrors: false,
   providerErrorUsedAsCandidateContent: false,
   providerErrorUsedAsDeferReason: false,
+  /** 거절할 때 모델이 적은 말도 남기지 않는다. 남기면 그 문장이 어딘가에 쓰이게 된다. */
+  rawRefusalPersisted: false,
+  refusalTextUsedAsCandidateContent: false,
+  refusalTextUsedAsDeferReason: false,
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -320,6 +352,22 @@ export function interpretCandidateGenerationTransportPayload(
  */
 export function createCandidateGenerationTransportFailure(
   kind: ProviderFailureKind,
+): CandidateGenerationTransportOutcome {
+  return { outcome: kind };
+}
+
+/**
+ * 모델은 닿았는데 쓸 답이 오지 않은 경우를 결과 하나로 만든다.
+ *
+ * 위의 것과 따로 둔 이유가 있다.
+ * 거절과 잘림은 부르는 데 실패한 것이 아니다. 모델이 답했고, 그 답이 쓸 수 없을 뿐이다.
+ * 같은 함수에 넣으면 그 차이가 이름에서 사라진다.
+ *
+ * 어떤 응답이 거절이고 어떤 것이 잘림인지는 앞으로 어댑터가 정한다.
+ * 여기서는 제공자가 무엇을 어떻게 알려 오는지 알지 못한다.
+ */
+export function createCandidateGenerationModelResponseOutcome(
+  kind: ModelResponseOutcomeKind,
 ): CandidateGenerationTransportOutcome {
   return { outcome: kind };
 }

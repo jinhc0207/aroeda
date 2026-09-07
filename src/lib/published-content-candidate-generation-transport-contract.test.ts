@@ -20,6 +20,7 @@ import { describe, it } from 'node:test';
 
 import {
   BUILDER_ELIGIBLE_OUTCOMES,
+  MODEL_RESPONSE_OUTCOMES,
   NO_SILENT_DOWNGRADE,
   PROVIDER_FAILURE_OUTCOMES,
   TRANSPORT_DOES_NOT_INCLUDE,
@@ -27,6 +28,7 @@ import {
   TRANSPORT_PERSISTENCE_POLICY,
   TRANSPORT_RUNTIME_CONFIG_POLICY,
   canInvokeCandidateBuilder,
+  createCandidateGenerationModelResponseOutcome,
   createCandidateGenerationTransportFailure,
   interpretCandidateGenerationTransportPayload,
   type CandidateGenerationTransportOutcome,
@@ -126,7 +128,7 @@ const read = (payload: unknown, input: CandidateModelGenerationInput = INPUT) =>
 /* ================================================================== */
 
 describe('모델 응답 수신 · A. 결과 종류', () => {
-  it('결과는 여덟 가지다', () => {
+  it('결과는 열 가지다', () => {
     assert.deepEqual(
       [...TRANSPORT_OUTCOMES],
       [
@@ -138,8 +140,26 @@ describe('모델 응답 수신 · A. 결과 종류', () => {
         'provider_timeout',
         'provider_unavailable',
         'provider_error',
+        'model_refusal',
+        'response_incomplete',
       ],
     );
+  });
+
+  it('먼저 있던 여덟은 이름이 그대로다', () => {
+    // 새 상태를 더하면서 기존 이름을 바꾸거나 지우지 않았다.
+    for (const kind of [
+      'validated_generate',
+      'validated_defer',
+      'empty_response',
+      'json_parse_failed',
+      'response_contract_invalid',
+      'provider_timeout',
+      'provider_unavailable',
+      'provider_error',
+    ]) {
+      assert.ok((TRANSPORT_OUTCOMES as readonly string[]).includes(kind), kind);
+    }
   });
 
   it('모델 쪽 문제는 셋이다', () => {
@@ -149,6 +169,15 @@ describe('모델 응답 수신 · A. 결과 종류', () => {
     );
     for (const kind of PROVIDER_FAILURE_OUTCOMES) {
       assert.ok((TRANSPORT_OUTCOMES as readonly string[]).includes(kind), kind);
+    }
+  });
+
+  it('닿았는데 쓸 답이 없는 경우는 둘이다', () => {
+    assert.deepEqual([...MODEL_RESPONSE_OUTCOMES], ['model_refusal', 'response_incomplete']);
+    for (const kind of MODEL_RESPONSE_OUTCOMES) {
+      assert.ok((TRANSPORT_OUTCOMES as readonly string[]).includes(kind), kind);
+      // 부르는 데 실패한 것이 아니므로 모델 쪽 문제 목록에는 들어가지 않는다.
+      assert.equal((PROVIDER_FAILURE_OUTCOMES as readonly string[]).includes(kind), false, kind);
     }
   });
 
@@ -385,6 +414,14 @@ describe('모델 응답 수신 · E. 모델 쪽 문제', () => {
     assert.equal(TRANSPORT_PERSISTENCE_POLICY.providerErrorUsedAsCandidateContent, false);
     assert.equal(TRANSPORT_PERSISTENCE_POLICY.providerErrorUsedAsDeferReason, false);
   });
+
+  it('결과에 담기는 것은 상태 이름뿐이다', () => {
+    // 오류 문구를 함께 담아 두면 그 문장이 어딘가에서 쓰이게 된다.
+    for (const kind of PROVIDER_FAILURE_OUTCOMES) {
+      const outcome = createCandidateGenerationTransportFailure(kind);
+      assert.deepEqual(Object.keys(outcome), ['outcome'], kind);
+    }
+  });
 });
 
 /* ================================================================== */
@@ -402,10 +439,130 @@ describe('모델 응답 수신 · F. 구분', () => {
       createCandidateGenerationTransportFailure('provider_timeout').outcome,
       createCandidateGenerationTransportFailure('provider_unavailable').outcome,
       createCandidateGenerationTransportFailure('provider_error').outcome,
+      createCandidateGenerationModelResponseOutcome('model_refusal').outcome,
+      createCandidateGenerationModelResponseOutcome('response_incomplete').outcome,
     ];
 
-    assert.equal(new Set(observed).size, 8);
+    assert.equal(new Set(observed).size, 10);
     assert.deepEqual(observed.sort(), [...TRANSPORT_OUTCOMES].sort());
+  });
+
+  it('섞이면 안 되는 여섯이 서로 다르다', () => {
+    const six = [
+      read(deferResponse()).outcome,
+      read('{').outcome,
+      read({ decision: 'skip' }).outcome,
+      createCandidateGenerationTransportFailure('provider_timeout').outcome,
+      createCandidateGenerationModelResponseOutcome('model_refusal').outcome,
+      createCandidateGenerationModelResponseOutcome('response_incomplete').outcome,
+    ];
+
+    assert.deepEqual(six, [
+      'validated_defer',
+      'json_parse_failed',
+      'response_contract_invalid',
+      'provider_timeout',
+      'model_refusal',
+      'response_incomplete',
+    ]);
+    assert.equal(new Set(six).size, 6);
+  });
+});
+
+/* ================================================================== */
+/* F-2. 모델이 답하기를 거절한 경우                                     */
+/* ================================================================== */
+
+describe('모델 응답 수신 · F-2. 거절', () => {
+  const refusal = createCandidateGenerationModelResponseOutcome('model_refusal');
+
+  it('따로 있는 상태다', () => {
+    assert.equal(refusal.outcome, 'model_refusal');
+  });
+
+  it('못 쓰겠다는 대답이 아니다', () => {
+    // 거절은 요청 자체에 답하지 않겠다는 것이고,
+    // 보류는 연구 근거를 보고 내린 판단이다. 사람에게 다르게 보여야 한다.
+    assert.notEqual(refusal.outcome, 'validated_defer');
+    assert.equal(JSON.stringify(refusal).includes(GENERATION_DEFER_REASONS[0] as string), false);
+    assert.equal(NO_SILENT_DOWNGRADE.modelRefusalBecomesDefer, false);
+  });
+
+  it('부르는 데 실패한 것이 아니다', () => {
+    assert.notEqual(refusal.outcome, 'provider_error');
+    assert.notEqual(refusal.outcome, 'provider_unavailable');
+    assert.notEqual(refusal.outcome, 'provider_timeout');
+  });
+
+  it('계약을 어긴 것도 아니다', () => {
+    assert.notEqual(refusal.outcome, 'response_contract_invalid');
+    assert.notEqual(refusal.outcome, 'json_parse_failed');
+  });
+
+  it('조립으로 넘어가지 않는다', () => {
+    assert.equal(canInvokeCandidateBuilder(refusal), false);
+  });
+
+  it('다시 부르지 않는다', () => {
+    assert.equal(TRANSPORT_RUNTIME_CONFIG_POLICY.automaticRetries, 0);
+    assert.equal(TRANSPORT_RUNTIME_CONFIG_POLICY.fallbackModelAllowed, false);
+  });
+
+  it('거절하며 적은 말을 남기지 않는다', () => {
+    assert.equal(TRANSPORT_PERSISTENCE_POLICY.rawRefusalPersisted, false);
+    assert.equal(TRANSPORT_PERSISTENCE_POLICY.refusalTextUsedAsCandidateContent, false);
+    assert.equal(TRANSPORT_PERSISTENCE_POLICY.refusalTextUsedAsDeferReason, false);
+
+    // 결과에 담기는 것은 상태 이름뿐이다.
+    assert.deepEqual(Object.keys(refusal), ['outcome']);
+  });
+});
+
+/* ================================================================== */
+/* F-3. 답이 오다 만 경우                                               */
+/* ================================================================== */
+
+describe('모델 응답 수신 · F-3. 잘림', () => {
+  const incomplete = createCandidateGenerationModelResponseOutcome('response_incomplete');
+
+  it('따로 있는 상태다', () => {
+    assert.equal(incomplete.outcome, 'response_incomplete');
+  });
+
+  it('아무것도 안 온 것과 다르다', () => {
+    // 온 것은 있다. 끝까지 오지 않았을 뿐이다.
+    assert.notEqual(incomplete.outcome, 'empty_response');
+    assert.notEqual(read('').outcome, incomplete.outcome);
+  });
+
+  it('시간 초과와 다르다', () => {
+    assert.notEqual(incomplete.outcome, 'provider_timeout');
+    assert.notEqual(
+      createCandidateGenerationTransportFailure('provider_timeout').outcome,
+      incomplete.outcome,
+    );
+  });
+
+  it('읽기 실패나 계약 위반과 다르다', () => {
+    assert.notEqual(incomplete.outcome, 'json_parse_failed');
+    assert.notEqual(incomplete.outcome, 'response_contract_invalid');
+  });
+
+  it('못 쓰겠다는 대답이 아니다', () => {
+    assert.notEqual(incomplete.outcome, 'validated_defer');
+    assert.equal(JSON.stringify(incomplete).includes(GENERATION_DEFER_REASONS[0] as string), false);
+    assert.equal(NO_SILENT_DOWNGRADE.responseIncompleteBecomesDefer, false);
+  });
+
+  it('조립으로 넘어가지 않는다', () => {
+    assert.equal(canInvokeCandidateBuilder(incomplete), false);
+  });
+
+  it('길이를 늘려 다시 부르지 않는다', () => {
+    // 받는 길이가 모자라 보여도 여기서 스스로 늘려 다시 부르지 않는다.
+    assert.equal(TRANSPORT_RUNTIME_CONFIG_POLICY.automaticRetries, 0);
+    assert.equal(TRANSPORT_RUNTIME_CONFIG_POLICY.outputBudgetMustBeExplicitlyConfigured, true);
+    assert.equal(TRANSPORT_RUNTIME_CONFIG_POLICY.defaultOutputBudget, null);
   });
 });
 
@@ -422,7 +579,7 @@ describe('모델 응답 수신 · G. 조립 자격', () => {
     assert.equal(canInvokeCandidateBuilder(read(generateResponse())), true);
   });
 
-  it('나머지 일곱은 넘어가지 않는다', () => {
+  it('나머지 아홉은 넘어가지 않는다', () => {
     const others: CandidateGenerationTransportOutcome[] = [
       read(deferResponse()),
       read(''),
@@ -431,9 +588,12 @@ describe('모델 응답 수신 · G. 조립 자격', () => {
       createCandidateGenerationTransportFailure('provider_timeout'),
       createCandidateGenerationTransportFailure('provider_unavailable'),
       createCandidateGenerationTransportFailure('provider_error'),
+      createCandidateGenerationModelResponseOutcome('model_refusal'),
+      createCandidateGenerationModelResponseOutcome('response_incomplete'),
     ];
 
-    assert.equal(others.length, 7);
+    assert.equal(others.length, 9);
+    assert.equal(new Set(others.map((o) => o.outcome)).size, 9);
     for (const outcome of others) {
       assert.equal(canInvokeCandidateBuilder(outcome), false, outcome.outcome);
     }
@@ -516,11 +676,11 @@ describe('모델 응답 수신 · H. 호출 정책', () => {
 /* ================================================================== */
 
 describe('모델 응답 수신 · I. 바꿔치기', () => {
-  it('여섯 가지 바꿔치기를 모두 막는다', () => {
+  it('여덟 가지 바꿔치기를 모두 막는다', () => {
     for (const [name, value] of Object.entries(NO_SILENT_DOWNGRADE)) {
       assert.equal(value, false, name);
     }
-    assert.equal(Object.keys(NO_SILENT_DOWNGRADE).length, 6);
+    assert.equal(Object.keys(NO_SILENT_DOWNGRADE).length, 8);
   });
 
   it('어떤 실패에도 needs_more_research가 붙지 않는다', () => {
@@ -531,6 +691,8 @@ describe('모델 응답 수신 · I. 바꿔치기', () => {
       createCandidateGenerationTransportFailure('provider_timeout'),
       createCandidateGenerationTransportFailure('provider_unavailable'),
       createCandidateGenerationTransportFailure('provider_error'),
+      createCandidateGenerationModelResponseOutcome('model_refusal'),
+      createCandidateGenerationModelResponseOutcome('response_incomplete'),
     ];
 
     for (const outcome of failures) {
@@ -633,6 +795,37 @@ describe('모델 응답 수신 · L. 경계', () => {
       'anthropic',
     ]) {
       assert.equal(TRANSPORT_SOURCE.includes(banned), false, banned);
+    }
+  });
+
+  it('특정 제공자의 응답 구조를 알지 못한다', () => {
+    // 거절과 잘림을 어떤 응답에서 알아내는지는 앞으로 어댑터가 정한다.
+    // 여기가 그것을 알기 시작하면 이 파일이 한 제공자에 묶인다.
+    // 우리가 지은 이름(model_refusal 등)이 아니라
+    // 제공자 응답에서만 나오는 모양을 본다.
+    for (const banned of [
+      'response.output',
+      'response.status',
+      'incomplete_details',
+      'output_text',
+      '.refusal',
+      'finish_reason',
+      'stop_reason',
+      'choices[',
+    ]) {
+      assert.equal(TRANSPORT_SOURCE.includes(banned), false, banned);
+    }
+  });
+
+  it('읽는 함수는 거절이나 잘림을 찾으려 하지 않는다', () => {
+    // 그 둘은 JSON 안에 들어 있는 것이 아니라 응답의 성격이다.
+    // 어댑터가 읽는 함수보다 앞에서 정한다.
+    const start = TRANSPORT_SOURCE.indexOf('export function interpretCandidateGenerationTransportPayload');
+    assert.notEqual(start, -1);
+    const body = TRANSPORT_SOURCE.slice(start);
+
+    for (const kind of MODEL_RESPONSE_OUTCOMES) {
+      assert.equal(body.includes(`'${kind}'`), false, kind);
     }
   });
 
