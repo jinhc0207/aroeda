@@ -44,10 +44,11 @@ const EXECUTION = '../../supabase/functions/_shared/source-harvester-execution.t
 /* ------------------------------------------------------------------ */
 
 describe('HTTP 범주 · 상태 숫자 가르기', () => {
-  it('정해진 여섯 가지뿐이다', () => {
+  it('정해진 일곱 가지뿐이다', () => {
     assert.deepEqual([...OPENAI_HTTP_FAILURE_CATEGORIES], [
       'client_error',
       'auth',
+      'permission',
       'not_found',
       'rate_or_quota',
       'server_error',
@@ -59,7 +60,7 @@ describe('HTTP 범주 · 상태 숫자 가르기', () => {
     const cases: [number, string][] = [
       [400, 'client_error'],
       [401, 'auth'],
-      [403, 'auth'],
+      [403, 'permission'],
       [404, 'not_found'],
       [408, 'client_error'],
       [409, 'client_error'],
@@ -84,6 +85,13 @@ describe('HTTP 범주 · 상태 숫자 가르기', () => {
     }
   });
 
+  it('401과 403은 서로 다른 범주다', () => {
+    // 401은 인증이 안 된 것, 403은 인증은 됐지만 권한이 없는 것이다.
+    assert.equal(classifyOpenAIHttpStatus(401), 'auth');
+    assert.equal(classifyOpenAIHttpStatus(403), 'permission');
+    assert.notEqual(classifyOpenAIHttpStatus(401), classifyOpenAIHttpStatus(403));
+  });
+
   it('경계값이 어느 쪽에 붙는지 정해져 있다', () => {
     assert.equal(classifyOpenAIHttpStatus(399), 'other');
     assert.equal(classifyOpenAIHttpStatus(400), 'client_error');
@@ -93,7 +101,7 @@ describe('HTTP 범주 · 상태 숫자 가르기', () => {
     assert.equal(classifyOpenAIHttpStatus(600), 'other');
   });
 
-  it('어떤 숫자가 와도 정해진 여섯 중 하나만 나온다', () => {
+  it('어떤 숫자가 와도 정해진 일곱 중 하나만 나온다', () => {
     for (let status = 100; status <= 700; status += 1) {
       assert.ok(
         (OPENAI_HTTP_FAILURE_CATEGORIES as readonly string[]).includes(
@@ -163,10 +171,11 @@ describe('HTTP 범주 · 오류에 담기는 것', () => {
 });
 
 describe('HTTP 범주 · 단계별 기록 이름', () => {
-  it('1단계와 2단계의 이름이 서로 다르고 열두 개가 모두 다르다', () => {
+  it('1단계와 2단계의 이름이 서로 다르고 열네 개가 모두 다르다', () => {
     assert.deepEqual(OPENAI_HTTP_FAILURE_CODES.discovery, {
       client_error: 'discovery_http_client_error',
       auth: 'discovery_http_auth',
+      permission: 'discovery_http_permission',
       not_found: 'discovery_http_not_found',
       rate_or_quota: 'discovery_http_rate_or_quota',
       server_error: 'discovery_http_server_error',
@@ -175,6 +184,7 @@ describe('HTTP 범주 · 단계별 기록 이름', () => {
     assert.deepEqual(OPENAI_HTTP_FAILURE_CODES.verification, {
       client_error: 'verification_http_client_error',
       auth: 'verification_http_auth',
+      permission: 'verification_http_permission',
       not_found: 'verification_http_not_found',
       rate_or_quota: 'verification_http_rate_or_quota',
       server_error: 'verification_http_server_error',
@@ -185,7 +195,7 @@ describe('HTTP 범주 · 단계별 기록 이름', () => {
       ...Object.values(OPENAI_HTTP_FAILURE_CODES.discovery),
       ...Object.values(OPENAI_HTTP_FAILURE_CODES.verification),
     ];
-    assert.equal(new Set(codes).size, 12);
+    assert.equal(new Set(codes).size, 14);
   });
 
   it('이름에 상태 숫자가 들어가지 않는다', () => {
@@ -302,8 +312,9 @@ const runWith = async (options: {
 
 describe('HTTP 범주 · 1단계 전체 실행', () => {
   it('좁은 것부터 넓은 것 순서로 세 줄을 남긴다', async () => {
-    const cases: [string, 'auth' | 'rate_or_quota' | 'server_error'][] = [
+    const cases: [string, 'auth' | 'permission' | 'rate_or_quota' | 'server_error'][] = [
       ['discovery_http_auth', 'auth'],
+      ['discovery_http_permission', 'permission'],
       ['discovery_http_rate_or_quota', 'rate_or_quota'],
       ['discovery_http_server_error', 'server_error'],
     ];
@@ -346,8 +357,9 @@ describe('HTTP 범주 · 1단계 전체 실행', () => {
 
 describe('HTTP 범주 · 2단계 전체 실행', () => {
   it('좁은 것부터 넓은 것 순서로 세 줄을 남긴다', async () => {
-    const cases: [string, 'auth' | 'rate_or_quota' | 'server_error'][] = [
+    const cases: [string, 'auth' | 'permission' | 'rate_or_quota' | 'server_error'][] = [
       ['verification_http_auth', 'auth'],
+      ['verification_http_permission', 'permission'],
       ['verification_http_rate_or_quota', 'rate_or_quota'],
       ['verification_http_server_error', 'server_error'],
     ];

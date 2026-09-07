@@ -333,6 +333,7 @@ const NON_HTTP_OBSERVATION_TO_CALL_FAILURE: Record<
 const HTTP_CATEGORY_TO_CALL_FAILURE: Record<OpenAIHttpFailureCategory, ProviderCallFailureKind> = {
   client_error: 'other',
   auth: 'other',
+  permission: 'other',
   not_found: 'other',
   rate_or_quota: 'unavailable',
   server_error: 'unavailable',

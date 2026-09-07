@@ -84,13 +84,13 @@ describe('저장소에 이미 있는 규칙을 그대로 쓴다', () => {
     }
   });
 
-  it('범주 이름을 새로 짓지 않고 이미 있는 여섯 개를 그대로 받는다', () => {
+  it('범주 이름을 새로 짓지 않고 이미 있는 것을 그대로 받는다', () => {
     const table = [...BOUNDARY_SOURCE.matchAll(/^ {2}(\w+): '(\w+)',$/gm)];
     const categoryKeys = table
       .map((m) => m[1] as string)
       .filter((key) => (OPENAI_HTTP_FAILURE_CATEGORIES as readonly string[]).includes(key));
 
-    // 여섯 범주가 전부 다뤄져야 한다. 하나라도 빠지면 그 경우가 조용히 undefined가 된다.
+    // 모든 범주가 전부 다뤄져야 한다. 하나라도 빠지면 그 경우가 조용히 undefined가 된다.
     assert.equal(new Set(categoryKeys).size, OPENAI_HTTP_FAILURE_CATEGORIES.length);
   });
 
@@ -471,6 +471,7 @@ describe('상태 숫자를 옮긴다', () => {
     // 여기서 정한 답이 저장소의 규칙과 따로 놀지 않는지 다른 길로 한 번 더 본다.
     const expected: Record<string, string> = {
       auth: 'provider_error',
+      permission: 'provider_error',
       not_found: 'provider_error',
       client_error: 'provider_error',
       rate_or_quota: 'provider_unavailable',

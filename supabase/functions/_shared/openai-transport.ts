@@ -39,10 +39,12 @@ export type OpenAITransportFailureKind = (typeof OPENAI_TRANSPORT_FAILURE_KINDS)
  * 상태 숫자 자체는 어디에도 남기지 않는다. 큰 범주 이름만 남긴다.
  */
 export const OPENAI_HTTP_FAILURE_CATEGORIES = [
-  /** 우리가 보낸 요청에 문제가 있다 (아래 세 가지에 해당하지 않는 4xx) */
+  /** 우리가 보낸 요청에 문제가 있다 (아래 네 가지에 해당하지 않는 4xx) */
   'client_error',
-  /** 열쇠·권한 문제 */
+  /** 열쇠 문제. 인증 자체가 되지 않았다 (401) */
   'auth',
+  /** 인증은 됐지만 이 일을 할 권한이 없다 (403) */
+  'permission',
   /** 부르는 주소가 없다 */
   'not_found',
   /** 너무 자주 불렀거나, 쓸 수 있는 양을 다 썼다 */
@@ -60,10 +62,13 @@ export type OpenAIHttpFailureCategory = (typeof OPENAI_HTTP_FAILURE_CATEGORIES)[
  * 검사 순서가 중요하다.
  * 401·403·404·429는 모두 4xx이므로, 일반 4xx보다 **먼저** 걸러야 한다.
  *
+ * 401(인증 안 됨)과 403(권한 없음)은 원인이 다르므로 서로 다른 범주로 가른다.
+ *
  * 숫자는 여기서 들어와 범주 이름 하나로 나간다. 밖으로 다시 나가지 않는다.
  */
 export function classifyOpenAIHttpStatus(status: number): OpenAIHttpFailureCategory {
-  if (status === 401 || status === 403) return 'auth';
+  if (status === 401) return 'auth';
+  if (status === 403) return 'permission';
   if (status === 404) return 'not_found';
   if (status === 429) return 'rate_or_quota';
   if (status >= 500 && status <= 599) return 'server_error';
@@ -162,6 +167,7 @@ export const OPENAI_HTTP_FAILURE_CODES: Readonly<
   discovery: {
     client_error: 'discovery_http_client_error',
     auth: 'discovery_http_auth',
+    permission: 'discovery_http_permission',
     not_found: 'discovery_http_not_found',
     rate_or_quota: 'discovery_http_rate_or_quota',
     server_error: 'discovery_http_server_error',
@@ -170,6 +176,7 @@ export const OPENAI_HTTP_FAILURE_CODES: Readonly<
   verification: {
     client_error: 'verification_http_client_error',
     auth: 'verification_http_auth',
+    permission: 'verification_http_permission',
     not_found: 'verification_http_not_found',
     rate_or_quota: 'verification_http_rate_or_quota',
     server_error: 'verification_http_server_error',
