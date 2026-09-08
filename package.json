@@ -54,6 +54,7 @@
     "test:openai:stress": "node scripts/test-openai-stress.ts",
     "test:openai:domains": "node scripts/test-openai-domains.ts",
     "test:openai:e2e": "node scripts/test-openai-recommendation-e2e.ts",
+    "research:operator": "node scripts/research-pipeline-operator.ts",
     "check:public-env": "node scripts/check-public-env.mjs",
     "eas-build-pre-install": "node scripts/check-public-env.mjs",
     "lint": "expo lint"
