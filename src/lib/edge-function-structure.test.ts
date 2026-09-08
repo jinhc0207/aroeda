@@ -74,6 +74,7 @@ describe('Edge Function 배포 구조', () => {
     assert.deepEqual(functionDirs().sort(), [
       'analyze-situation',
       'biblical-researcher',
+      'candidate-generator',
       'generate-prayer-guidance',
       'recommend-scripture',
       'research-prioritizer',
