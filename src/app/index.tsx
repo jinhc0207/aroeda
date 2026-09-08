@@ -14,7 +14,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '@/constants/aroeda-theme';
 import { ensureAnonymousSession } from '@/lib/anonymous-session';
-import { requestRecommendation } from '@/lib/request-recommendation';
+import {
+  formatDevDiagnostic,
+  requestRecommendation,
+  type DevDiagnosticCode,
+} from '@/lib/request-recommendation';
 import { supabase } from '@/lib/supabase';
 import { SCRIPTURE_CARDS } from '@/data/scripture-cards';
 import { useSituation } from '@/state/situation';
@@ -42,6 +46,8 @@ export default function SituationScreen() {
   const [isFocused, setIsFocused] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 개발 모드에서만 화면에 낸다. 사용자에게 보이는 notice 문구는 바꾸지 않는다.
+  const [devDiagnostic, setDevDiagnostic] = useState<DevDiagnosticCode | null>(null);
 
   const handleChangeText = (value: string) => {
     setSituation(value);
@@ -60,6 +66,7 @@ export default function SituationScreen() {
     }
 
     setNotice(null);
+    setDevDiagnostic(null);
     setIsSubmitting(true);
     // 새로 요청할 때 이전 추천이 남아 있지 않게 한다.
     setSelectedCardId(null);
@@ -88,8 +95,11 @@ export default function SituationScreen() {
         ? '잠시 쉬었다가 다시 말씀을 찾아주세요.'
         : '지금은 말씀을 찾지 못했어요. 잠시 후 다시 시도해주세요.',
     );
+    setDevDiagnostic(outcome.diagnostic);
     setIsSubmitting(false);
   };
+
+  const devDiagnosticText = formatDevDiagnostic(__DEV__, devDiagnostic);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
@@ -145,6 +155,12 @@ export default function SituationScreen() {
               <View style={styles.notice}>
                 <Text style={styles.noticeText}>{notice}</Text>
               </View>
+            ) : null}
+
+            {devDiagnosticText ? (
+              <Text style={styles.devDiagnostic} accessibilityLabel="개발 진단">
+                {devDiagnosticText}
+              </Text>
             ) : null}
 
             <View style={styles.footer}>
@@ -250,6 +266,13 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     textAlign: 'center',
     color: colors.text,
+  },
+  devDiagnostic: {
+    marginTop: 8,
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: 'center',
+    color: colors.textSubtle,
   },
   footer: {
     marginTop: 'auto',

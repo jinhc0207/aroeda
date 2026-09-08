@@ -12,6 +12,7 @@ import { describe, it } from 'node:test';
 import type { SessionSummary } from './anonymous-session.ts';
 import {
   requestRecommendation,
+  formatDevDiagnostic,
   type InvokeOutcome,
   type RecommendationDeps,
 } from './request-recommendation.ts';
@@ -80,6 +81,7 @@ describe('말씀 추천 요청', () => {
       assert.equal(calls.ensureSession, 0);
       assert.equal(calls.invoke, 0);
       assert.equal(outcome.status, 'error');
+      assert.deepEqual(outcome, { status: 'error', kind: 'general', diagnostic: 'NONE' });
     }
   });
 
@@ -89,7 +91,11 @@ describe('말씀 추천 요청', () => {
       const outcome = await requestRecommendation('두렵습니다.', deps);
 
       assert.equal(calls.invoke, 0, '서버를 호출했습니다.');
-      assert.deepEqual(outcome, { status: 'error', kind: 'auth' });
+      assert.deepEqual(outcome, {
+        status: 'error',
+        kind: 'auth',
+        diagnostic: 'AUTH_SESSION_PREP_FAILED',
+      });
     }
   });
 
@@ -122,20 +128,42 @@ describe('말씀 추천 요청', () => {
     const { deps } = fakeDeps({ outcome: { ok: false, httpStatus: 429 } });
     const outcome = await requestRecommendation('두렵습니다.', deps);
 
-    assert.deepEqual(outcome, { status: 'error', kind: 'rate_limited' });
+    assert.deepEqual(outcome, {
+      status: 'error',
+      kind: 'rate_limited',
+      diagnostic: 'FUNCTION_HTTP_429',
+    });
   });
 
-  it('503과 네트워크 실패는 일반 오류로 다룬다', async () => {
-    for (const options of [
-      { outcome: { ok: false as const, httpStatus: 503 } },
-      { outcome: { ok: false as const, httpStatus: 500 } },
-      { outcome: { ok: false as const } },
-      { invokeThrows: true },
-    ]) {
+  it('401은 일반 오류 문구를 쓰되 진단은 따로 구분한다', async () => {
+    const { deps } = fakeDeps({ outcome: { ok: false, httpStatus: 401 } });
+    const outcome = await requestRecommendation('두렵습니다.', deps);
+
+    assert.deepEqual(outcome, {
+      status: 'error',
+      kind: 'general',
+      diagnostic: 'FUNCTION_HTTP_401',
+    });
+  });
+
+  it('5xx / 네트워크 계열 / 그 밖의 상태 코드 / invoke 예외를 각각 구분한다', async () => {
+    const cases: { options: { outcome?: InvokeOutcome; invokeThrows?: boolean }; diagnostic: string }[] = [
+      { options: { outcome: { ok: false, httpStatus: 503 } }, diagnostic: 'FUNCTION_HTTP_5XX' },
+      { options: { outcome: { ok: false, httpStatus: 500 } }, diagnostic: 'FUNCTION_HTTP_5XX' },
+      { options: { outcome: { ok: false } }, diagnostic: 'FUNCTION_NETWORK_FAILED' },
+      { options: { outcome: { ok: false, httpStatus: 400 } }, diagnostic: 'FUNCTION_HTTP_OTHER' },
+      { options: { invokeThrows: true }, diagnostic: 'FUNCTION_INVOKE_FAILED' },
+    ];
+
+    for (const { options, diagnostic } of cases) {
       const { deps } = fakeDeps(options);
       const outcome = await requestRecommendation('두렵습니다.', deps);
 
-      assert.deepEqual(outcome, { status: 'error', kind: 'general' });
+      assert.deepEqual(
+        outcome,
+        { status: 'error', kind: 'general', diagnostic },
+        `${JSON.stringify(options)} -> ${JSON.stringify(outcome)}`,
+      );
     }
   });
 
@@ -157,7 +185,7 @@ describe('말씀 추천 요청', () => {
 
       assert.deepEqual(
         outcome,
-        { status: 'error', kind: 'general' },
+        { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' },
         `${JSON.stringify(data)}가 통과되었습니다.`,
       );
     }
@@ -168,7 +196,11 @@ describe('말씀 추천 요청', () => {
       const { deps } = fakeDeps({ outcome: { ok: true, data: gatePayload('recommend', cardId) } });
       const outcome = await requestRecommendation('두렵습니다.', deps);
 
-      assert.deepEqual(outcome, { status: 'error', kind: 'general' }, `${cardId}가 통과되었습니다.`);
+      assert.deepEqual(
+        outcome,
+        { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' },
+        `${cardId}가 통과되었습니다.`,
+      );
       assert.equal(JSON.stringify(outcome).includes('SC-001'), false);
     }
   });
@@ -180,5 +212,42 @@ describe('말씀 추천 요청', () => {
 
     assert.equal(JSON.stringify(outcome).includes(situation), false);
     assert.equal(JSON.stringify(outcome).includes('개인적인'), false);
+  });
+
+  it('실패 결과에도 토큰/세션/응답 원문이 담기지 않는다', async () => {
+    const FAKE_TOKEN = 'sb_publishable_should_never_leak_here';
+    for (const options of [
+      { session: failedSession },
+      { outcome: { ok: false as const, httpStatus: 401 } },
+      { outcome: { ok: true, data: { ok: true, result: null } } },
+      { invokeThrows: true },
+    ]) {
+      const { deps } = fakeDeps(options);
+      const outcome = await requestRecommendation('두렵습니다.', deps);
+      const serialized = JSON.stringify(outcome);
+
+      assert.ok(!serialized.includes(FAKE_TOKEN));
+      assert.ok(!serialized.includes('AuthApiError'));
+      assert.ok(!serialized.includes('network'));
+      assert.ok(!serialized.includes('failed to fetch'));
+    }
+  });
+});
+
+describe('formatDevDiagnostic', () => {
+  it('production(isDev=false)에서는 항상 null이다', () => {
+    assert.equal(formatDevDiagnostic(false, 'AUTH_SESSION_PREP_FAILED'), null);
+    assert.equal(formatDevDiagnostic(false, 'FUNCTION_HTTP_401'), null);
+    assert.equal(formatDevDiagnostic(false, null), null);
+  });
+
+  it('개발 모드에서도 NONE/null이면 아무것도 보여주지 않는다', () => {
+    assert.equal(formatDevDiagnostic(true, 'NONE'), null);
+    assert.equal(formatDevDiagnostic(true, null), null);
+  });
+
+  it('개발 모드에서 실제 실패면 안전한 코드 문자열을 낸다', () => {
+    assert.equal(formatDevDiagnostic(true, 'AUTH_SESSION_PREP_FAILED'), '개발 진단: AUTH_SESSION_PREP_FAILED');
+    assert.equal(formatDevDiagnostic(true, 'FUNCTION_HTTP_401'), '개발 진단: FUNCTION_HTTP_401');
   });
 });

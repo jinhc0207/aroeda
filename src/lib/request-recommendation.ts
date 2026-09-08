@@ -18,6 +18,33 @@ import type { SessionSummary } from './anonymous-session.ts';
 export const GATE_ROUTES = ['recommend', 'no_coverage', 'safety', 'ambiguous'] as const;
 export type GateRouteName = (typeof GATE_ROUTES)[number];
 
+/**
+ * 개발자만 보는 실패 진단 코드.
+ *
+ * 사용자에게 보이는 문구(kind)는 그대로 두고, 어느 단계에서 왜 멈췄는지만
+ * 개발 모드에서 구분해 볼 수 있게 한다. 토큰·세션·응답 본문은 담지 않는다.
+ *
+ *   NONE                      — 실패가 아니거나, 어느 단계에도 닿지 못했다(빈 입력 등)
+ *   AUTH_SESSION_PREP_FAILED  — 익명 세션 준비 실패
+ *   FUNCTION_INVOKE_FAILED    — invoke 호출 자체가 예외를 던졌다
+ *   FUNCTION_NETWORK_FAILED   — invoke는 끝났지만 상태 코드를 알 수 없다(네트워크 계열)
+ *   FUNCTION_HTTP_401         — 인증 거부
+ *   FUNCTION_HTTP_429         — 사용량 제한
+ *   FUNCTION_HTTP_5XX         — 서버 오류
+ *   FUNCTION_HTTP_OTHER       — 그 밖의 상태 코드
+ *   FUNCTION_RESPONSE_INVALID — 응답은 받았지만 모양이 계약과 다르다
+ */
+export type DevDiagnosticCode =
+  | 'NONE'
+  | 'AUTH_SESSION_PREP_FAILED'
+  | 'FUNCTION_INVOKE_FAILED'
+  | 'FUNCTION_NETWORK_FAILED'
+  | 'FUNCTION_HTTP_401'
+  | 'FUNCTION_HTTP_429'
+  | 'FUNCTION_HTTP_5XX'
+  | 'FUNCTION_HTTP_OTHER'
+  | 'FUNCTION_RESPONSE_INVALID';
+
 /** 화면에서 서버 호출을 감싸 넘겨주는 결과. supabase 오류를 여기서 단순한 모양으로 바꾼다. */
 export type InvokeOutcome =
   | { ok: true; data: unknown }
@@ -33,8 +60,11 @@ export type RecommendationDeps = {
 export type RecommendationOutcome =
   | { status: 'recommend'; cardId: string }
   | { status: 'route'; route: Exclude<GateRouteName, 'recommend'> }
-  /** auth: 세션 준비 실패 / rate_limited: 사용량 제한 / general: 그 밖의 실패 */
-  | { status: 'error'; kind: 'auth' | 'rate_limited' | 'general' };
+  /**
+   * auth: 세션 준비 실패 / rate_limited: 사용량 제한 / general: 그 밖의 실패
+   * diagnostic은 개발 모드에서만 화면에 낸다. 사용자 문구(kind)는 바꾸지 않는다.
+   */
+  | { status: 'error'; kind: 'auth' | 'rate_limited' | 'general'; diagnostic: DevDiagnosticCode };
 
 const isGateRoute = (value: unknown): value is GateRouteName =>
   typeof value === 'string' && (GATE_ROUTES as readonly string[]).includes(value);
@@ -63,35 +93,39 @@ export async function requestRecommendation(
   deps: RecommendationDeps,
 ): Promise<RecommendationOutcome> {
   if (situation.trim().length === 0) {
-    return { status: 'error', kind: 'general' };
+    return { status: 'error', kind: 'general', diagnostic: 'NONE' };
   }
 
   let session: SessionSummary;
   try {
     session = await deps.ensureSession();
   } catch {
-    return { status: 'error', kind: 'auth' };
+    return { status: 'error', kind: 'auth', diagnostic: 'AUTH_SESSION_PREP_FAILED' };
   }
 
   if (!session.sessionExists) {
-    return { status: 'error', kind: 'auth' };
+    return { status: 'error', kind: 'auth', diagnostic: 'AUTH_SESSION_PREP_FAILED' };
   }
 
   let outcome: InvokeOutcome;
   try {
     outcome = await deps.invokeRecommendScripture({ situation });
   } catch {
-    return { status: 'error', kind: 'general' };
+    return { status: 'error', kind: 'general', diagnostic: 'FUNCTION_INVOKE_FAILED' };
   }
 
   if (!outcome.ok) {
     // 사용량 제한만 따로 구분한다. 나머지는 모두 일반 오류로 다룬다.
-    return { status: 'error', kind: outcome.httpStatus === 429 ? 'rate_limited' : 'general' };
+    return {
+      status: 'error',
+      kind: outcome.httpStatus === 429 ? 'rate_limited' : 'general',
+      diagnostic: diagnosticForHttpFailure(outcome.httpStatus),
+    };
   }
 
   const parsed = parseGateResponse(outcome.data);
   if (!parsed) {
-    return { status: 'error', kind: 'general' };
+    return { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' };
   }
 
   if (parsed.route !== 'recommend') {
@@ -100,8 +134,29 @@ export async function requestRecommendation(
 
   // recommend인데 카드가 없거나 우리가 모르는 id면 임의의 카드로 대체하지 않는다.
   if (typeof parsed.selectedCardId !== 'string' || !deps.cardExists(parsed.selectedCardId)) {
-    return { status: 'error', kind: 'general' };
+    return { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' };
   }
 
   return { status: 'recommend', cardId: parsed.selectedCardId };
+}
+
+/** invoke가 실패로 끝났을 때 상태 코드만으로 안전하게 분류한다. 응답 본문은 보지 않는다. */
+function diagnosticForHttpFailure(httpStatus: number | undefined): DevDiagnosticCode {
+  if (httpStatus === undefined) return 'FUNCTION_NETWORK_FAILED';
+  if (httpStatus === 401) return 'FUNCTION_HTTP_401';
+  if (httpStatus === 429) return 'FUNCTION_HTTP_429';
+  if (httpStatus >= 500) return 'FUNCTION_HTTP_5XX';
+  return 'FUNCTION_HTTP_OTHER';
+}
+
+/**
+ * 개발 모드에서만 보여줄 진단 문구를 만든다.
+ *
+ * production에서는 항상 null이다. isDev를 인자로 받기 때문에
+ * 전역 __DEV__를 건드리지 않고도 두 경우를 모두 테스트할 수 있다.
+ */
+export function formatDevDiagnostic(isDev: boolean, diagnostic: DevDiagnosticCode | null): string | null {
+  if (!isDev) return null;
+  if (!diagnostic || diagnostic === 'NONE') return null;
+  return `개발 진단: ${diagnostic}`;
 }
