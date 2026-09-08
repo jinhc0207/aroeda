@@ -135,7 +135,16 @@ describe('research-pipeline-operator · A. parser', () => {
 });
 
 describe('research-pipeline-operator · B. execute guard', () => {
-  it('--execute 없이는 network와 secret 조회가 0이다', async () => {
+  it('refresh: --execute 없이는 network와 secret 조회가 0이다', async () => {
+    const cmd = asOk(parseArgs(['refresh']));
+    const { deps, secretCalls, transportCalls } = makeDeps({});
+    const outcome = await runStage(cmd, deps);
+    assert.deepEqual(outcome, { ok: true, stage: 'refresh', status: 'execution_required' });
+    assert.equal(secretCalls.length, 0);
+    assert.equal(transportCalls.length, 0);
+  });
+
+  it('prioritize: --execute 없이는 network와 secret 조회가 0이다', async () => {
     const cmd = asOk(parseArgs(['prioritize']));
     const { deps, secretCalls, transportCalls } = makeDeps({});
     const outcome = await runStage(cmd, deps);
@@ -217,7 +226,10 @@ describe('research-pipeline-operator · D. Keychain mapping', () => {
       service: 'com.aroeda.app.candidate-generator',
       account: 'CANDIDATE_GENERATOR_TOKEN',
     });
-    assert.equal(STAGE_CREDENTIALS.refresh, null);
+    assert.deepEqual(STAGE_CREDENTIALS.refresh, {
+      service: 'aroeda.production.edge.internal-token',
+      account: 'RESEARCH_QUEUE_REFRESH_TOKEN',
+    });
   });
 
   it('실행 시 올바른 spec으로 secretReader를 정확히 한 번 부른다', async () => {
@@ -469,16 +481,118 @@ describe('research-pipeline-operator · K. safe output', () => {
   });
 });
 
-describe('research-pipeline-operator · L. refresh credential absence', () => {
-  it('refresh는 항상 OPERATOR_CREDENTIAL_MISSING이고 network 0이다', async () => {
-    for (const execute of [false, true]) {
-      const cmd = asOk(parseArgs(execute ? ['refresh', '--execute'] : ['refresh']));
-      const { deps, secretCalls, transportCalls } = makeDeps({});
-      const outcome = await runStage(cmd, deps);
-      assert.deepEqual(outcome, { ok: false, stage: 'refresh', code: 'OPERATOR_CREDENTIAL_MISSING' });
-      assert.equal(secretCalls.length, 0);
-      assert.equal(transportCalls.length, 0);
-    }
+describe('research-pipeline-operator · L. refresh stage', () => {
+  it('dry-run(no --execute)은 network 0, secret 조회 0이다', async () => {
+    const cmd = asOk(parseArgs(['refresh']));
+    const { deps, secretCalls, transportCalls } = makeDeps({});
+    const outcome = await runStage(cmd, deps);
+    assert.deepEqual(outcome, { ok: true, stage: 'refresh', status: 'execution_required' });
+    assert.equal(secretCalls.length, 0);
+    assert.equal(transportCalls.length, 0);
+  });
+
+  it('Keychain에 토큰이 없으면 network 0으로 OPERATOR_CREDENTIAL_MISSING', async () => {
+    const cmd = asOk(parseArgs(['refresh', '--execute']));
+    const { deps, transportCalls } = makeDeps({ secretValue: null });
+    const outcome = await runStage(cmd, deps);
+    assert.deepEqual(outcome, { ok: false, stage: 'refresh', code: 'OPERATOR_CREDENTIAL_MISSING' });
+    assert.equal(transportCalls.length, 0);
+  });
+
+  it('정확한 endpoint · method · auth header · 빈 body로 정확히 한 번 요청한다', async () => {
+    const cmd = asOk(parseArgs(['refresh', '--execute']));
+    const { deps, secretCalls, transportCalls } = makeDeps({
+      transportImpl: async () => ({ status: 200, json: { ok: true, status: 'refreshed', itemsTouched: 0 } }),
+    });
+    const outcome = await runStage(cmd, deps);
+    assert.equal(secretCalls.length, 1);
+    assert.deepEqual(secretCalls[0], STAGE_CREDENTIALS.refresh);
+    assert.equal(transportCalls.length, 1);
+    const req = transportCalls[0];
+    assert.equal(req.method, 'POST');
+    assert.equal(req.url, `${FUNCTIONS_BASE_URL}/research-queue-refresh`);
+    assert.equal(req.headers['x-internal-token'], FAKE_TOKEN);
+    assert.equal(req.body, undefined);
+    assert.deepEqual(outcome, {
+      ok: true,
+      stage: 'refresh',
+      status: 'refreshed',
+      identifiers: { itemsTouched: 0 },
+    });
+  });
+
+  it('itemsTouched가 양수여도 정확히 전달된다', async () => {
+    const cmd = asOk(parseArgs(['refresh', '--execute']));
+    const { deps } = makeDeps({
+      transportImpl: async () => ({ status: 200, json: { ok: true, status: 'refreshed', itemsTouched: 4 } }),
+    });
+    const outcome = await runStage(cmd, deps);
+    assert.deepEqual(outcome, {
+      ok: true,
+      stage: 'refresh',
+      status: 'refreshed',
+      identifiers: { itemsTouched: 4 },
+    });
+  });
+
+  it('Edge 응답의 extra field는 outcome에 나타나지 않는다', async () => {
+    const cmd = asOk(parseArgs(['refresh', '--execute']));
+    const { deps } = makeDeps({
+      transportImpl: async () => ({
+        status: 200,
+        json: { ok: true, status: 'refreshed', itemsTouched: 2, unexpectedRawField: 'do-not-leak' },
+      }),
+    });
+    const outcome = await runStage(cmd, deps);
+    const serialized = JSON.stringify(outcome);
+    assert.ok(!serialized.includes('do-not-leak'));
+    assert.deepEqual(outcome, {
+      ok: true,
+      stage: 'refresh',
+      status: 'refreshed',
+      identifiers: { itemsTouched: 2 },
+    });
+  });
+
+  it('실패해도 재시도하지 않는다(호출 횟수 정확히 1)', async () => {
+    const cmd = asOk(parseArgs(['refresh', '--execute']));
+    const { deps, transportCalls } = makeDeps({
+      transportImpl: async () => ({ status: 503, json: { ok: false, error: 'QUEUE_REFRESH_UNAVAILABLE' } }),
+    });
+    const outcome = await runStage(cmd, deps);
+    assert.equal(transportCalls.length, 1);
+    assert.deepEqual(outcome, {
+      ok: false,
+      stage: 'refresh',
+      code: 'QUEUE_REFRESH_UNAVAILABLE',
+      httpStatus: 503,
+    });
+  });
+
+  it('토큰 문자열이 outcome 어디에도 등장하지 않는다', async () => {
+    const cmd = asOk(parseArgs(['refresh', '--execute']));
+    const { deps } = makeDeps({
+      transportImpl: async () => ({ status: 401, json: { ok: false, error: 'UNAUTHORIZED' } }),
+    });
+    const outcome = await runStage(cmd, deps);
+    assert.ok(!JSON.stringify(outcome).includes(FAKE_TOKEN));
+  });
+
+  it('다른 project ref를 주입할 CLI 옵션이 없다', () => {
+    assert.deepEqual(parseArgs(['refresh', '--project-ref', 'mylingo']), {
+      ok: false,
+      error: 'UNKNOWN_FLAG',
+    });
+  });
+
+  it('refresh 성공 후 prioritize transport가 자동으로 불리지 않는다', async () => {
+    const cmd = asOk(parseArgs(['refresh', '--execute']));
+    const { deps, transportCalls } = makeDeps({
+      transportImpl: async () => ({ status: 200, json: { ok: true, status: 'refreshed', itemsTouched: 1 } }),
+    });
+    await runStage(cmd, deps);
+    assert.equal(transportCalls.length, 1);
+    assert.ok(transportCalls.every((r) => !r.url.includes('research-prioritizer')));
   });
 });
 

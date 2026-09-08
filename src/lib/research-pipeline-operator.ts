@@ -34,9 +34,12 @@ const SNAPSHOT_ID_FORMAT = /^snap_[0-9a-f]{64}$/;
 
 export type CredentialSpec = { service: string; account: string };
 
-/** refresh는 안전한 로컬 credential 경로가 없다(§7). service_role 재사용 등 금지된 우회를 쓰지 않는다. */
-export const STAGE_CREDENTIALS: Record<Stage, CredentialSpec | null> = {
-  refresh: null,
+/**
+ * refresh는 전용 internal Edge Function(research-queue-refresh)을 통해서만 실행한다.
+ * service-role key나 다른 internal token을 재사용하는 우회는 만들지 않는다.
+ */
+export const STAGE_CREDENTIALS: Record<Stage, CredentialSpec> = {
+  refresh: { service: 'aroeda.production.edge.internal-token', account: 'RESEARCH_QUEUE_REFRESH_TOKEN' },
   prioritize: { service: 'aroeda.production.edge.internal-token', account: 'RESEARCH_PRIORITIZER_TOKEN' },
   harvest: { service: 'aroeda.production.edge.internal-token', account: 'SOURCE_HARVESTER_TOKEN' },
   research: { service: 'aroeda.production.edge.internal-token', account: 'BIBLICAL_RESEARCHER_TOKEN' },
@@ -44,7 +47,8 @@ export const STAGE_CREDENTIALS: Record<Stage, CredentialSpec | null> = {
 };
 
 /** operator 자신의 HTTP client timeout. 서버 내부 timeout과는 별개다. retry는 하지 않는다. */
-export const STAGE_TIMEOUT_MS: Record<Exclude<Stage, 'refresh'>, number> = {
+export const STAGE_TIMEOUT_MS: Record<Stage, number> = {
+  refresh: 30_000,
   prioritize: 90_000,
   harvest: 120_000,
   research: 110_000,
@@ -227,6 +231,16 @@ function passthroughErrorCode(json: unknown, allowed: readonly string[]): string
   return 'UNKNOWN_ERROR';
 }
 
+const REFRESH_ERROR_CODES = [
+  'METHOD_NOT_ALLOWED',
+  'UNAUTHORIZED',
+  'INVALID_JSON',
+  'INVALID_REQUEST',
+  'QUEUE_REFRESH_UNAVAILABLE',
+  'INVALID_REFRESH_RESPONSE',
+  'INTERNAL_ERROR',
+] as const;
+
 const PRIORITIZE_ERROR_CODES = [
   'METHOD_NOT_ALLOWED',
   'UNAUTHORIZED',
@@ -273,6 +287,55 @@ const CANDIDATE_ERROR_CODES = [
   'CANDIDATE_GENERATION_UNAVAILABLE',
   'INTERNAL_ERROR',
 ] as const;
+
+async function runRefresh(
+  command: Extract<ParsedCommand, { stage: 'refresh'; ok: true }>,
+  deps: OperatorDeps,
+): Promise<StageOutcome> {
+  const spec = STAGE_CREDENTIALS.refresh;
+  const token = await deps.secretReader(spec);
+  if (!token) return { ok: false, stage: 'refresh', code: 'OPERATOR_CREDENTIAL_MISSING' };
+
+  let response: HttpResponse;
+  try {
+    response = await deps.transport({
+      url: `${FUNCTIONS_BASE_URL}/research-queue-refresh`,
+      method: 'POST',
+      headers: { 'x-internal-token': token },
+      timeoutMs: STAGE_TIMEOUT_MS.refresh,
+    });
+  } catch {
+    return { ok: false, stage: 'refresh', code: 'TRANSPORT_FAILED' };
+  }
+
+  if (response.status !== 200) {
+    return {
+      ok: false,
+      stage: 'refresh',
+      code: passthroughErrorCode(response.json, REFRESH_ERROR_CODES),
+      httpStatus: response.status,
+    };
+  }
+
+  const body = response.json;
+  if (
+    !isPlainObject(body) ||
+    body.ok !== true ||
+    body.status !== 'refreshed' ||
+    typeof body.itemsTouched !== 'number' ||
+    !Number.isInteger(body.itemsTouched) ||
+    body.itemsTouched < 0
+  ) {
+    return { ok: false, stage: 'refresh', code: 'UNEXPECTED_RESPONSE_SHAPE' };
+  }
+
+  return {
+    ok: true,
+    stage: 'refresh',
+    status: 'refreshed',
+    identifiers: { itemsTouched: body.itemsTouched },
+  };
+}
 
 async function runPrioritize(
   command: Extract<ParsedCommand, { stage: 'prioritize'; ok: true }>,
@@ -498,21 +561,19 @@ async function runCandidate(
  * 파싱된 명령 하나를 실행한다. 정확히 한 stage, 정확히 한 번의 transport 호출(성공 시).
  *
  * `--execute`가 없으면 credential 조회도 network도 하지 않고 `execution_required`만 낸다.
- * refresh는 execute 여부와 무관하게 항상 OPERATOR_CREDENTIAL_MISSING이다(§7 — 안전한 로컬 경로 없음).
+ * refresh 성공 후에도 prioritize를 자동으로 부르지 않는다. 다음 stage는 별도 실행·별도 승인이다.
  */
 export async function runStage(
   command: Extract<ParsedCommand, { ok: true }>,
   deps: OperatorDeps,
 ): Promise<StageOutcome> {
-  if (command.stage === 'refresh') {
-    return { ok: false, stage: 'refresh', code: 'OPERATOR_CREDENTIAL_MISSING' };
-  }
-
   if (!command.execute) {
     return { ok: true, stage: command.stage, status: 'execution_required' };
   }
 
   switch (command.stage) {
+    case 'refresh':
+      return runRefresh(command, deps);
     case 'prioritize':
       return runPrioritize(command, deps);
     case 'harvest':

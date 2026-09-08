@@ -78,6 +78,7 @@ describe('Edge Function 배포 구조', () => {
       'generate-prayer-guidance',
       'recommend-scripture',
       'research-prioritizer',
+      'research-queue-refresh',
       'source-harvester',
     ]);
   });
