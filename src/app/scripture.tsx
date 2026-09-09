@@ -125,28 +125,28 @@ export default function ScriptureScreen() {
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>이 말씀은</Text>
+            <Text style={styles.sectionTitle}>이 말씀이 보여주는 것</Text>
             <Text style={styles.body}>{card.userExplanation}</Text>
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>이 말씀을 붙들고</Text>
+            <Text style={styles.sectionTitle}>이제 이렇게 바라볼 수 있어요</Text>
             <Text style={styles.body}>{card.prayerDirection}</Text>
           </View>
 
           <View style={styles.closing}>
-            <Text style={styles.closingLead}>이 말씀을 붙들고 기도해 보세요.</Text>
+            <Text style={styles.closingLead}>원한다면, 이 말씀을 기도로 이어가 보세요.</Text>
 
             <Text style={styles.closingSub}>
               지금 마음에 남는 말씀과, 하나님께 아뢰고 싶은 것을 있는 그대로 말씀드려 보세요.
             </Text>
 
             <Pressable
-              style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+              style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
               onPress={() => router.push({ pathname: '/prayer', params: { mode: 'direct' } })}
               accessibilityRole="button"
               accessibilityLabel="직접 기도하기">
-              <Text style={styles.buttonLabel}>직접 기도하기</Text>
+              <Text style={styles.secondaryButtonLabel}>직접 기도하기</Text>
             </Pressable>
 
             <Text style={styles.closingHint}>어떻게 시작해야 할지 막막하다면</Text>
@@ -334,5 +334,23 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     fontWeight: '600',
     color: colors.background,
+  },
+  // 기도는 말씀 경험을 마치기 위한 필수 다음 단계가 아니라 선택 사항이다.
+  // 그래서 홈 화면의 필수 제출 버튼과 같은 무게(꽉 찬 배경)를 주지 않는다.
+  secondaryButton: {
+    marginTop: 28,
+    minHeight: 56,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  secondaryButtonLabel: {
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: '600',
+    color: colors.text,
   },
 });

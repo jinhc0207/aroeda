@@ -138,6 +138,28 @@ describe('말씀 화면 · 실제로 그려 보기', () => {
 
     expect(screen.getByText(CARD.prayerDirection)).toBeTruthy();
   });
+
+  it('본문의 의미와 삶의 방향이라는 위계로 소개된다(기도가 먼저 보이지 않는다)', async () => {
+    await renderWithCard(CARD.id);
+
+    // 새 제품 철학: 말씀의 의미와 방향 재정립이 먼저다.
+    expect(screen.getByText('이 말씀이 보여주는 것')).toBeTruthy();
+    expect(screen.getByText('이제 이렇게 바라볼 수 있어요')).toBeTruthy();
+
+    // 기도를 필수 다음 단계처럼 부르던 예전 문구는 없어야 한다.
+    expect(screen.queryByText('이 말씀을 붙들고 기도해 보세요.')).toBeNull();
+  });
+
+  it('기도 초대 문구가 선택적으로 들린다(필수처럼 강요하지 않는다)', async () => {
+    await renderWithCard(CARD.id);
+
+    expect(screen.getByText('원한다면, 이 말씀을 기도로 이어가 보세요.')).toBeTruthy();
+
+    // 기도를 강요하는 표현이 화면 어디에도 없어야 한다.
+    for (const forced of ['반드시', '이제 기도해야', '기도로 마무리', '완료하려면']) {
+      expect(screen.queryByText(new RegExp(forced))).toBeNull();
+    }
+  });
 });
 
 /* ================================================================== */

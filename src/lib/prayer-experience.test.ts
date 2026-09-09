@@ -263,9 +263,9 @@ describe('기도 경험 · G. 앞의 흐름은 그대로', () => {
       '오늘 함께 붙들 말씀',
       'card.referenceLabel',
       'TRANSLATION_NAME',
-      '이 말씀은',
+      '이 말씀이 보여주는 것',
       'card.userExplanation',
-      '이 말씀을 붙들고',
+      '이제 이렇게 바라볼 수 있어요',
       'card.prayerDirection',
       '추천된 말씀이 없습니다',
     ]) {
