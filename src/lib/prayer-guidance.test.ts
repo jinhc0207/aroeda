@@ -18,16 +18,15 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import {
-  INTRO_MAX,
-  PROMPT_MAX,
+  MAX_PRAYER_TEXT_LENGTH,
+  PRAYER_GUIDANCE_FIELDS,
   PRAYER_GUIDANCE_MODEL,
   PRAYER_GUIDANCE_MODEL_TIMEOUT_MS,
   PRAYER_GUIDANCE_REQUEST_FIELDS,
   PRAYER_GUIDANCE_RETRY_COUNT,
   PRAYER_GUIDANCE_SCHEMA,
-  PRAYER_GUIDANCE_STEP_KINDS,
   PRAYER_GUIDANCE_TOTAL_BUDGET_MS,
-  STARTER_MAX,
+  containsProhibitedPrayerPattern,
   buildPrayerGuidancePayload,
   parsePrayerGuidanceRequest,
   validatePrayerGuidance,
@@ -76,13 +75,8 @@ const analyzerResponse = (value: unknown) => ({
 });
 
 const goodGuidance = () => ({
-  intro: '지금 마음에 있는 것을 그대로 말씀드려 보세요.',
-  steps: [
-    { kind: 'tell', prompt: '무엇이 가장 무겁게 느껴지는지 말씀드려 보세요.', starter: '하나님, 지금 저는…' },
-    { kind: 'hold', prompt: '오늘 이 말씀에서 붙들고 싶은 한 가지를 말해 보세요.', starter: null },
-    { kind: 'respond', prompt: '맡기고 싶은 것을 말씀드려 보세요.', starter: '주님께 맡기고 싶은 것은…' },
-  ],
-  steps_count_note: '3',
+  prayerText:
+    '하나님, 지금 마음이 두렵고 불안합니다. 결과를 알 수 없는 이 순간에도 주님을 의지하게 하시고, 저를 붙드시는 손길을 신뢰하며 오늘을 살아가게 해주세요.',
 });
 
 const guidanceResponse = (value: unknown) => ({
@@ -290,81 +284,72 @@ describe('기도 도움 · A. 요청 계약', () => {
 /* ================================================================== */
 
 describe('기도 도움 · B. 응답 계약', () => {
-  it('세 걸음의 이름과 순서가 정해져 있다', () => {
-    assert.deepEqual([...PRAYER_GUIDANCE_STEP_KINDS], ['tell', 'hold', 'respond']);
+  it('받는 것은 prayerText 하나뿐이다', () => {
+    assert.deepEqual([...PRAYER_GUIDANCE_FIELDS], ['prayerText']);
   });
 
   it('올바른 결과는 통과한다', () => {
     const checked = validatePrayerGuidance(goodGuidance());
     assert.equal(checked.ok, true);
     if (!checked.ok) return;
-    assert.equal(checked.guidance.steps.length, 3);
-    assert.deepEqual(
-      checked.guidance.steps.map((step) => step.kind),
-      ['tell', 'hold', 'respond'],
-    );
+    assert.equal(checked.guidance.prayerText, goodGuidance().prayerText);
   });
 
-  it('걸음이 셋이 아니면 거절한다', () => {
-    const two = goodGuidance();
-    two.steps = two.steps.slice(0, 2);
-    assert.equal(validatePrayerGuidance(two).ok, false);
-
-    const four = goodGuidance();
-    four.steps = [...four.steps, { kind: 'tell', prompt: '하나 더', starter: null }];
-    assert.equal(validatePrayerGuidance(four).ok, false);
+  it('앞뒤 공백은 다듬는다', () => {
+    const padded = { prayerText: `  ${goodGuidance().prayerText}  ` };
+    const checked = validatePrayerGuidance(padded);
+    assert.equal(checked.ok, true);
+    if (!checked.ok) return;
+    assert.equal(checked.guidance.prayerText, goodGuidance().prayerText);
   });
 
-  it('순서가 바뀌면 거절한다', () => {
-    const swapped = goodGuidance();
-    [swapped.steps[0], swapped.steps[1]] = [swapped.steps[1]!, swapped.steps[0]!];
-    assert.equal(validatePrayerGuidance(swapped).ok, false);
+  it('빈 글은 거절한다', () => {
+    assert.equal(validatePrayerGuidance({ prayerText: '' }).ok, false);
+    assert.equal(validatePrayerGuidance({ prayerText: '   ' }).ok, false);
   });
 
-  it('걸음에 모르는 항목이 붙으면 거절한다', () => {
-    const extra = goodGuidance() as unknown as { steps: Record<string, unknown>[] };
-    extra.steps[0]!.tone = '따뜻하게';
-    assert.equal(validatePrayerGuidance(extra).ok, false);
-  });
-
-  it('시작 문구는 없어도 된다', () => {
-    const bare = goodGuidance();
-    for (const step of bare.steps) step.starter = null;
-    assert.equal(validatePrayerGuidance(bare).ok, true);
-  });
-
-  it('완성된 기도문은 거절한다', () => {
-    for (const closing of ['아멘', '예수님의 이름으로 기도합니다', '기도드립니다']) {
-      const finished = goodGuidance();
-      finished.steps[0]!.starter = closing;
-      assert.equal(validatePrayerGuidance(finished).ok, false, closing);
-
-      const inPrompt = goodGuidance();
-      inPrompt.steps[0]!.prompt = `이렇게 기도해 보세요. ${closing}`;
-      assert.equal(validatePrayerGuidance(inPrompt).ok, false, closing);
+  it('문자열이 아니면 거절한다', () => {
+    for (const bad of [null, undefined, 42, true, [], {}]) {
+      assert.equal(validatePrayerGuidance({ prayerText: bad }).ok, false, String(bad));
     }
   });
 
-  it('너무 긴 글은 거절한다', () => {
-    const longIntro = goodGuidance();
-    longIntro.intro = '가'.repeat(INTRO_MAX + 1);
-    assert.equal(validatePrayerGuidance(longIntro).ok, false);
-
-    const longPrompt = goodGuidance();
-    longPrompt.steps[0]!.prompt = '가'.repeat(PROMPT_MAX + 1);
-    assert.equal(validatePrayerGuidance(longPrompt).ok, false);
-
-    const longStarter = goodGuidance();
-    longStarter.steps[0]!.starter = '가'.repeat(STARTER_MAX + 1);
-    assert.equal(validatePrayerGuidance(longStarter).ok, false);
+  it('모양이 object가 아니면 거절한다', () => {
+    for (const bad of [null, undefined, [], '문자열', 42, true]) {
+      assert.equal(validatePrayerGuidance(bad).ok, false, String(bad));
+    }
   });
 
-  it('모델이 형식을 채우려 넣은 메모는 결과에 담지 않는다', () => {
-    const checked = validatePrayerGuidance(goodGuidance());
-    assert.equal(checked.ok, true);
-    if (!checked.ok) return;
-    assert.deepEqual(Object.keys(checked.guidance).sort(), ['intro', 'steps']);
-    assert.equal('steps_count_note' in checked.guidance, false);
+  it('모르는 항목이 붙으면 거절한다', () => {
+    for (const extra of [
+      { prayerText: goodGuidance().prayerText, intro: '안내' },
+      { prayerText: goodGuidance().prayerText, steps: [] },
+      { prayerText: goodGuidance().prayerText, title: '제목' },
+    ]) {
+      assert.equal(validatePrayerGuidance(extra).ok, false, JSON.stringify(extra));
+    }
+  });
+
+  it('예전 3단계 모양은 거절한다', () => {
+    const oldShape = {
+      intro: '지금 마음에 있는 것을 그대로 말씀드려 보세요.',
+      steps: [{ kind: 'tell', prompt: '말씀드려 보세요.', starter: null }],
+    };
+    assert.equal(validatePrayerGuidance(oldShape).ok, false);
+  });
+
+  it('너무 긴 글은 거절한다', () => {
+    const tooLong = { prayerText: '가'.repeat(MAX_PRAYER_TEXT_LENGTH + 1) };
+    assert.equal(validatePrayerGuidance(tooLong).ok, false);
+  });
+
+  it('길이 상한 바로 그 값은 통과한다', () => {
+    const exact = { prayerText: '가'.repeat(MAX_PRAYER_TEXT_LENGTH) };
+    assert.equal(validatePrayerGuidance(exact).ok, true);
+  });
+
+  it('최소 길이 규칙은 두지 않는다(짧은 글도 통과)', () => {
+    assert.equal(validatePrayerGuidance({ prayerText: '하나님, 감사합니다.' }).ok, true);
   });
 
   it('성공 응답의 모양이 정해져 있다', async () => {
@@ -372,6 +357,57 @@ describe('기도 도움 · B. 응답 계약', () => {
     assert.equal(response.status, 200);
     assert.equal(parsed.ok, true);
     assert.deepEqual(Object.keys(parsed).sort(), ['guidance', 'ok']);
+    const guidance = parsed.guidance as Record<string, unknown>;
+    assert.deepEqual(Object.keys(guidance).sort(), ['prayerText']);
+  });
+});
+
+/* ================================================================== */
+/* B-2. 생성 뒤 마지막 안전판                                            */
+/* ================================================================== */
+
+describe('기도 도움 · B-2. 생성 뒤 마지막 안전판', () => {
+  it('하나님이 개인에게 직접 말씀하신 것처럼 선언하면 막는다', () => {
+    for (const bad of [
+      '하나님이 당신에게 이 일을 그만두라고 말씀하십니다.',
+      '하나님께서 당신에게 새로운 길을 보이셨습니다.',
+    ]) {
+      assert.equal(containsProhibitedPrayerPattern(bad), true, bad);
+    }
+  });
+
+  it('"반드시" 근처의 결과 보장 표현을 막는다', () => {
+    for (const bad of ['반드시 잘 될 것입니다.', '반드시 병이 나을 것입니다.', '반드시 해결될 것입니다.']) {
+      assert.equal(containsProhibitedPrayerPattern(bad), true, bad);
+    }
+  });
+
+  it('평범한 신뢰·지혜 기도는 막지 않는다', () => {
+    for (const ok of [
+      goodGuidance().prayerText,
+      '하나님, 제가 결과를 붙들려 하기보다 주님을 신뢰하게 해주세요.',
+      '지금 이 기쁨을 주셔서 감사드립니다.',
+      '이 일을 반드시 제 힘으로만 해내려 하지 않게 해주세요.',
+    ]) {
+      assert.equal(containsProhibitedPrayerPattern(ok), false, ok);
+    }
+  });
+
+  it('거대한 금칙어 사전이 아니라 좁은 패턴 두 개뿐이다', () => {
+    const contract = stripComments(read(CONTRACT));
+    const match = contract.match(/PROHIBITED_PRAYER_PATTERNS[\s\S]*?=\s*\[([\s\S]*?)\];/);
+    assert.ok(match, 'PROHIBITED_PRAYER_PATTERNS를 찾지 못했습니다.');
+    const entries = (match![1].match(/^\s*\/.+\/,?\s*$/gm) || []).length;
+    assert.equal(entries, 2);
+  });
+
+  it('안전판에 걸리면 재시도하지 않고 다른 실패와 같은 답을 낸다', async () => {
+    const { response, parsed, guidanceCalls } = await run({
+      guidance: { prayerText: '하나님이 당신에게 반드시 그 일을 이루어 주실 것입니다.' },
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(parsed, { ok: false, error: 'PRAYER_GUIDANCE_UNAVAILABLE' });
+    assert.equal(guidanceCalls.length, 1);
   });
 });
 
@@ -485,18 +521,35 @@ describe('기도 도움 · D. 말씀 해설의 주인은 서버다', () => {
   it('지시문이 신학의 경계를 적어 둔다', () => {
     const contract = read(CONTRACT);
     for (const rule of [
-      '대신 쓰지 않습니다',
       '새로 해석하지 않습니다',
       '뜻을 단정하지 않습니다',
       '예언하거나 결과를 보장하지 않습니다',
-      '없는 약속을 덧붙이지 않습니다',
-      '의료, 상담, 법률 판단을 하지 않습니다',
-      '지어내지 않습니다',
-      '어려운 상황이라고 전제하지 않습니다',
+      '본문에 없는 약속을 만들지 않습니다',
+      '구체적인 결정을 대신 내리지 않습니다',
+      '사용자가 말하지 않은 사실을 만들지 않습니다',
+      '어려운 상황이라고 미리 전제하지 않습니다',
       '지시가 아닙니다',
     ]) {
       assert.ok(contract.includes(rule), rule);
     }
+  });
+
+  it('새 guard(회개 강요/문제해결 종결/고통 단정/용서 오용) 문구가 있다', () => {
+    const contract = read(CONTRACT);
+    for (const rule of [
+      '회개를 기계적으로 넣지 않습니다',
+      '믿음 부족의 결과라고 단정하지 않습니다',
+      '특정 목적 때문에 보내셨다고 단정하지 않습니다',
+      '위험한 관계로의 복귀와 동일시하지 않습니다',
+      '사용자의 원문을 그대로 반복하거나 인용하지 않습니다',
+    ]) {
+      assert.ok(contract.includes(rule), rule);
+    }
+  });
+
+  it('완성된 기도문을 만들면 안 된다는 옛 규칙은 이제 없다', () => {
+    const contract = read(CONTRACT);
+    assert.equal(contract.includes('완성된 기도문을 만들면 안 됩니다'), false);
   });
 });
 
@@ -634,9 +687,14 @@ describe('기도 도움 · F. 사용량 한도', () => {
 describe('기도 도움 · G. 사용자가 적는 기도는 가지 않는다', () => {
   it('요청을 만드는 함수가 기도를 받을 자리가 없다', () => {
     const helper = stripComments(read(HELPER));
-    for (const banned of ['prayerDraft', 'prayerText', 'draft']) {
+    // prayerText는 서버가 만든 결과를 담는 응답 필드일 뿐이다.
+    // 요청 쪽(invokePrayerGuidance로 보내는 값)에는 사용자 draft를 받을 자리가 없어야 한다.
+    for (const banned of ['prayerDraft', 'draft']) {
       assert.equal(helper.includes(banned), false, banned);
     }
+    const requestBody = helper.split('invokePrayerGuidance({')[1]?.split('});')[0] ?? '';
+    assert.notEqual(requestBody, '');
+    assert.equal(requestBody.includes('prayerText'), false, requestBody);
     // 보내는 값은 둘뿐이다.
     assert.ok(helper.includes('situation: input.situation'));
     assert.ok(helper.includes('cardId: input.cardId'));
@@ -713,6 +771,8 @@ describe('기도 도움 · H. 실패해도 기도를 막지 않는다', () => {
       { ok: false },
       { ok: true },
       { ok: true, guidance: {} },
+      { ok: true, guidance: { prayerText: '' } },
+      { ok: true, guidance: { prayerText: '   ' } },
       { ok: true, guidance: { intro: '안내', steps: [] } },
       { ok: true, guidance: { intro: '안내', steps: [{ kind: 'hold', prompt: 'a', starter: null }] } },
     ]) {
@@ -720,7 +780,7 @@ describe('기도 도움 · H. 실패해도 기도를 막지 않는다', () => {
     }
   });
 
-  it('화면은 실패하면 정해진 세 걸음으로 조용히 넘어간다', () => {
+  it('화면은 실패하면 기도 방향을 솔직하게 보여준다', () => {
     const screen = stripComments(read(PRAYER_SCREEN));
 
     // 도움을 받지 못한 경우가 실제로 fallback으로 이어져야 한다.
@@ -734,7 +794,11 @@ describe('기도 도움 · H. 실패해도 기도를 막지 않는다', () => {
     assert.ok(mapping!.includes("outcome.status === 'guidance'"), mapping);
     assert.ok(mapping!.includes(": { status: 'fallback' }"), mapping);
 
-    assert.ok(screen.includes('GUIDE_STEPS.map'));
+    // 기도문을 준비하지 못했다고 솔직히 말하고, prayerDirection을 기도문인 척 보여주지 않는다.
+    assert.ok(screen.includes('지금은 기도문을 준비하지 못했어요'));
+    assert.ok(screen.includes('기도 방향'));
+    assert.ok(screen.includes('card.prayerDirection'));
+    assert.equal(screen.includes('GUIDE_STEPS'), false);
     // 오류 화면으로 보내지 않는다.
     assert.equal(screen.includes("router.push('/error"), false);
     assert.equal(screen.includes('오류'), false);
@@ -774,17 +838,18 @@ describe('기도 도움 · I. 화면 동작', () => {
     assert.ok(screen.includes('alive = false;'));
   });
 
-  it('성공하면 받은 도움을 보여준다', () => {
+  it('성공하면 생성된 기도문을 읽기 전용으로 보여준다', () => {
     assert.ok(screen.includes("guidanceState.status === 'guidance'"));
-    assert.ok(screen.includes('guidanceState.guidance.intro'));
-    assert.ok(screen.includes('guidanceState.guidance.steps.map'));
-    assert.ok(screen.includes('step.prompt'));
-    assert.ok(screen.includes('step.starter'));
+    assert.ok(screen.includes('guidanceState.guidance.prayerText'));
+    // 3단계로 나누어 보여주던 옛 구조가 남아 있지 않다.
+    assert.equal(screen.includes('.steps.map'), false);
+    assert.equal(screen.includes('step.prompt'), false);
+    assert.equal(screen.includes('step.starter'), false);
   });
 
   it('도움 뒤에 사용자가 적는 자리가 그대로 있다', () => {
     assert.equal((screen.match(/<TextInput/g) || []).length, 1);
-    assert.ok(screen.indexOf('<TextInput') > screen.indexOf('guidanceState.guidance.steps.map'));
+    assert.ok(screen.indexOf('<TextInput') > screen.indexOf('guidanceState.guidance.prayerText'));
   });
 
   it('v1-A의 약속이 그대로다', () => {

@@ -104,23 +104,14 @@ describe('기도 경험 · B. 직접 기도', () => {
 /* ================================================================== */
 
 describe('기도 경험 · C. 기도를 시작하는 도움', () => {
-  it('세 걸음으로 시작하는 말을 놓아 둔다', () => {
-    assert.ok(PRAYER.includes('const GUIDE_STEPS = ['));
-    const block = PRAYER.split('const GUIDE_STEPS = [')[1].split('] as const')[0];
-    assert.equal((block.match(/title:/g) || []).length, 3);
-    assert.equal((block.match(/opener:/g) || []).length, 3);
+  it('아뢰다가 준비한 짧은 기도문을 읽기 전용으로 보여준다', () => {
+    assert.ok(PRAYER.includes('guidanceState.guidance.prayerText'));
+    // 옛 3단계(GUIDE_STEPS) 구조는 더 이상 없다.
+    assert.equal(PRAYER.includes('GUIDE_STEPS'), false);
   });
 
-  it('가운데 걸음은 오늘 말씀에서 가져온다', () => {
-    assert.ok(PRAYER.includes('step.opener ?? card.prayerDirection'));
-  });
-
-  it('완성된 기도문을 대신 읽어 주지 않는다', () => {
-    // 이번 판에서는 기도문을 만들지 않는다. 첫 마디만 놓아 둔다.
-    for (const banned of ['prayerText', '아멘', 'generatePrayer', 'openai', 'OpenAI']) {
-      assert.equal(PRAYER.includes(banned), false, banned);
-    }
-    // 카드에도 기도문 칸을 새로 만들지 않았다.
+  it('생성된 기도문을 카드나 화면이 새로 지어내지 않는다', () => {
+    // 카드에 기도문 칸을 새로 만들지 않았다. 서버가 매번 생성한다.
     for (const card of SCRIPTURE_CARDS) {
       assert.equal('prayerText' in card, false, card.id);
     }
@@ -129,9 +120,14 @@ describe('기도 경험 · C. 기도를 시작하는 도움', () => {
   it('도움을 받아도 마지막은 사용자가 적는 자리다', () => {
     // 입력 칸은 두 방식이 함께 쓰는 한 곳뿐이다.
     assert.equal((PRAYER.match(/<TextInput/g) || []).length, 1);
-    const guided = PRAYER.indexOf('GUIDE_STEPS.map');
+    const guided = PRAYER.indexOf('guidanceState.guidance.prayerText');
     assert.notEqual(guided, -1);
     assert.ok(PRAYER.indexOf('<TextInput') > guided);
+  });
+
+  it('도움을 받지 못하면 기도 방향을 솔직하게 대신 보여준다', () => {
+    assert.ok(PRAYER.includes('지금은 기도문을 준비하지 못했어요'));
+    assert.ok(PRAYER.includes('기도 방향'));
   });
 });
 

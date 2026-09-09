@@ -80,20 +80,8 @@ const PRIVATE_DRAFT = 'UI_TEST_PRIVATE_PRAYER_DRAFT';
  * 기도 안내 문구를 이 테스트 때문에 새로 지어내지 않는다.
  */
 const GUIDANCE_FIXTURE = {
-  intro: '지금 마음에 있는 것을 그대로 말씀드려 보세요.',
-  steps: [
-    {
-      kind: 'tell',
-      prompt: '무엇이 가장 무겁게 느껴지는지 말씀드려 보세요.',
-      starter: '하나님, 지금 저는…',
-    },
-    { kind: 'hold', prompt: '오늘 이 말씀에서 붙들고 싶은 한 가지를 말해 보세요.', starter: null },
-    {
-      kind: 'respond',
-      prompt: '맡기고 싶은 것을 말씀드려 보세요.',
-      starter: '주님께 맡기고 싶은 것은…',
-    },
-  ],
+  prayerText:
+    '하나님, 지금 마음이 두렵고 불안합니다. 결과를 알 수 없는 이 순간에도 주님을 의지하게 하시고, 저를 붙드시는 손길을 신뢰하며 오늘을 살아가게 해주세요.',
 };
 
 /**
@@ -162,9 +150,9 @@ describe('기도 화면 · 직접 기도하는 길', () => {
     expect(screen.getByLabelText('기도 적는 곳')).toBeTruthy();
     expect(screen.getByText(CARD.referenceLabel)).toBeTruthy();
 
-    // 오늘 말씀의 기도 방향은 그대로 두되, 서버가 만든 안내는 없어야 한다.
+    // 오늘 말씀의 기도 방향은 그대로 두되, 서버가 만든 기도문은 없어야 한다.
     expect(screen.getByText(CARD.prayerDirection)).toBeTruthy();
-    expect(screen.queryByText(GUIDANCE_FIXTURE.intro)).toBeNull();
+    expect(screen.queryByText(GUIDANCE_FIXTURE.prayerText)).toBeNull();
   });
 
   it('직접 기도하기를 골랐으면 서버를 부르지 않는다', async () => {
@@ -186,31 +174,22 @@ describe('기도 화면 · 직접 기도하는 길', () => {
 /* ================================================================== */
 
 describe('기도 화면 · 도움받는 길', () => {
-  it('서버가 준 안내가 화면에 보인다', async () => {
+  it('서버가 준 생성된 기도문이 화면에 보인다', async () => {
     respondOk();
 
     await renderPrayer('guided');
 
-    expect(await screen.findByText(GUIDANCE_FIXTURE.intro)).toBeTruthy();
-    for (const step of GUIDANCE_FIXTURE.steps) {
-      expect(screen.getByText(step.prompt)).toBeTruthy();
-    }
-    // 첫 마디가 있는 걸음은 그 첫 마디도 보여준다.
-    for (const step of GUIDANCE_FIXTURE.steps) {
-      if (step.starter) expect(screen.getByText(step.starter)).toBeTruthy();
-    }
-    // 붙드는 걸음에는 오늘 말씀의 기도 방향을 함께 둔다.
-    expect(screen.getByText(CARD.prayerDirection)).toBeTruthy();
+    expect(await screen.findByText(GUIDANCE_FIXTURE.prayerText)).toBeTruthy();
   });
 
-  it('안내를 받아도 기도를 대신 써 주지 않는다', async () => {
+  it('생성된 기도문이 있어도 사용자가 적는 자리는 비어 있다', async () => {
     respondOk();
 
     await renderPrayer('guided');
-    await screen.findByText(GUIDANCE_FIXTURE.intro);
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
 
-    // 이 앱의 약속이다. 도움은 첫 마디까지고, 기도는 사용자가 한다.
-    // 적는 자리가 미리 채워져 있으면 그 약속이 깨진다.
+    // 이 앱의 약속이다. 아뢰다가 기도문을 제안해도 그것을 적는 자리에 대신 채우지 않는다.
+    // 기도는 그대로 읽거나, 자기 말로 바꾸거나, 사용자가 정한다.
     expect(screen.getByLabelText('기도 적는 곳').props.value).toBe('');
   });
 
@@ -218,7 +197,7 @@ describe('기도 화면 · 도움받는 길', () => {
     respondOk();
 
     await renderPrayer('guided');
-    await screen.findByText(GUIDANCE_FIXTURE.intro);
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
 
     expect(invoke).toHaveBeenCalledTimes(1);
     const [functionName, options] = invoke.mock.calls[0] as [string, { body: unknown }];
@@ -235,7 +214,7 @@ describe('기도 화면 · 도움받는 길', () => {
     respondOk();
 
     await renderPrayer('guided');
-    await screen.findByText(GUIDANCE_FIXTURE.intro);
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
 
     // 서버는 자기 것을 쓴다. 화면이 가진 본문 해설을 실어 보내지 않는다.
     const sent = JSON.stringify(invoke.mock.calls);
@@ -253,7 +232,7 @@ describe('기도 화면 · 적은 기도는 나가지 않는다', () => {
     respondOk();
 
     await renderPrayer('guided');
-    await screen.findByText(GUIDANCE_FIXTURE.intro);
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
 
     const input = screen.getByLabelText('기도 적는 곳');
     await fireEvent.changeText(input, PRIVATE_DRAFT);
@@ -285,27 +264,25 @@ describe('기도 화면 · 적은 기도는 나가지 않는다', () => {
 /* ================================================================== */
 
 describe('기도 화면 · 도움을 받지 못해도', () => {
-  it('정해진 세 걸음으로 조용히 넘어간다', async () => {
+  it('기도문을 준비하지 못했다고 솔직히 알리고, 기도 방향을 대신 보여준다', async () => {
     respondError();
 
     await renderPrayer('guided');
 
-    // 앱이 원래 갖고 있던 세 걸음이 그대로 나온다.
-    expect(await screen.findByText('지금 마음을 그대로 말씀드려 보세요')).toBeTruthy();
-    expect(screen.getByText('오늘 말씀에서 붙들고 싶은 것을 말해 보세요')).toBeTruthy();
-    expect(screen.getByText('맡기고 싶은 것을 말씀드려 보세요')).toBeTruthy();
-    expect(screen.getByText('하나님, 지금 저는…')).toBeTruthy();
-    expect(screen.getByText('주님께 맡기고 싶은 것은…')).toBeTruthy();
+    expect(await screen.findByText('지금은 기도문을 준비하지 못했어요.')).toBeTruthy();
+    expect(screen.getByText('기도 방향')).toBeTruthy();
+    // prayerDirection을 기도문인 척 quote하지 않고, '기도 방향'이라는 이름으로만 보여준다.
+    expect(screen.getByText(CARD.prayerDirection)).toBeTruthy();
 
-    // 서버가 준 안내는 당연히 없다.
-    expect(screen.queryByText(GUIDANCE_FIXTURE.intro)).toBeNull();
+    // 서버가 준 생성 기도문은 당연히 없다.
+    expect(screen.queryByText(GUIDANCE_FIXTURE.prayerText)).toBeNull();
   });
 
   it('기도를 막지 않는다', async () => {
     respondError();
 
     await renderPrayer('guided');
-    await screen.findByText('지금 마음을 그대로 말씀드려 보세요');
+    await screen.findByText('지금은 기도문을 준비하지 못했어요.');
 
     // 도움을 못 받았다고 해서 기도하는 자리까지 사라지면 안 된다.
     expect(screen.getByLabelText('기도 적는 곳')).toBeTruthy();
@@ -316,7 +293,7 @@ describe('기도 화면 · 도움을 받지 못해도', () => {
     respondError();
 
     await renderPrayer('guided');
-    await screen.findByText('지금 마음을 그대로 말씀드려 보세요');
+    await screen.findByText('지금은 기도문을 준비하지 못했어요.');
 
     // 기도하러 온 사람에게 서버 사정을 설명하지 않는다.
     for (const word of ['boom', 'Supabase', 'supabase', '503', 'Edge Function', 'OpenAI']) {

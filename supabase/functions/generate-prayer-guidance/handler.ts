@@ -41,6 +41,7 @@ import {
   PRAYER_GUIDANCE_MODEL_TIMEOUT_MS,
   PRAYER_GUIDANCE_TOTAL_BUDGET_MS,
   buildPrayerGuidancePayload,
+  containsProhibitedPrayerPattern,
   parsePrayerGuidanceRequest,
   validatePrayerGuidance,
   type PrayerGuidance,
@@ -261,6 +262,11 @@ async function runPrayerGuidance(
 
   const checked = validatePrayerGuidance(read);
   if (!checked.ok) return unavailable('prayer_guidance_invalid_guidance');
+
+  // 마지막 안전판. 아주 명백한 단정/보장 표현만 걸러낸다. 다시 부르지 않는다.
+  if (containsProhibitedPrayerPattern(checked.guidance.prayerText)) {
+    return unavailable('prayer_guidance_prohibited_pattern');
+  }
 
   log(`[${requestId}] prayer_guidance_ready`);
   return jsonResponse(

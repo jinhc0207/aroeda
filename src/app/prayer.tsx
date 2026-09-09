@@ -65,28 +65,6 @@ type PrayerMode = (typeof PRAYER_MODES)[number];
 const isPrayerMode = (value: unknown): value is PrayerMode =>
   typeof value === 'string' && (PRAYER_MODES as readonly string[]).includes(value);
 
-/**
- * 기도를 시작하는 말.
- *
- * 완성된 기도문이 아닙니다. 첫 마디만 놓아 둡니다.
- * 가운데 한 가지는 오늘 붙든 말씀에서 가져옵니다.
- */
-const GUIDE_STEPS = [
-  {
-    title: '지금 마음을 그대로 말씀드려 보세요',
-    opener: '하나님, 지금 저는…',
-  },
-  {
-    title: '오늘 말씀에서 붙들고 싶은 것을 말해 보세요',
-    /** 본문은 카드의 기도 방향을 그대로 씁니다. 여기서 새로 쓰지 않습니다. */
-    opener: null,
-  },
-  {
-    title: '맡기고 싶은 것을 말씀드려 보세요',
-    opener: '주님께 맡기고 싶은 것은…',
-  },
-] as const;
-
 export default function PrayerScreen() {
   const params = useLocalSearchParams<{ mode?: string }>();
   const mode: PrayerMode = isPrayerMode(params.mode) ? params.mode : 'direct';
@@ -292,37 +270,20 @@ export default function PrayerScreen() {
                 </View>
               ) : guidanceState.status === 'guidance' ? (
                 <View style={styles.guide}>
-                  <Text style={styles.guideIntro}>{guidanceState.guidance.intro}</Text>
-                  {guidanceState.guidance.steps.map((step, index) => (
-                    <View key={step.kind} style={styles.guideStep}>
-                      <Text style={styles.guideNumber}>{index + 1}</Text>
-                      <View style={styles.guideTextBlock}>
-                        <Text style={styles.guideTitle}>{step.prompt}</Text>
-                        {/* 붙들 것을 아뢰는 걸음에서는 오늘 말씀의 기도 방향을 함께 둡니다. */}
-                        {step.kind === 'hold' ? (
-                          <Text style={styles.guideOpener}>{card.prayerDirection}</Text>
-                        ) : null}
-                        {step.starter ? (
-                          <Text style={styles.guideStarter}>{step.starter}</Text>
-                        ) : null}
-                      </View>
-                    </View>
-                  ))}
+                  <Text style={styles.guideIntro}>
+                    아뢰다가 이 말씀을 붙들고 드릴 수 있는 짧은 기도문을 준비했어요. 천천히 읽으며
+                    자기 말로 기도해도 괜찮아요.
+                  </Text>
+                  <Text style={styles.generatedPrayer}>{guidanceState.guidance.prayerText}</Text>
                 </View>
               ) : (
-                /* 도움을 받지 못했어도 기도를 막지 않습니다. 정해진 세 걸음을 그대로 씁니다. */
+                /* 기도문을 준비하지 못했어도 솔직하게 알리고, 기도를 막지 않습니다. */
                 <View style={styles.guide}>
-                  {GUIDE_STEPS.map((step, index) => (
-                    <View key={step.title} style={styles.guideStep}>
-                      <Text style={styles.guideNumber}>{index + 1}</Text>
-                      <View style={styles.guideTextBlock}>
-                        <Text style={styles.guideTitle}>{step.title}</Text>
-                        <Text style={styles.guideOpener}>
-                          {step.opener ?? card.prayerDirection}
-                        </Text>
-                      </View>
-                    </View>
-                  ))}
+                  <Text style={styles.waiting}>지금은 기도문을 준비하지 못했어요.</Text>
+                  <View>
+                    <Text style={styles.sectionTitle}>기도 방향</Text>
+                    <Text style={styles.body}>{card.prayerDirection}</Text>
+                  </View>
                 </View>
               )
             ) : (
@@ -455,20 +416,6 @@ const styles = StyleSheet.create({
     marginTop: 40,
     gap: 24,
   },
-  guideStep: {
-    flexDirection: 'row',
-    gap: 14,
-  },
-  guideNumber: {
-    minWidth: 22,
-    fontSize: 14,
-    lineHeight: 24,
-    fontWeight: '600',
-    color: colors.sage,
-  },
-  guideTextBlock: {
-    flex: 1,
-  },
   guideIntro: {
     fontSize: 15,
     lineHeight: 27,
@@ -479,23 +426,12 @@ const styles = StyleSheet.create({
     lineHeight: 27,
     color: colors.textMuted,
   },
-  guideTitle: {
-    fontSize: 15,
-    lineHeight: 24,
-    fontWeight: '600',
+  // 생성된 기도문. 사용자가 그대로 읽거나 자기 말로 바꿀 수 있는 읽기 전용 문장이다.
+  generatedPrayer: {
+    marginTop: 20,
+    fontSize: 17,
+    lineHeight: 30,
     color: colors.text,
-  },
-  guideStarter: {
-    marginTop: 8,
-    fontSize: 15,
-    lineHeight: 27,
-    color: colors.sage,
-  },
-  guideOpener: {
-    marginTop: 8,
-    fontSize: 15,
-    lineHeight: 27,
-    color: colors.textMuted,
   },
   input: {
     minHeight: 180,

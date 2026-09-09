@@ -1,7 +1,7 @@
 /**
  * 기도 화면에서 서버에 기도 도움을 요청하는 흐름
  *
- *   지금 나의 상황 + 지금 보고 있는 말씀 번호 → generate-prayer-guidance → 세 걸음
+ *   지금 나의 상황 + 지금 보고 있는 말씀 번호 → generate-prayer-guidance → 짧은 기도문
  *
  * 원칙
  *   - 사용자가 적고 있는 기도는 보내지 않는다. 받을 자리 자체를 만들지 않는다.
@@ -14,18 +14,8 @@
  * 필요한 동작만 인자로 받기 때문에 실제 서버 없이도 시험할 수 있다.
  */
 
-export const PRAYER_GUIDANCE_STEP_KINDS = ['tell', 'hold', 'respond'] as const;
-export type PrayerGuidanceStepKind = (typeof PRAYER_GUIDANCE_STEP_KINDS)[number];
-
-export type PrayerGuidanceStep = {
-  kind: PrayerGuidanceStepKind;
-  prompt: string;
-  starter: string | null;
-};
-
 export type PrayerGuidance = {
-  intro: string;
-  steps: PrayerGuidanceStep[];
+  prayerText: string;
 };
 
 /** 화면에서 서버 호출을 감싸 넘겨주는 결과. */
@@ -60,34 +50,10 @@ export function parsePrayerGuidanceResponse(data: unknown): PrayerGuidance | nul
   if (ok !== true) return null;
   if (typeof guidance !== 'object' || guidance === null || Array.isArray(guidance)) return null;
 
-  const { intro, steps } = guidance as { intro?: unknown; steps?: unknown };
-  if (!isNonEmptyString(intro)) return null;
-  if (!Array.isArray(steps) || steps.length !== PRAYER_GUIDANCE_STEP_KINDS.length) return null;
+  const { prayerText } = guidance as { prayerText?: unknown };
+  if (!isNonEmptyString(prayerText)) return null;
 
-  const checked: PrayerGuidanceStep[] = [];
-
-  for (const [index, entry] of steps.entries()) {
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
-    const step = entry as { kind?: unknown; prompt?: unknown; starter?: unknown };
-
-    // 순서가 정해져 있다. 자리가 바뀌면 다른 기도가 된다.
-    if (step.kind !== PRAYER_GUIDANCE_STEP_KINDS[index]) return null;
-    if (!isNonEmptyString(step.prompt)) return null;
-
-    let starter: string | null = null;
-    if (step.starter !== null && step.starter !== undefined) {
-      if (!isNonEmptyString(step.starter)) return null;
-      starter = step.starter;
-    }
-
-    checked.push({
-      kind: PRAYER_GUIDANCE_STEP_KINDS[index],
-      prompt: step.prompt,
-      starter,
-    });
-  }
-
-  return { intro, steps: checked };
+  return { prayerText };
 }
 
 /**
