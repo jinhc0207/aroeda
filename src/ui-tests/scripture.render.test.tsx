@@ -167,24 +167,20 @@ describe('말씀 화면 · 실제로 그려 보기', () => {
 /* ================================================================== */
 
 describe('말씀 화면 · 기도로 가는 길', () => {
-  it('직접 기도하기를 누르면 직접 기도하는 길로 간다', async () => {
+  it('기도 CTA가 하나뿐이다', async () => {
     await renderWithCard(CARD.id);
 
-    await fireEvent.press(screen.getByLabelText('직접 기도하기'));
-
-    expect(router.push).toHaveBeenCalledTimes(1);
-    expect(router.push).toHaveBeenCalledWith({
-      pathname: '/prayer',
-      params: { mode: 'direct' },
-    });
+    // 기도 방식을 먼저 고르게 하지 않는다. 길은 하나다.
+    expect(screen.queryByLabelText('직접 기도하기')).toBeNull();
+    expect(screen.queryByLabelText('기도를 시작하는 도움 받기')).toBeNull();
+    expect(screen.getByLabelText('이 말씀으로 기도해보기')).toBeTruthy();
   });
 
-  it('도움 받기를 누르면 도움 받는 길로 간다', async () => {
+  it('이 말씀으로 기도해보기를 누르면 기도 화면으로 간다', async () => {
     await renderWithCard(CARD.id);
 
-    await fireEvent.press(screen.getByLabelText('기도를 시작하는 도움 받기'));
+    await fireEvent.press(screen.getByLabelText('이 말씀으로 기도해보기'));
 
-    // 두 길은 서로 달라야 한다. 도움을 눌렀는데 직접 기도로 가면 안 된다.
     expect(router.push).toHaveBeenCalledTimes(1);
     expect(router.push).toHaveBeenCalledWith({
       pathname: '/prayer',

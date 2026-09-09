@@ -143,20 +143,10 @@ export default function ScriptureScreen() {
 
             <Pressable
               style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
-              onPress={() => router.push({ pathname: '/prayer', params: { mode: 'direct' } })}
-              accessibilityRole="button"
-              accessibilityLabel="직접 기도하기">
-              <Text style={styles.secondaryButtonLabel}>직접 기도하기</Text>
-            </Pressable>
-
-            <Text style={styles.closingHint}>어떻게 시작해야 할지 막막하다면</Text>
-
-            <Pressable
-              style={({ pressed }) => [styles.quietButton, pressed && styles.pressed]}
               onPress={() => router.push({ pathname: '/prayer', params: { mode: 'guided' } })}
               accessibilityRole="button"
-              accessibilityLabel="기도를 시작하는 도움 받기">
-              <Text style={styles.quietButtonLabel}>기도를 시작하는 도움 받기</Text>
+              accessibilityLabel="이 말씀으로 기도해보기">
+              <Text style={styles.secondaryButtonLabel}>이 말씀으로 기도해보기</Text>
             </Pressable>
           </View>
         </View>
@@ -297,27 +287,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 14,
     lineHeight: 23,
-    color: colors.textMuted,
-  },
-  closingHint: {
-    marginTop: 28,
-    fontSize: 14,
-    lineHeight: 23,
-    textAlign: 'center',
-    color: colors.textMuted,
-  },
-  quietButton: {
-    marginTop: 12,
-    minHeight: 52,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  quietButtonLabel: {
-    fontSize: 15,
-    lineHeight: 24,
-    fontWeight: '600',
     color: colors.textMuted,
   },
   button: {

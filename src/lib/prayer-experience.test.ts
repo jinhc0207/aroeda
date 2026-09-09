@@ -34,21 +34,22 @@ const PRAYER = stripComments(read('../app/prayer.tsx'));
 /* ================================================================== */
 
 describe('기도 경험 · A. 말씀 화면에서 기도로', () => {
-  it('직접 기도하러 가는 길이 있다', () => {
+  it('기도로 가는 길이 하나 있다', () => {
     assert.ok(PRAYER.length > 0);
     assert.ok(SCRIPTURE.includes("pathname: '/prayer'"));
-    assert.ok(SCRIPTURE.includes("mode: 'direct'"));
-    assert.ok(SCRIPTURE.includes('직접 기도하기'));
-  });
-
-  it('기도를 시작하는 도움을 받는 길이 있다', () => {
     assert.ok(SCRIPTURE.includes("mode: 'guided'"));
-    assert.ok(SCRIPTURE.includes('기도를 시작하는 도움 받기'));
+    assert.ok(SCRIPTURE.includes('이 말씀으로 기도해보기'));
   });
 
-  it('두 길 모두 실제로 화면을 옮긴다', () => {
+  it('기도 방식을 먼저 고르게 하지 않는다(옛 두 갈래 CTA가 없다)', () => {
+    assert.equal(SCRIPTURE.includes("mode: 'direct'"), false);
+    assert.equal(SCRIPTURE.includes('직접 기도하기'), false);
+    assert.equal(SCRIPTURE.includes('기도를 시작하는 도움 받기'), false);
+  });
+
+  it('기도 CTA는 실제로 화면을 옮긴다', () => {
     // 누르면 아무 일도 하지 않는 버튼이 아니다.
-    assert.equal((SCRIPTURE.match(/router\.push\(\{ pathname: '\/prayer'/g) || []).length, 2);
+    assert.equal((SCRIPTURE.match(/router\.push\(\{ pathname: '\/prayer'/g) || []).length, 1);
   });
 
   it('아무 일도 하지 않던 옛 버튼이 사라졌다', () => {
@@ -57,11 +58,6 @@ describe('기도 경험 · A. 말씀 화면에서 기도로', () => {
     // 그 버튼만 쓰던 상태와 칸도 함께 치웠다.
     assert.equal(SCRIPTURE.includes('setNotice'), false);
     assert.equal(SCRIPTURE.includes('noticeText'), false);
-  });
-
-  it('기도를 먼저 권하고, 도움은 그다음이다', () => {
-    // 사용자가 직접 아뢰는 것이 앞이고, 도움은 막막할 때만이다.
-    assert.ok(SCRIPTURE.indexOf('직접 기도하기') < SCRIPTURE.indexOf('기도를 시작하는 도움 받기'));
   });
 });
 
