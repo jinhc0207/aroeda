@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -21,14 +21,14 @@ import { useSituation } from '@/state/situation';
 /**
  * 기도 화면
  *
- * 말씀을 읽은 다음, 사용자가 직접 하나님께 아뢰는 자리입니다.
+ * 말씀을 읽고 삶의 방향을 다시 본 다음, 원하는 사람만 들어오는 선택된 자리입니다.
  *
- * 두 가지로 들어옵니다.
- *   direct — 바로 기도합니다.
- *   guided — 어떻게 시작할지 막막할 때, 시작하는 말만 몇 가지 놓아 둡니다.
+ * 들어오면 이 말씀을 붙들고 드릴 수 있는 짧은 기도문을 한 번 준비해 보여 줍니다.
+ * 사용자는 그대로 읽거나, 자기 말로 바꾸어 기도하거나, 아무것도 적지 않고 마칠 수 있습니다.
  *
- * 어느 쪽이든 마지막은 사용자가 자기 말로 기도하는 자리입니다.
- * 완성된 기도문을 대신 읽어 주고 끝내지 않습니다.
+ * 자기 말로 적는 자리는 기본으로 열어 두지 않습니다.
+ * "내 말로 적어보기"를 직접 고른 경우에만 입력창이 펼쳐집니다.
+ * 앱에 무언가를 써야 기도가 완성되는 구조를 만들지 않습니다.
  *
  * 사용자가 적은 기도는 이 화면의 메모리에만 있습니다.
  * 서버로 보내지 않고, 기기에 저장하지 않고, 기록에도 남기지 않습니다.
@@ -46,12 +46,12 @@ async function invokePrayerGuidance(body: { situation: string; cardId: string })
 }
 
 /**
- * 기도 도움을 받아 오는 동안의 상태.
+ * 기도문을 받아 오는 동안의 상태.
  *
- *   idle     아직 요청하지 않았다 (직접 기도하는 길)
+ *   idle     아직 요청하지 않았다 (상황·말씀이 준비되기 전)
  *   loading  기다리는 중
- *   guidance 상황에 맞는 도움을 받았다
- *   fallback 받지 못했다. 정해진 세 걸음을 그대로 쓴다
+ *   guidance 이 말씀으로 드릴 수 있는 짧은 기도문을 받았다
+ *   fallback 받지 못했다. 기도 방향을 대신 보여 준다
  */
 type GuidanceState =
   | { status: 'idle' }
@@ -59,16 +59,7 @@ type GuidanceState =
   | { status: 'guidance'; guidance: PrayerGuidance }
   | { status: 'fallback' };
 
-const PRAYER_MODES = ['direct', 'guided'] as const;
-type PrayerMode = (typeof PRAYER_MODES)[number];
-
-const isPrayerMode = (value: unknown): value is PrayerMode =>
-  typeof value === 'string' && (PRAYER_MODES as readonly string[]).includes(value);
-
 export default function PrayerScreen() {
-  const params = useLocalSearchParams<{ mode?: string }>();
-  const mode: PrayerMode = isPrayerMode(params.mode) ? params.mode : 'direct';
-
   const { situation, selectedCardId, setSituation, setSelectedCardId } = useSituation();
 
   // 사용자가 적는 기도. 이 화면 안에만 있습니다.
@@ -76,6 +67,8 @@ export default function PrayerScreen() {
   const [prayer, setPrayer] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const [isDone, setIsDone] = useState(false);
+  // 자기 말로 적는 자리는 직접 고른 경우에만 펼칩니다.
+  const [showPersonalPrayer, setShowPersonalPrayer] = useState(false);
   const [guidanceState, setGuidanceState] = useState<GuidanceState>({ status: 'idle' });
 
   // 추천된 카드가 없거나 모르는 id면 다른 말씀으로 대체하지 않습니다.
@@ -89,16 +82,14 @@ export default function PrayerScreen() {
   }, [selectedCardId]);
 
   /**
-   * 기도 도움은 화면에 한 번 들어올 때 한 번만 받아 옵니다.
+   * 기도문은 화면에 한 번 들어올 때 한 번만 받아 옵니다.
    *
    * 다시 그려질 때마다 또 부르지 않도록 이미 물어봤는지 기억합니다.
-   * 실패해도 다시 부르지 않습니다. 정해진 세 걸음이 그대로 남아 있습니다.
+   * 실패해도 다시 부르지 않습니다. 기도 방향을 대신 보여 줍니다.
    */
   const askedRef = useRef(false);
 
   useEffect(() => {
-    // 직접 기도하는 길에서는 서버를 부르지 않습니다.
-    if (mode !== 'guided') return;
     if (!card || situation.trim().length === 0) return;
     if (askedRef.current) return;
 
@@ -125,7 +116,7 @@ export default function PrayerScreen() {
     return () => {
       alive = false;
     };
-  }, [mode, card, situation]);
+  }, [card, situation]);
 
   const goBack = () => {
     if (router.canGoBack()) {
@@ -138,6 +129,7 @@ export default function PrayerScreen() {
   /** 기도를 마치고 처음으로. 다음 사람이 아니라 다음 이야기를 위해 비웁니다. */
   const goHome = () => {
     setPrayer('');
+    setShowPersonalPrayer(false);
     setSituation('');
     setSelectedCardId(null);
     router.replace('/');
@@ -254,63 +246,70 @@ export default function PrayerScreen() {
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.title}>이 말씀으로 아뢰어 보세요</Text>
+              <Text style={styles.title}>이 말씀으로 기도해요</Text>
               <Text style={styles.lead}>
                 잘 정리된 말이 아니어도 괜찮아요. 지금 마음에 있는 것을 그대로 말씀드려 보세요.
               </Text>
               <Text style={styles.reference}>{card.referenceLabel}</Text>
             </View>
 
-            {mode === 'guided' ? (
-              guidanceState.status === 'loading' ? (
-                <View style={styles.guide}>
-                  <Text style={styles.waiting}>
-                    이 말씀으로 기도를 시작할 수 있도록 잠시 함께 정리하고 있어요.
-                  </Text>
+            {guidanceState.status === 'guidance' ? (
+              <View style={styles.guide}>
+                <Text style={styles.guideIntro}>
+                  이 말씀을 붙들고 드릴 수 있는 짧은 기도문이에요. 그대로 읽으셔도, 자기 말로 바꾸어
+                  기도하셔도 괜찮아요.
+                </Text>
+                <Text style={styles.generatedPrayer}>{guidanceState.guidance.prayerText}</Text>
+              </View>
+            ) : guidanceState.status === 'fallback' ? (
+              /* 기도문을 준비하지 못했어도 솔직하게 알리고, 기도를 막지 않습니다. */
+              <View style={styles.guide}>
+                <Text style={styles.waiting}>지금은 기도문을 준비하지 못했어요.</Text>
+                <View>
+                  <Text style={styles.sectionTitle}>기도 방향</Text>
+                  <Text style={styles.body}>{card.prayerDirection}</Text>
                 </View>
-              ) : guidanceState.status === 'guidance' ? (
-                <View style={styles.guide}>
-                  <Text style={styles.guideIntro}>
-                    아뢰다가 이 말씀을 붙들고 드릴 수 있는 짧은 기도문을 준비했어요. 천천히 읽으며
-                    자기 말로 기도해도 괜찮아요.
-                  </Text>
-                  <Text style={styles.generatedPrayer}>{guidanceState.guidance.prayerText}</Text>
-                </View>
-              ) : (
-                /* 기도문을 준비하지 못했어도 솔직하게 알리고, 기도를 막지 않습니다. */
-                <View style={styles.guide}>
-                  <Text style={styles.waiting}>지금은 기도문을 준비하지 못했어요.</Text>
-                  <View>
-                    <Text style={styles.sectionTitle}>기도 방향</Text>
-                    <Text style={styles.body}>{card.prayerDirection}</Text>
-                  </View>
-                </View>
-              )
+              </View>
             ) : (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>이 말씀을 붙들고</Text>
-                <Text style={styles.body}>{card.prayerDirection}</Text>
+              <View style={styles.guide}>
+                <Text style={styles.waiting}>
+                  이 말씀으로 기도를 시작할 수 있도록 잠시 함께 정리하고 있어요.
+                </Text>
               </View>
             )}
 
-            <View style={styles.section}>
-              <TextInput
-                style={[styles.input, isFocused && styles.inputFocused]}
-                value={prayer}
-                onChangeText={setPrayer}
-                onFocus={() => setIsFocused(true)}
-                onBlur={() => setIsFocused(false)}
-                placeholder="지금 하나님께 아뢰고 싶은 말을 적어보세요."
-                placeholderTextColor={colors.textSubtle}
-                multiline
-                textAlignVertical="top"
-                scrollEnabled={false}
-                accessibilityLabel="기도 적는 곳"
-              />
-              <Text style={styles.inputNote}>
-                적으신 기도는 어디에도 저장되지 않고, 이 화면에서만 머물러요.
-              </Text>
-            </View>
+            {guidanceState.status === 'guidance' || guidanceState.status === 'fallback' ? (
+              showPersonalPrayer ? (
+                <View style={styles.section}>
+                  <TextInput
+                    style={[styles.input, isFocused && styles.inputFocused]}
+                    value={prayer}
+                    onChangeText={setPrayer}
+                    onFocus={() => setIsFocused(true)}
+                    onBlur={() => setIsFocused(false)}
+                    placeholder="지금 하나님께 아뢰고 싶은 말을 적어보세요."
+                    placeholderTextColor={colors.textSubtle}
+                    multiline
+                    textAlignVertical="top"
+                    scrollEnabled={false}
+                    accessibilityLabel="기도 적는 곳"
+                  />
+                  <Text style={styles.inputNote}>
+                    적으신 기도는 어디에도 저장되지 않고, 이 화면에서만 머물러요.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.section}>
+                  <Pressable
+                    style={({ pressed }) => [styles.quietButton, pressed && styles.pressed]}
+                    onPress={() => setShowPersonalPrayer(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="내 말로 적어보기">
+                    <Text style={styles.quietButtonLabel}>내 말로 적어보기</Text>
+                  </Pressable>
+                </View>
+              )
+            ) : null}
 
             <View style={styles.actions}>
               <Pressable

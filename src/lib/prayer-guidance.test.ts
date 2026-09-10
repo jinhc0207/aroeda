@@ -822,8 +822,10 @@ describe('기도 도움 · H. 실패해도 기도를 막지 않는다', () => {
 describe('기도 도움 · I. 화면 동작', () => {
   const screen = stripComments(read(PRAYER_SCREEN));
 
-  it('직접 기도하는 길에서는 서버를 부르지 않는다', () => {
-    assert.ok(screen.includes("if (mode !== 'guided') return;"));
+  it('들어오는 방식을 나누지 않는다(옛 direct/guided 분기가 없다)', () => {
+    assert.equal(screen.includes("mode !== 'guided'"), false);
+    assert.equal(screen.includes('PRAYER_MODES'), false);
+    assert.equal(screen.includes('isPrayerMode'), false);
   });
 
   it('한 번 들어올 때 한 번만 부른다', () => {

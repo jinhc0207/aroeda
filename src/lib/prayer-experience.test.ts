@@ -36,20 +36,20 @@ const PRAYER = stripComments(read('../app/prayer.tsx'));
 describe('기도 경험 · A. 말씀 화면에서 기도로', () => {
   it('기도로 가는 길이 하나 있다', () => {
     assert.ok(PRAYER.length > 0);
-    assert.ok(SCRIPTURE.includes("pathname: '/prayer'"));
-    assert.ok(SCRIPTURE.includes("mode: 'guided'"));
+    assert.ok(SCRIPTURE.includes("router.push('/prayer')"));
     assert.ok(SCRIPTURE.includes('이 말씀으로 기도해보기'));
   });
 
   it('기도 방식을 먼저 고르게 하지 않는다(옛 두 갈래 CTA가 없다)', () => {
     assert.equal(SCRIPTURE.includes("mode: 'direct'"), false);
+    assert.equal(SCRIPTURE.includes("mode: 'guided'"), false);
     assert.equal(SCRIPTURE.includes('직접 기도하기'), false);
     assert.equal(SCRIPTURE.includes('기도를 시작하는 도움 받기'), false);
   });
 
   it('기도 CTA는 실제로 화면을 옮긴다', () => {
     // 누르면 아무 일도 하지 않는 버튼이 아니다.
-    assert.equal((SCRIPTURE.match(/router\.push\(\{ pathname: '\/prayer'/g) || []).length, 1);
+    assert.equal((SCRIPTURE.match(/router\.push\('\/prayer'\)/g) || []).length, 1);
   });
 
   it('아무 일도 하지 않던 옛 버튼이 사라졌다', () => {
@@ -62,44 +62,17 @@ describe('기도 경험 · A. 말씀 화면에서 기도로', () => {
 });
 
 /* ================================================================== */
-/* B. 직접 기도                                                        */
+/* B. 하나의 기도 흐름                                                  */
 /* ================================================================== */
 
-describe('기도 경험 · B. 직접 기도', () => {
-  it('두 가지로 들어올 수 있고, 기본은 직접 기도다', () => {
-    assert.ok(PRAYER.includes("const PRAYER_MODES = ['direct', 'guided'] as const"));
-    assert.ok(PRAYER.includes("isPrayerMode(params.mode) ? params.mode : 'direct'"));
+describe('기도 경험 · B. 하나의 기도 흐름', () => {
+  it('들어오는 방식을 나누지 않는다(옛 direct/guided 분기가 없다)', () => {
+    assert.equal(PRAYER.includes('PRAYER_MODES'), false);
+    assert.equal(PRAYER.includes('isPrayerMode'), false);
+    assert.equal(PRAYER.includes('useLocalSearchParams'), false);
+    assert.equal(PRAYER.includes("params.mode"), false);
   });
 
-  it('오늘 붙든 말씀의 기도 방향을 쓴다', () => {
-    assert.ok(PRAYER.includes('card.prayerDirection'));
-    // 카드마다 그 값이 실제로 채워져 있어야 화면이 빈 채로 나오지 않는다.
-    for (const card of SCRIPTURE_CARDS) {
-      assert.ok(
-        typeof card.prayerDirection === 'string' && card.prayerDirection.trim().length > 0,
-        card.id,
-      );
-    }
-  });
-
-  it('본문 전체를 다시 길게 반복하지 않는다', () => {
-    assert.equal(PRAYER.includes('getPassage'), false);
-    assert.ok(PRAYER.includes('card.referenceLabel'));
-  });
-
-  it('사용자가 자기 말로 적을 자리가 있다', () => {
-    assert.ok(PRAYER.includes('<TextInput'));
-    assert.ok(PRAYER.includes('multiline'));
-    assert.ok(PRAYER.includes('지금 하나님께 아뢰고 싶은 말을 적어보세요'));
-    assert.ok(PRAYER.includes('accessibilityLabel="기도 적는 곳"'));
-  });
-});
-
-/* ================================================================== */
-/* C. 기도를 시작하는 도움                                              */
-/* ================================================================== */
-
-describe('기도 경험 · C. 기도를 시작하는 도움', () => {
   it('아뢰다가 준비한 짧은 기도문을 읽기 전용으로 보여준다', () => {
     assert.ok(PRAYER.includes('guidanceState.guidance.prayerText'));
     // 옛 3단계(GUIDE_STEPS) 구조는 더 이상 없다.
@@ -113,17 +86,56 @@ describe('기도 경험 · C. 기도를 시작하는 도움', () => {
     }
   });
 
-  it('도움을 받아도 마지막은 사용자가 적는 자리다', () => {
-    // 입력 칸은 두 방식이 함께 쓰는 한 곳뿐이다.
+  it('본문 전체를 다시 길게 반복하지 않는다', () => {
+    assert.equal(PRAYER.includes('getPassage'), false);
+    assert.ok(PRAYER.includes('card.referenceLabel'));
+  });
+
+  it('기도문을 받지 못하면 기도 방향을 솔직하게 대신 보여준다', () => {
+    assert.ok(PRAYER.includes('지금은 기도문을 준비하지 못했어요'));
+    assert.ok(PRAYER.includes('기도 방향'));
+    assert.ok(PRAYER.includes('card.prayerDirection'));
+    // 카드마다 그 값이 실제로 채워져 있어야 화면이 빈 채로 나오지 않는다.
+    for (const card of SCRIPTURE_CARDS) {
+      assert.ok(
+        typeof card.prayerDirection === 'string' && card.prayerDirection.trim().length > 0,
+        card.id,
+      );
+    }
+  });
+});
+
+/* ================================================================== */
+/* C. 자기 말로 적는 자리는 선택이다                                     */
+/* ================================================================== */
+
+describe('기도 경험 · C. 적는 자리는 선택이다', () => {
+  it('입력창은 기본으로 열려 있지 않고, 고른 경우에만 펼쳐진다', () => {
+    assert.ok(PRAYER.includes("const [showPersonalPrayer, setShowPersonalPrayer] = useState(false)"));
+    assert.ok(PRAYER.includes('setShowPersonalPrayer(true)'));
+    assert.ok(PRAYER.includes('내 말로 적어보기'));
+    // 입력창은 showPersonalPrayer가 참일 때만 그려진다.
+    assert.ok(/showPersonalPrayer \?\s*\(\s*<View[\s\S]*?<TextInput/.test(PRAYER));
+  });
+
+  it('입력 칸은 한 곳뿐이고, 기도문 다음에 온다', () => {
     assert.equal((PRAYER.match(/<TextInput/g) || []).length, 1);
     const guided = PRAYER.indexOf('guidanceState.guidance.prayerText');
     assert.notEqual(guided, -1);
     assert.ok(PRAYER.indexOf('<TextInput') > guided);
   });
 
-  it('도움을 받지 못하면 기도 방향을 솔직하게 대신 보여준다', () => {
-    assert.ok(PRAYER.includes('지금은 기도문을 준비하지 못했어요'));
-    assert.ok(PRAYER.includes('기도 방향'));
+  it('입력창을 열면 저장하지 않는다는 안내가 함께 보인다', () => {
+    assert.ok(PRAYER.includes('multiline'));
+    assert.ok(PRAYER.includes('지금 하나님께 아뢰고 싶은 말을 적어보세요'));
+    assert.ok(PRAYER.includes('accessibilityLabel="기도 적는 곳"'));
+    assert.ok(PRAYER.includes('어디에도 저장되지 않고'));
+  });
+
+  it('적지 않아도 기도를 마칠 수 있다', () => {
+    assert.equal(/disabled=\{[^}]*prayer/.test(PRAYER), false);
+    assert.equal(PRAYER.includes('prayer.trim().length === 0'), false);
+    assert.ok(PRAYER.includes('소리 내어 기도하셨다면'));
   });
 });
 

@@ -143,7 +143,7 @@ export default function ScriptureScreen() {
 
             <Pressable
               style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
-              onPress={() => router.push({ pathname: '/prayer', params: { mode: 'guided' } })}
+              onPress={() => router.push('/prayer')}
               accessibilityRole="button"
               accessibilityLabel="이 말씀으로 기도해보기">
               <Text style={styles.secondaryButtonLabel}>이 말씀으로 기도해보기</Text>

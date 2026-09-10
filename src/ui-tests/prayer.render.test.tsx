@@ -5,15 +5,18 @@
  *
  * 이 화면은 앱에서 가장 조심스러운 자리다.
  * 한 화면 안에 다음이 모두 들어 있다.
- *   직접 기도하는 길 / 도움받는 길 / 사용자가 적는 기도 /
- *   서버 요청 / 성공 / 실패 / 마치는 흐름
+ *   기도문 준비 / 성공 / 실패 / 자기 말로 적는 선택 자리 / 마치는 흐름
  *
  * 지켜야 할 약속 중 가장 무거운 것 둘:
- *   1. 직접 기도하기를 골랐으면 서버를 부르지 않는다.
+ *   1. 화면에 들어올 때 기도문 요청은 최대 한 번뿐이다.
  *   2. 사용자가 적은 기도는 어떤 경우에도 서버로 나가지 않는다.
  *
+ * 그리고 새 약속 하나:
+ *   3. 자기 말로 적는 입력창은 기본으로 열려 있지 않다.
+ *      "내 말로 적어보기"를 직접 고른 경우에만 나타난다.
+ *
  * 검사하는 것과 하지 않는 것:
- *   검사한다 — 어떤 길로 들어왔을 때 무엇이 보이는가, 무엇이 서버로 나가는가.
+ *   검사한다 — 무엇이 보이는가, 무엇이 서버로 나가는가.
  *   검사하지 않는다 — 안내 문구가 신학적으로 옳은가.
  *   그 판단은 이미 계약 테스트들이 맡고 있다.
  *
@@ -40,7 +43,6 @@ jest.mock('expo-router', () => ({
     back: jest.fn(),
     canGoBack: jest.fn(() => false),
   },
-  useLocalSearchParams: jest.fn(() => ({})),
 }));
 
 // 진짜 서버로 나가지 않도록 Supabase 모듈 자체를 바꾼다.
@@ -49,9 +51,8 @@ jest.mock('@/lib/supabase', () => ({
 }));
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { router, useLocalSearchParams } = require('expo-router') as {
+const { router } = require('expo-router') as {
   router: { push: jest.Mock; replace: jest.Mock; back: jest.Mock; canGoBack: jest.Mock };
-  useLocalSearchParams: jest.Mock;
 };
 const { supabase } = require('@/lib/supabase') as {
   supabase: { functions: { invoke: jest.Mock } };
@@ -105,14 +106,12 @@ function WithSituation({ cardId, situation }: { cardId: string; situation: strin
   return <PrayerScreen />;
 }
 
-const renderPrayer = (mode: 'direct' | 'guided') => {
-  useLocalSearchParams.mockReturnValue({ mode });
-  return render(
+const renderPrayer = () =>
+  render(
     <SituationProvider>
       <WithSituation cardId={CARD.id} situation={SITUATION} />
     </SituationProvider>,
   );
-};
 
 /** 서버가 잘 응답한 경우. */
 const respondOk = () =>
@@ -135,68 +134,29 @@ beforeEach(() => {
   router.replace.mockReset();
   router.back.mockReset();
   router.canGoBack.mockReturnValue(false);
-  useLocalSearchParams.mockReturnValue({});
 });
 
 /* ================================================================== */
-/* A. 직접 기도하는 길                                                  */
+/* A. 들어오면 기도문을 준비한다                                         */
 /* ================================================================== */
 
-describe('기도 화면 · 직접 기도하는 길', () => {
-  it('직접 기도하는 자리가 그려진다', async () => {
-    await renderPrayer('direct');
+describe('기도 화면 · 들어오면 기도문을 준비한다', () => {
+  it('기도하는 자리가 그려지고, 기도문 요청은 한 번 나간다', async () => {
+    respondOk();
 
-    expect(screen.getByText('이 말씀으로 아뢰어 보세요')).toBeTruthy();
-    expect(screen.getByLabelText('기도 적는 곳')).toBeTruthy();
+    await renderPrayer();
+
+    expect(screen.getByText('이 말씀으로 기도해요')).toBeTruthy();
     expect(screen.getByText(CARD.referenceLabel)).toBeTruthy();
-
-    // 오늘 말씀의 기도 방향은 그대로 두되, 서버가 만든 기도문은 없어야 한다.
-    expect(screen.getByText(CARD.prayerDirection)).toBeTruthy();
-    expect(screen.queryByText(GUIDANCE_FIXTURE.prayerText)).toBeNull();
-  });
-
-  it('직접 기도하기를 골랐으면 서버를 부르지 않는다', async () => {
-    respondOk();
-
-    await renderPrayer('direct');
-
-    // 화면이 실제로 그려졌는지 먼저 확인한다.
-    // 이 줄이 없으면 화면이 안 그려져도 "서버를 안 불렀다"고 통과해 버린다.
-    expect(screen.getByLabelText('기도 적는 곳')).toBeTruthy();
-
-    // 직접 기도하겠다고 했는데 상황이 다시 서버로 나가면 안 된다.
-    expect(invoke).not.toHaveBeenCalled();
-  });
-});
-
-/* ================================================================== */
-/* B. 도움받는 길 — 잘 되었을 때                                        */
-/* ================================================================== */
-
-describe('기도 화면 · 도움받는 길', () => {
-  it('서버가 준 생성된 기도문이 화면에 보인다', async () => {
-    respondOk();
-
-    await renderPrayer('guided');
-
     expect(await screen.findByText(GUIDANCE_FIXTURE.prayerText)).toBeTruthy();
-  });
 
-  it('생성된 기도문이 있어도 사용자가 적는 자리는 비어 있다', async () => {
-    respondOk();
-
-    await renderPrayer('guided');
-    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
-
-    // 이 앱의 약속이다. 아뢰다가 기도문을 제안해도 그것을 적는 자리에 대신 채우지 않는다.
-    // 기도는 그대로 읽거나, 자기 말로 바꾸거나, 사용자가 정한다.
-    expect(screen.getByLabelText('기도 적는 곳').props.value).toBe('');
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 
   it('서버로 나가는 것은 상황과 말씀 번호 둘뿐이다', async () => {
     respondOk();
 
-    await renderPrayer('guided');
+    await renderPrayer();
     await screen.findByText(GUIDANCE_FIXTURE.prayerText);
 
     expect(invoke).toHaveBeenCalledTimes(1);
@@ -213,7 +173,7 @@ describe('기도 화면 · 도움받는 길', () => {
   it('말씀 설명과 기도 방향을 우리 쪽에서 보내지 않는다', async () => {
     respondOk();
 
-    await renderPrayer('guided');
+    await renderPrayer();
     await screen.findByText(GUIDANCE_FIXTURE.prayerText);
 
     // 서버는 자기 것을 쓴다. 화면이 가진 본문 해설을 실어 보내지 않는다.
@@ -224,38 +184,69 @@ describe('기도 화면 · 도움받는 길', () => {
 });
 
 /* ================================================================== */
-/* C. 사용자가 적은 기도는 나가지 않는다                                 */
+/* B. 자기 말로 적는 자리는 골라야 열린다                                */
+/* ================================================================== */
+
+describe('기도 화면 · 적는 자리는 골라야 열린다', () => {
+  it('기도문이 와도 적는 칸은 기본으로 없다', async () => {
+    respondOk();
+
+    await renderPrayer();
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
+
+    // 아뢰다가 기도문을 제안해도, 사용자에게 적기를 과제로 주지 않는다.
+    expect(screen.queryByLabelText('기도 적는 곳')).toBeNull();
+    expect(screen.getByLabelText('내 말로 적어보기')).toBeTruthy();
+  });
+
+  it('내 말로 적어보기를 고르면 그때 입력창과 안내가 나온다', async () => {
+    respondOk();
+
+    await renderPrayer();
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
+
+    await fireEvent.press(screen.getByLabelText('내 말로 적어보기'));
+
+    expect(screen.getByLabelText('기도 적는 곳')).toBeTruthy();
+    expect(screen.getByLabelText('기도 적는 곳').props.value).toBe('');
+    // 저장하지 않는다는 안내는 입력창이 열린 뒤에 함께 보인다.
+    expect(screen.getByText('적으신 기도는 어디에도 저장되지 않고, 이 화면에서만 머물러요.')).toBeTruthy();
+  });
+
+  it('적는 자리를 열어도 서버를 다시 부르지 않는다', async () => {
+    respondOk();
+
+    await renderPrayer();
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
+
+    await fireEvent.press(screen.getByLabelText('내 말로 적어보기'));
+    await fireEvent.changeText(screen.getByLabelText('기도 적는 곳'), PRIVATE_DRAFT);
+
+    expect(screen.getByLabelText('기도 적는 곳').props.value).toBe(PRIVATE_DRAFT);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+});
+
+/* ================================================================== */
+/* C. 적은 기도는 나가지 않는다                                          */
 /* ================================================================== */
 
 describe('기도 화면 · 적은 기도는 나가지 않는다', () => {
   it('적은 기도가 서버 요청 어디에도 들어 있지 않다', async () => {
     respondOk();
 
-    await renderPrayer('guided');
+    await renderPrayer();
     await screen.findByText(GUIDANCE_FIXTURE.prayerText);
 
-    const input = screen.getByLabelText('기도 적는 곳');
-    await fireEvent.changeText(input, PRIVATE_DRAFT);
+    await fireEvent.press(screen.getByLabelText('내 말로 적어보기'));
+    await fireEvent.changeText(screen.getByLabelText('기도 적는 곳'), PRIVATE_DRAFT);
 
     // 적은 글이 화면에는 남아 있어야 한다.
     expect(screen.getByLabelText('기도 적는 곳').props.value).toBe(PRIVATE_DRAFT);
 
     // 그러나 서버로 나간 것 어디에도 있으면 안 된다.
     expect(JSON.stringify(invoke.mock.calls).includes(PRIVATE_DRAFT)).toBe(false);
-
-    // 적었다는 이유로 서버를 다시 부르지도 않는다.
     expect(invoke).toHaveBeenCalledTimes(1);
-  });
-
-  it('직접 기도하는 길에서는 적어도 서버를 전혀 부르지 않는다', async () => {
-    respondOk();
-
-    await renderPrayer('direct');
-
-    await fireEvent.changeText(screen.getByLabelText('기도 적는 곳'), PRIVATE_DRAFT);
-
-    expect(screen.getByLabelText('기도 적는 곳').props.value).toBe(PRIVATE_DRAFT);
-    expect(invoke).not.toHaveBeenCalled();
   });
 });
 
@@ -263,11 +254,11 @@ describe('기도 화면 · 적은 기도는 나가지 않는다', () => {
 /* D. 도움받지 못했을 때                                                */
 /* ================================================================== */
 
-describe('기도 화면 · 도움을 받지 못해도', () => {
-  it('기도문을 준비하지 못했다고 솔직히 알리고, 기도 방향을 대신 보여준다', async () => {
+describe('기도 화면 · 기도문을 받지 못해도', () => {
+  it('솔직히 알리고, 기도 방향을 대신 보여준다', async () => {
     respondError();
 
-    await renderPrayer('guided');
+    await renderPrayer();
 
     expect(await screen.findByText('지금은 기도문을 준비하지 못했어요.')).toBeTruthy();
     expect(screen.getByText('기도 방향')).toBeTruthy();
@@ -278,21 +269,34 @@ describe('기도 화면 · 도움을 받지 못해도', () => {
     expect(screen.queryByText(GUIDANCE_FIXTURE.prayerText)).toBeNull();
   });
 
-  it('기도를 막지 않는다', async () => {
+  it('기도를 막지 않고, 적는 자리도 고르면 열 수 있다', async () => {
     respondError();
 
-    await renderPrayer('guided');
+    await renderPrayer();
     await screen.findByText('지금은 기도문을 준비하지 못했어요.');
 
-    // 도움을 못 받았다고 해서 기도하는 자리까지 사라지면 안 된다.
-    expect(screen.getByLabelText('기도 적는 곳')).toBeTruthy();
     expect(screen.getByLabelText('기도 마치기')).toBeTruthy();
+
+    // 실패했을 때도 적는 칸은 기본으로 닫혀 있다.
+    expect(screen.queryByLabelText('기도 적는 곳')).toBeNull();
+
+    await fireEvent.press(screen.getByLabelText('내 말로 적어보기'));
+    expect(screen.getByLabelText('기도 적는 곳')).toBeTruthy();
+  });
+
+  it('실패해도 서버를 다시 부르지 않는다', async () => {
+    respondError();
+
+    await renderPrayer();
+    await screen.findByText('지금은 기도문을 준비하지 못했어요.');
+
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 
   it('무엇이 잘못됐는지 기술적인 말로 알리지 않는다', async () => {
     respondError();
 
-    await renderPrayer('guided');
+    await renderPrayer();
     await screen.findByText('지금은 기도문을 준비하지 못했어요.');
 
     // 기도하러 온 사람에게 서버 사정을 설명하지 않는다.
@@ -303,15 +307,35 @@ describe('기도 화면 · 도움을 받지 못해도', () => {
 });
 
 /* ================================================================== */
-/* E. 기도를 마치는 흐름                                                */
+/* E. 기다리는 동안                                                     */
+/* ================================================================== */
+
+describe('기도 화면 · 기다리는 동안', () => {
+  it('기도문을 준비하는 동안에는 적는 과제를 주지 않는다', async () => {
+    // 답을 미뤄 두어 loading 상태를 붙잡는다.
+    invoke.mockReturnValue(new Promise(() => {}) as never);
+
+    await renderPrayer();
+
+    expect(screen.getByText('이 말씀으로 기도를 시작할 수 있도록 잠시 함께 정리하고 있어요.')).toBeTruthy();
+    expect(screen.queryByLabelText('기도 적는 곳')).toBeNull();
+    expect(screen.queryByLabelText('내 말로 적어보기')).toBeNull();
+  });
+});
+
+/* ================================================================== */
+/* F. 기도를 마치는 흐름                                                */
 /* ================================================================== */
 
 describe('기도 화면 · 마치는 흐름', () => {
-  it('적지 않아도 기도를 마칠 수 있다', async () => {
-    await renderPrayer('direct');
+  it('아무것도 적지 않아도 기도를 마칠 수 있다', async () => {
+    respondOk();
 
-    // 소리 내어 기도한 사람에게 글쓰기를 요구하지 않는다.
-    expect(screen.getByLabelText('기도 적는 곳').props.value).toBe('');
+    await renderPrayer();
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
+
+    // 소리 내어 기도했거나, 그대로 읽었을 수 있다. 글쓰기를 요구하지 않는다.
+    expect(screen.queryByLabelText('기도 적는 곳')).toBeNull();
     await fireEvent.press(screen.getByLabelText('기도 마치기'));
 
     expect(screen.getByText('오늘의 기도를 마쳤어요.')).toBeTruthy();
@@ -319,8 +343,12 @@ describe('기도 화면 · 마치는 흐름', () => {
   });
 
   it('처음으로 돌아가면 적은 기도가 남지 않는다', async () => {
-    await renderPrayer('direct');
+    respondOk();
 
+    await renderPrayer();
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
+
+    await fireEvent.press(screen.getByLabelText('내 말로 적어보기'));
     await fireEvent.changeText(screen.getByLabelText('기도 적는 곳'), PRIVATE_DRAFT);
     await fireEvent.press(screen.getByLabelText('기도 마치기'));
     await fireEvent.press(screen.getByLabelText('처음으로 돌아가기'));
@@ -330,5 +358,17 @@ describe('기도 화면 · 마치는 흐름', () => {
 
     // 돌아가는 길에 적은 기도가 화면에서 사라져야 한다.
     expect(screen.queryByText(PRIVATE_DRAFT)).toBeNull();
+  });
+
+  it('말씀을 다시 볼 수도 있다', async () => {
+    respondOk();
+
+    await renderPrayer();
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
+
+    await fireEvent.press(screen.getByLabelText('기도 마치기'));
+    await fireEvent.press(screen.getByLabelText('말씀 다시 보기'));
+
+    expect(router.replace).toHaveBeenCalledWith('/scripture');
   });
 });

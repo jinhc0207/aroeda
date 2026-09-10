@@ -176,16 +176,16 @@ describe('말씀 화면 · 기도로 가는 길', () => {
     expect(screen.getByLabelText('이 말씀으로 기도해보기')).toBeTruthy();
   });
 
-  it('이 말씀으로 기도해보기를 누르면 기도 화면으로 간다', async () => {
+  it('이 말씀으로 기도해보기를 누르면 기도 화면으로 간다(mode 구분 없이)', async () => {
     await renderWithCard(CARD.id);
 
     await fireEvent.press(screen.getByLabelText('이 말씀으로 기도해보기'));
 
     expect(router.push).toHaveBeenCalledTimes(1);
-    expect(router.push).toHaveBeenCalledWith({
-      pathname: '/prayer',
-      params: { mode: 'guided' },
-    });
+    // 기도 방식을 미리 정해 보내지 않는다. 경로 하나뿐이다.
+    expect(router.push).toHaveBeenCalledWith('/prayer');
+    const arg = router.push.mock.calls[0][0];
+    expect(typeof arg === 'string' ? arg : JSON.stringify(arg)).not.toContain('mode');
   });
 });
 
