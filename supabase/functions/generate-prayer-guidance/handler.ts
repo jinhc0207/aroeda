@@ -4,8 +4,13 @@
  * 사용자가 말씀 화면에서 "기도를 시작하는 도움 받기"를 눌렀을 때만 불린다.
  * 직접 기도하는 길에서는 부르지 않는다.
  *
- * 받는 것은 두 가지뿐이다.
- *   지금 나의 상황, 그리고 지금 보고 있는 말씀의 번호.
+ * 받는 것은 세 가지뿐이다.
+ *   지금 나의 상황, 지금 보고 있는 말씀의 번호, 그 말씀을 받은 삶의 영역(selectedDomain).
+ *
+ * selectedDomain도 믿지 않는다:
+ *   다시 분석한 결과 안에 그 영역이 실제로 있어야 한다(needs_choice의 두 후보, 또는 resolved의 primary·secondary).
+ *   요청으로 받았다는 이유로 분석 결과에 끼워 넣지 않는다.
+ *   안전 신호는 영역을 골랐다고 넘어갈 수 없다. 영역을 보기 전에 먼저 막는다.
  *
  * 부르는 쪽을 믿지 않는다:
  *   말씀 설명과 기도 방향을 받지 않는다. 서버가 자기 것을 읽는다.
@@ -18,8 +23,9 @@
  *   새 안전 규칙을 만들지 않고 이미 있는 것을 다시 쓴다.
  *
  * 순서를 지킨다:
- *   POST → 본문 모양 → 아는 말씀인가 → 상황 분석(사용량 확인 포함)
- *   → 추천 판단 → 이 상황에 맞는 말씀인가 → 서버의 말씀 자료 → 기도 도움
+ *   POST → 본문 모양(선택 영역 포함) → 아는 말씀인가 → 상황 분석(사용량 확인 포함)
+ *   → 안전 → 선택 영역이 분석에 있는가 → 그 영역 기준 추천 판단 → 이 영역에 맞는 말씀인가
+ *   → 서버의 말씀 자료 → 기도 도움
  *
  * 실패했을 때:
  *   왜 실패했는지 밖으로 나누지 않는다.
@@ -34,7 +40,8 @@ import {
 } from '../_shared/edge-analyzer.ts';
 import type { QuotaDecision } from '../_shared/rate-limit.ts';
 import { runRecommendationGate } from '../_shared/recommendation-gate.ts';
-import { getScriptureCard } from '../_shared/scripture-cards.ts';
+import { resolveAnalysisForChosenDomain } from '../_shared/domain-choice-resolution.ts';
+import { getScriptureCard, type ScriptureCard } from '../_shared/scripture-cards.ts';
 import { extractOutputText } from '../_shared/openai-response.ts';
 import {
   PRAYER_GUIDANCE_MODEL,
@@ -74,6 +81,11 @@ export type PrayerGuidanceDeps = Omit<EdgeDeps, 'checkQuota' | 'callOpenAI'> & {
     apiKey: string,
     options: { timeoutMs: number; signal?: AbortSignal },
   ) => Promise<unknown>;
+  /**
+   * 추천 판단에 쓸 카드 목록. 시험에서만 작은 목록을 바꿔 넣는다.
+   * 없으면 서버의 검수된 카드 전체를 쓴다. 요청 본문으로는 바꿀 수 없다.
+   */
+  cards?: ScriptureCard[];
   /** 지금 시각. 시험에서 바꿔 넣는다. */
   now?: () => number;
   /**
@@ -210,15 +222,28 @@ async function runPrayerGuidance(
 
   if (signal.aborted) return unavailable('prayer_guidance_aborted');
 
-  // 추천 판단을 그대로 다시 돌린다. 안전이 먼저다.
-  const gate = runRecommendationGate(analyzed.analysis);
+  // 안전이 먼저다. 선택 영역을 보기 전에 막는다. 영역을 골랐다고 안전을 넘어갈 수 없다.
+  if (analyzed.analysis.safety.level !== 'normal') {
+    return unavailable('prayer_guidance_safety_first');
+  }
+
+  // 사용자가 고른 영역이 다시 살핀 결과 안에 실제로 있는가.
+  // needs_choice면 두 후보 중 하나, resolved면 primary 또는 secondary여야 한다.
+  // 없으면 거절한다. 요청 값을 분석 결과에 억지로 넣지 않는다.
+  const resolved = resolveAnalysisForChosenDomain(analyzed.analysis, parsed.input.selectedDomain);
+  if (resolved === null) {
+    return unavailable('prayer_guidance_domain_not_detected');
+  }
+
+  // 고른 영역을 중심으로 추천 판단을 다시 돌린다. 규칙은 기존 Primary-First 그대로다.
+  const gate = runRecommendationGate(resolved, deps.cards);
 
   if (gate.route !== 'recommend') {
     // 안전인지, 다룰 수 없는 영역인지, 모호한지 밖으로 나누지 않는다.
     return unavailable('prayer_guidance_not_eligible');
   }
 
-  // 지금 보고 있는 말씀이 이 상황에 맞는 후보인가.
+  // 지금 보고 있는 말씀이 고른 영역에 맞는 후보인가.
   // 다시 살핀 결과가 조금 달라질 수 있으므로 선택된 한 장이 아니라 후보 목록으로 본다.
   if (!gate.eligibleCardIds.includes(card.id)) {
     return unavailable('prayer_guidance_card_not_eligible');

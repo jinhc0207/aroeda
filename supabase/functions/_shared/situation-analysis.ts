@@ -8,7 +8,20 @@
  */
 
 import { TAXONOMY, unknownTags, type TaxonomyKind } from './analysis-taxonomy.ts';
-import { isSituationDomain, type SituationDomain } from './situation-domains.ts';
+import { FALLBACK_DOMAIN, isSituationDomain, type SituationDomain } from './situation-domains.ts';
+
+/**
+ * 영역 우선순위 판단 상태.
+ *
+ * resolved: 문장에서 중심 영역(primaryDomain)을 정할 수 있다.
+ * needs_choice: 서로 독립적인 두 영역이 함께 있지만, 문장에서 어느 쪽을 먼저 다룰지 정할 근거가 부족하다.
+ *   두 문제의 실제 중요도가 같다고 단정하는 뜻이 아니다. 두 후보의 배열 순서도 우선순위가 아니다.
+ */
+export const DOMAIN_PRIORITY_STATUSES = ['resolved', 'needs_choice'] as const;
+export type DomainPriorityStatus = (typeof DOMAIN_PRIORITY_STATUSES)[number];
+
+/** needs_choice일 때 후보는 정확히 이 개수다. */
+export const DOMAIN_CHOICE_CANDIDATE_COUNT = 2;
 
 export const SAFETY_LEVELS = ['normal', 'caution', 'urgent'] as const;
 export type SafetyLevel = (typeof SAFETY_LEVELS)[number];
@@ -29,9 +42,22 @@ export type SafetyAssessment = {
 };
 
 export type SituationAnalysis = {
-  /** 사용자가 처한 삶의 핵심 상황. 가장 강한 감정을 고르는 자리가 아니다. */
-  primaryDomain: SituationDomain;
-  /** 복합 상황에서 실제로 함께 존재하는 다른 문제만 넣는다. 없으면 빈 배열. */
+  /** 중심 영역을 정할 수 있는지. 조건 관계는 validateSituationAnalysis가 확인한다. */
+  domainPriority: DomainPriorityStatus;
+  /**
+   * 사용자가 처한 삶의 핵심 상황. 가장 강한 감정을 고르는 자리가 아니다.
+   * resolved면 반드시 표준 domain, needs_choice면 반드시 null이다.
+   */
+  primaryDomain: SituationDomain | null;
+  /**
+   * needs_choice일 때 사용자에게 먼저 다룰 영역을 물어볼 후보. 서로 다른 표준 domain 정확히 2개.
+   * other_uncovered는 들어갈 수 없다. resolved면 빈 배열이다. 순서는 우선순위가 아니다.
+   */
+  domainChoiceCandidates: SituationDomain[];
+  /**
+   * resolved일 때 복합 상황에서 실제로 함께 존재하는 다른 문제만 넣는다. 없으면 빈 배열.
+   * needs_choice면 반드시 빈 배열이다.
+   */
   secondaryDomains: SituationDomain[];
   situationTags: string[];
   emotionTags: string[];
@@ -92,36 +118,91 @@ export function validateSituationAnalysis(value: unknown): ValidationResult {
     }
   }
 
-  // domain은 필수다. primaryDomain은 하나, secondaryDomains는 없으면 빈 배열.
+  // 영역 우선순위 상태는 필수다. 이 값에 따라 primaryDomain·후보·secondaryDomains의 규칙이 달라진다.
+  const priority = analysis.domainPriority;
+  const priorityKnown =
+    typeof priority === 'string' && (DOMAIN_PRIORITY_STATUSES as readonly string[]).includes(priority);
+  if (priority === undefined) {
+    errors.push('domainPriority가 없습니다.');
+  } else if (!priorityKnown) {
+    errors.push(`domainPriority 값이 허용되지 않습니다: ${String(priority)}`);
+  }
+
+  // primaryDomain: 값이 있으면 표준 domain이어야 한다. null 허용 여부는 상태별로 아래에서 본다.
   if (analysis.primaryDomain === undefined) {
-    errors.push('primaryDomain이 없습니다.');
-  } else if (!isSituationDomain(analysis.primaryDomain)) {
+    errors.push('primaryDomain이 없습니다. needs_choice면 null을 넣습니다.');
+  } else if (analysis.primaryDomain !== null && !isSituationDomain(analysis.primaryDomain)) {
     errors.push(`primaryDomain 값이 표준 domain이 아닙니다: ${String(analysis.primaryDomain)}`);
   }
 
+  // domainChoiceCandidates: 항상 배열이어야 한다.
+  const candidates = analysis.domainChoiceCandidates;
+  const candidatesAreArray = Array.isArray(candidates);
+  if (candidates === undefined) {
+    errors.push('domainChoiceCandidates가 없습니다. 없으면 빈 배열을 넣습니다.');
+  } else if (!candidatesAreArray) {
+    errors.push('domainChoiceCandidates가 배열이 아닙니다.');
+  } else {
+    const unknownCandidates = candidates.filter((domain) => !isSituationDomain(domain));
+    if (unknownCandidates.length > 0) {
+      errors.push(
+        `domainChoiceCandidates에 표준 domain이 아닌 값이 있습니다: ${unknownCandidates.map(String).join(', ')}`,
+      );
+    }
+    if (new Set(candidates).size !== candidates.length) {
+      errors.push('domainChoiceCandidates에 같은 domain이 중복되어 있습니다.');
+    }
+    if (candidates.includes(FALLBACK_DOMAIN)) {
+      errors.push(`domainChoiceCandidates에 ${FALLBACK_DOMAIN}은 넣을 수 없습니다.`);
+    }
+  }
+
+  const secondaryAreArray = Array.isArray(analysis.secondaryDomains);
   if (analysis.secondaryDomains === undefined) {
     errors.push('secondaryDomains가 없습니다. 없으면 빈 배열을 넣습니다.');
   } else {
-    if (!Array.isArray(analysis.secondaryDomains)) {
+    if (!secondaryAreArray) {
       errors.push('secondaryDomains가 배열이 아닙니다.');
     } else {
-      const unknownDomains = analysis.secondaryDomains.filter(
-        (domain) => !isSituationDomain(domain),
-      );
+      const secondaryDomains = analysis.secondaryDomains as unknown[];
+      const unknownDomains = secondaryDomains.filter((domain) => !isSituationDomain(domain));
       if (unknownDomains.length > 0) {
         errors.push(
           `secondaryDomains에 표준 domain이 아닌 값이 있습니다: ${unknownDomains.map(String).join(', ')}`,
         );
       }
-      if (new Set(analysis.secondaryDomains).size !== analysis.secondaryDomains.length) {
+      if (new Set(secondaryDomains).size !== secondaryDomains.length) {
         errors.push('secondaryDomains에 같은 domain이 중복되어 있습니다.');
       }
       if (
         analysis.primaryDomain !== undefined &&
-        analysis.secondaryDomains.includes(analysis.primaryDomain)
+        analysis.primaryDomain !== null &&
+        secondaryDomains.includes(analysis.primaryDomain)
       ) {
         errors.push('secondaryDomains에 primaryDomain이 중복으로 들어 있습니다.');
       }
+    }
+  }
+
+  // 상태별 관계 규칙.
+  if (priority === 'resolved') {
+    if (analysis.primaryDomain === null) {
+      errors.push('domainPriority가 resolved면 primaryDomain이 null이면 안 됩니다.');
+    }
+    if (candidatesAreArray && (candidates as unknown[]).length > 0) {
+      errors.push('domainPriority가 resolved면 domainChoiceCandidates는 비어 있어야 합니다.');
+    }
+  } else if (priority === 'needs_choice') {
+    if (analysis.primaryDomain !== null && analysis.primaryDomain !== undefined) {
+      errors.push('domainPriority가 needs_choice면 primaryDomain은 null이어야 합니다.');
+    }
+    if (candidatesAreArray && (candidates as unknown[]).length !== DOMAIN_CHOICE_CANDIDATE_COUNT) {
+      errors.push(
+        `domainPriority가 needs_choice면 domainChoiceCandidates는 정확히 ${DOMAIN_CHOICE_CANDIDATE_COUNT}개여야 합니다.`,
+      );
+    }
+    if (secondaryAreArray && (analysis.secondaryDomains as unknown[]).length > 0) {
+      errors.push('domainPriority가 needs_choice면 secondaryDomains는 비어 있어야 합니다.');
     }
   }
 

@@ -230,8 +230,14 @@ describe('안전 연락처 · E. 기존 흐름은 그대로', () => {
 
   it('서버 계약을 새로 만들지 않았다', () => {
     // 안전의 종류를 화면까지 보내도록 계약을 바꾸지 않았다.
+    // domain_choice(2026-09-14)를 위해 primaryDomain과 영역 선택 필드가 함께 꺼내지지만,
+    // safety의 종류(level/categories)를 담을 자리는 여전히 없다.
     const helper = stripComments(read('./request-recommendation.ts'));
-    assert.ok(helper.includes('const { route, selectedCardId } = result'));
+    assert.ok(
+      helper.includes(
+        'const { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions } =',
+      ),
+    );
     assert.equal(helper.includes('safetyLevel'), false);
     assert.equal(helper.includes('safetyCategories'), false);
   });

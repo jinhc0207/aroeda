@@ -75,6 +75,7 @@ describe('Edge Function 배포 구조', () => {
       'analyze-situation',
       'biblical-researcher',
       'candidate-generator',
+      'delete-my-data',
       'generate-prayer-guidance',
       'recommend-scripture',
       'research-prioritizer',
@@ -146,7 +147,8 @@ describe('Analyzer 규칙 동일성', () => {
   });
 
   it('지시문이 검증된 상태 그대로다', () => {
-    assert.equal(INSTRUCTIONS.length, 5632, '지시문 길이가 달라졌습니다.');
+    // 영역 우선순위(Domain Priority) 계약을 넣은 뒤 실제 INSTRUCTIONS.length를 계산해 갱신한 값이다.
+    assert.equal(INSTRUCTIONS.length, 7798, '지시문 길이가 달라졌습니다.');
     for (const marker of [
       '[level]',
       '[자살 / 자해]',
@@ -154,6 +156,11 @@ describe('Analyzer 규칙 동일성', () => {
       '[urgent_medical]',
       '[지속적 괴롭힘 / 학대 가능성]',
       '[Situation Domain]',
+      '[Domain Priority]',
+      'needs_choice',
+      '가짜 중심 영역을 만들지 않습니다',
+      '안전 신호(safety)는 domainPriority와 상관없이',
+      '하나님의 직접 메시지인지 아닌지 단정하지 않습니다',
       '[Minimum Sufficient Tagging]',
       'routing signal',
     ]) {
@@ -164,7 +171,9 @@ describe('Analyzer 규칙 동일성', () => {
   it('모델과 응답 구조가 그대로다', () => {
     assert.equal(MODEL, 'gpt-5.6-luna');
     assert.deepEqual(SITUATION_ANALYSIS_SCHEMA.required, [
+      'domainPriority',
       'primaryDomain',
+      'domainChoiceCandidates',
       'secondaryDomains',
       'situationTags',
       'emotionTags',
@@ -174,18 +183,44 @@ describe('Analyzer 규칙 동일성', () => {
       'safety',
       'confidence',
     ]);
+    // strict 모드에서는 모든 속성이 required여야 한다.
+    assert.deepEqual(
+      [...SITUATION_ANALYSIS_SCHEMA.required].sort(),
+      Object.keys(SITUATION_ANALYSIS_SCHEMA.properties).sort(),
+    );
     assert.equal(SITUATION_ANALYSIS_SCHEMA.additionalProperties, false);
-    assert.equal(SITUATION_ANALYSIS_SCHEMA.properties.primaryDomain.enum.length, 18);
+  });
+
+  it('영역 우선순위 필드는 단순한 schema 형태를 쓴다 (루트 oneOf/anyOf 없음)', () => {
+    const schema = SITUATION_ANALYSIS_SCHEMA as unknown as Record<string, unknown>;
+    for (const key of ['oneOf', 'anyOf', 'allOf']) assert.equal(key in schema, false, key);
+
+    const { domainPriority, primaryDomain, domainChoiceCandidates } = SITUATION_ANALYSIS_SCHEMA.properties;
+    assert.deepEqual(domainPriority, { type: 'string', enum: ['resolved', 'needs_choice'] });
+
+    // nullable은 OpenAI Structured Outputs 문서의 형태: type 배열 + enum에 null 포함.
+    assert.deepEqual(primaryDomain.type, ['string', 'null']);
+    assert.equal(primaryDomain.enum.length, SITUATION_DOMAINS.length + 1);
+    assert.ok((primaryDomain.enum as readonly unknown[]).includes(null));
+    for (const domain of SITUATION_DOMAINS) assert.ok((primaryDomain.enum as readonly unknown[]).includes(domain), domain);
+
+    // 선택 후보에는 other_uncovered가 들어갈 수 없다.
+    assert.equal(domainChoiceCandidates.type, 'array');
+    assert.equal(domainChoiceCandidates.items.type, 'string');
+    assert.deepEqual(
+      [...domainChoiceCandidates.items.enum].sort(),
+      SITUATION_DOMAINS.filter((domain) => domain !== FALLBACK_DOMAIN).sort(),
+    );
   });
 
   it('Domain과 Taxonomy 값이 그대로다', () => {
     assert.equal(SITUATION_DOMAINS.length, 18);
-    assert.equal(TAXONOMY.situationTags.length, 37);
-    assert.equal(TAXONOMY.emotionTags.length, 27);
-    assert.equal(TAXONOMY.spiritualQuestionTags.length, 24);
+    assert.equal(TAXONOMY.situationTags.length, 103);
+    assert.equal(TAXONOMY.emotionTags.length, 32);
+    assert.equal(TAXONOMY.spiritualQuestionTags.length, 43);
     assert.equal(TAXONOMY.prayerModes.length, 8);
-    assert.equal(TAXONOMY.pastoralFunctions.length, 17);
-    assert.equal(SCRIPTURE_CARDS.length, 10);
+    assert.equal(TAXONOMY.pastoralFunctions.length, 20);
+    assert.equal(SCRIPTURE_CARDS.length, 31);
   });
 });
 
@@ -471,6 +506,9 @@ describe('Coverage Gap Collector', () => {
       'src/lib/request-recommendation.ts',
       'src/app/index.tsx',
       'src/app/scripture.tsx',
+      // 내 정보 삭제는 서버가 관리자 권한으로 한다. 앱은 그 권한을 갖지 않는다.
+      'src/app/settings.tsx',
+      'src/lib/request-account-deletion.ts',
     ];
     for (const file of appFiles) {
       // 설명 주석은 빼고 실제 코드만 본다.

@@ -190,6 +190,34 @@ describe('말씀 화면 · 기도로 가는 길', () => {
 });
 
 /* ================================================================== */
+/* B-2. 뒤로가기 계약 (2026-09-15 back navigation fix)                  */
+/* ================================================================== */
+
+describe('말씀 화면 · 뒤로가기 계약', () => {
+  it('뒤로 갈 곳이 있으면(canGoBack true) router.back()을 쓴다', async () => {
+    router.canGoBack.mockReturnValue(true);
+    await renderWithCard(CARD.id);
+
+    await fireEvent.press(screen.getByLabelText('뒤로 가기'));
+
+    expect(router.back).toHaveBeenCalledTimes(1);
+    expect(router.replace).not.toHaveBeenCalled();
+    // 복합 경로에서 domain-choice가 push로 스택에 남아 있으면 back()이 거기로 돌려보낸다.
+    // 이 화면은 그 대상을 알 필요가 없다 — canGoBack 하나만 지키면 된다.
+  });
+
+  it('뒤로 갈 곳이 없으면(canGoBack false) 홈으로 replace한다', async () => {
+    router.canGoBack.mockReturnValue(false);
+    await renderWithCard(CARD.id);
+
+    await fireEvent.press(screen.getByLabelText('뒤로 가기'));
+
+    expect(router.replace).toHaveBeenCalledWith('/');
+    expect(router.back).not.toHaveBeenCalled();
+  });
+});
+
+/* ================================================================== */
 /* C. 추천이 없으면 아무 말씀이나 보여주지 않는다                        */
 /* ================================================================== */
 

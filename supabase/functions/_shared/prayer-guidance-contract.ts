@@ -18,6 +18,8 @@
  */
 
 import type { ScriptureCard } from './scripture-cards.ts';
+import { isChoosableDomain } from './domain-choice-resolution.ts';
+import type { SituationDomain } from './situation-domains.ts';
 
 /** 쓰는 모델. 상황 분석기와 같은 모델을 쓴다. 이 기능만을 위해 새로 정하지 않는다. */
 export { MODEL as PRAYER_GUIDANCE_MODEL } from './analyzer-contract.ts';
@@ -51,18 +53,25 @@ export const PRAYER_GUIDANCE_RETRY_COUNT = 0;
 /* 요청                                                                */
 /* ------------------------------------------------------------------ */
 
-/** 부르는 쪽이 보낼 수 있는 항목. 이 둘뿐이다. */
-export const PRAYER_GUIDANCE_REQUEST_FIELDS = ['situation', 'cardId'] as const;
+/**
+ * 부르는 쪽이 보낼 수 있는 항목. 이 셋뿐이고 모두 필수다.
+ *
+ * selectedDomain은 사용자가 말씀을 받은 삶의 영역(내부 표준 domain 값)이다.
+ * 한글 문구가 아니다. 서버는 이 값을 믿지 않고, 다시 분석한 결과 안에 실제로 있는지 확인한다.
+ */
+export const PRAYER_GUIDANCE_REQUEST_FIELDS = ['situation', 'cardId', 'selectedDomain'] as const;
 
 export type PrayerGuidanceRequest = {
   situation: string;
   cardId: string;
+  selectedDomain: SituationDomain;
 };
 
 /**
  * 요청 본문을 본다.
  *
  * 말씀 설명과 기도 방향은 받지 않는다. 서버가 자기 것을 쓴다.
+ * 안전 판정과 분석 결과도 받지 않는다. 선택 영역은 받지만 서버가 다시 확인한다.
  * 사용자가 적고 있는 기도도 받지 않는다. 그 자리를 아예 만들지 않는다.
  *
  * 문장 자체의 길이는 상황 분석기가 이미 보고 있으므로 여기서 다시 세지 않는다.
@@ -80,11 +89,13 @@ export function parsePrayerGuidanceRequest(
     }
   }
 
-  const { situation, cardId } = value;
+  const { situation, cardId, selectedDomain } = value;
   if (typeof situation !== 'string' || situation.trim().length === 0) return { ok: false };
   if (typeof cardId !== 'string' || cardId.trim().length === 0) return { ok: false };
+  // 표준 영역이어야 하고 other_uncovered는 고를 수 없다.
+  if (!isChoosableDomain(selectedDomain)) return { ok: false };
 
-  return { ok: true, input: { situation, cardId } };
+  return { ok: true, input: { situation, cardId, selectedDomain } };
 }
 
 /* ------------------------------------------------------------------ */

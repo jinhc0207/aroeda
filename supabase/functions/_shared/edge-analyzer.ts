@@ -207,10 +207,15 @@ export async function analyzeSituationRequest(
   return { ok: true, analysis: parsed as SituationAnalysis };
 }
 
-/** 응답에 담을 분석 결과. OpenAI 원본과 usage는 포함하지 않는다. */
+/**
+ * 응답에 담을 분석 결과. OpenAI 원본과 usage, 사용자 문장은 포함하지 않는다.
+ * 영역 우선순위 필드는 이름을 하나씩 적어 명시적으로 옮긴다.
+ */
 export function toAnalysisPayload(analysis: SituationAnalysis): SituationAnalysis {
   return {
+    domainPriority: analysis.domainPriority,
     primaryDomain: analysis.primaryDomain,
+    domainChoiceCandidates: analysis.domainChoiceCandidates,
     secondaryDomains: analysis.secondaryDomains,
     situationTags: analysis.situationTags,
     emotionTags: analysis.emotionTags,

@@ -9,8 +9,7 @@
  *   1. 모델이 사용자의 핵심 상황을 primaryDomain으로 잘 고르는가
  *   2. 지금 카드 DB가 그 상황을 다룰 수 있는가 (coverage)
  *
- * Matcher 점수가 높아도 coverage가 false면 "추천 가능"으로 해석하지 않는다.
- * threshold와 Recommendation Gate는 아직 만들지 않는다.
+ * 대표 카드가 추가된 확장 영역은 coverage=true인지 확인한다.
  */
 
 import {
@@ -46,43 +45,43 @@ const DOMAIN_CASES: DomainCase[] = [
     id: 'C1',
     text: '요즘 사람들을 만나도 외롭고 제 이야기를 할 사람이 없는 것 같아요.',
     allowedPrimaryDomains: ['loneliness_isolation'],
-    expectedCovered: false,
+    expectedCovered: true,
   },
   {
     id: 'C2',
     text: '아이와 계속 부딪히는데 어떻게 대화해야 할지 모르겠어요.',
     allowedPrimaryDomains: ['family_parenting_conflict'],
-    expectedCovered: false,
+    expectedCovered: true,
   },
   {
     id: 'C3',
     text: '회사 일을 할 의욕이 완전히 사라졌어요. 그냥 모든 게 지칩니다.',
     allowedPrimaryDomains: ['burnout_exhaustion'],
-    expectedCovered: false,
+    expectedCovered: true,
   },
   {
     id: 'C4',
     text: '하나님이 멀게 느껴지고 기도를 해도 아무 느낌이 없습니다.',
     allowedPrimaryDomains: ['spiritual_dryness'],
-    expectedCovered: false,
+    expectedCovered: true,
   },
   {
     id: 'C5',
     text: '갑자기 경제적으로 너무 어려워져서 생활비가 걱정됩니다.',
     allowedPrimaryDomains: ['financial_hardship'],
-    expectedCovered: false,
+    expectedCovered: true,
   },
   {
     id: 'C6',
     text: '병원에서 만성질환 진단을 받았어요. 앞으로 이 병과 어떻게 살아가야 할지 막막합니다.',
     allowedPrimaryDomains: ['chronic_illness'],
-    expectedCovered: false,
+    expectedCovered: true,
   },
   {
     id: 'C7',
     text: '교회 사람과 크게 갈등이 생겼는데 용서와 관계 회복을 어떻게 해야 할지 모르겠습니다.',
     allowedPrimaryDomains: ['relationship_conflict_forgiveness'],
-    expectedCovered: false,
+    expectedCovered: true,
   },
 ];
 
@@ -166,11 +165,13 @@ async function main() {
       console.log('  이 결과를 "추천 가능"으로 해석하지 않습니다.');
     }
 
-    const domainOk = domainCase.allowedPrimaryDomains.includes(analysis.primaryDomain);
+    // needs_choice면 primaryDomain이 null이다. 이 스크립트의 기대값은 단일 primary이므로 불일치로 센다.
+    const domainOk =
+      analysis.primaryDomain !== null && domainCase.allowedPrimaryDomains.includes(analysis.primaryDomain);
     const coverageOk = coverage.covered === domainCase.expectedCovered;
     if (domainOk) domainMatched += 1;
     if (coverageOk) coverageMatched += 1;
-    if (domainCase.id.startsWith('C') && coverage.covered) wronglyCovered += 1;
+    if (domainCase.id.startsWith('C') && !coverage.covered) wronglyCovered += 1;
 
     console.log(`  Domain 기대값: ${domainCase.allowedPrimaryDomains.join(' 또는 ')}`);
     console.log(`  Domain 판정: ${domainOk ? '일치' : '불일치'}`);
@@ -181,7 +182,7 @@ async function main() {
   line('=');
   console.log(`Domain 일치: ${domainMatched} / ${DOMAIN_CASES.length}`);
   console.log(`Coverage 일치: ${coverageMatched} / ${DOMAIN_CASES.length}`);
-  console.log(`C1~C7 중 covered=true로 잘못 판정된 개수: ${wronglyCovered}`);
+  console.log(`C1~C7 중 covered=false로 남은 개수: ${wronglyCovered}`);
   if (failed > 0) console.log(`요청 오류 또는 규격 검증 실패: ${failed}건`);
   console.log('OpenAI 사용량:');
   console.log(`  - input tokens: ${totalUsage.input}`);

@@ -20,7 +20,9 @@ import {
 } from './situation-analysis.ts';
 
 const baseAnalysis = (): SituationAnalysis => ({
+  domainPriority: 'resolved',
   primaryDomain: 'grief_loss',
+  domainChoiceCandidates: [],
   secondaryDomains: [],
   situationTags: ['사별'],
   emotionTags: ['슬픔'],
@@ -142,7 +144,9 @@ describe('안전 상황 mock', () => {
     it(`${safetyCase.name}이 스키마로 표현된다`, () => {
       // 안전 상황에서도 나머지 규격을 그대로 지킬 수 있어야 한다.
       const analysis = {
+        domainPriority: 'resolved',
         primaryDomain: 'other_uncovered',
+        domainChoiceCandidates: [],
         secondaryDomains: [],
         situationTags: [],
         emotionTags: [],
@@ -158,4 +162,110 @@ describe('안전 상황 mock', () => {
       assert.ok(safetyCase.safety.categories.length > 0);
     });
   }
+});
+
+/* ================================================================== */
+/* 영역 우선순위(domainPriority) 계약                                   */
+/* ================================================================== */
+
+describe('Situation Analyzer 규격 · 영역 우선순위', () => {
+  const needsChoice = (): SituationAnalysis => ({
+    ...baseAnalysis(),
+    domainPriority: 'needs_choice',
+    primaryDomain: null,
+    domainChoiceCandidates: ['financial_hardship', 'fear_uncertainty'],
+    secondaryDomains: [],
+  });
+
+  const failsWith = (value: unknown, fragment: string) => {
+    const result = validateSituationAnalysis(value);
+    assert.equal(result.valid, false, `통과하면 안 됩니다: ${JSON.stringify(value)}`);
+    assert.ok(
+      result.errors.some((error) => error.includes(fragment)),
+      `"${fragment}" 오류가 없습니다: ${result.errors.join(' / ')}`,
+    );
+  };
+
+  it('resolved 기본 형태는 통과한다', () => {
+    assert.equal(validateSituationAnalysis(baseAnalysis()).valid, true);
+    const withSecondary = { ...baseAnalysis(), secondaryDomains: ['loneliness_isolation'] };
+    assert.equal(validateSituationAnalysis(withSecondary).valid, true);
+  });
+
+  it('needs_choice 기본 형태는 통과한다', () => {
+    const result = validateSituationAnalysis(needsChoice());
+    assert.equal(result.valid, true, result.errors.join(' / '));
+  });
+
+  it('domainPriority가 없거나 허용되지 않는 값이면 실패한다', () => {
+    const { domainPriority, ...withoutPriority } = baseAnalysis();
+    void domainPriority;
+    failsWith(withoutPriority, 'domainPriority가 없습니다');
+    failsWith({ ...baseAnalysis(), domainPriority: 'tie' }, 'domainPriority 값이 허용되지 않습니다');
+    failsWith({ ...baseAnalysis(), domainPriority: null }, 'domainPriority 값이 허용되지 않습니다');
+  });
+
+  it('새 필드가 없는 예전 모양은 실패한다', () => {
+    const { domainPriority, domainChoiceCandidates, ...oldShape } = baseAnalysis();
+    void domainPriority;
+    void domainChoiceCandidates;
+    const result = validateSituationAnalysis(oldShape);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.includes('domainPriority')));
+    assert.ok(result.errors.some((error) => error.includes('domainChoiceCandidates')));
+  });
+
+  it('resolved인데 primaryDomain이 null이면 실패한다', () => {
+    failsWith({ ...baseAnalysis(), primaryDomain: null }, 'resolved면 primaryDomain이 null이면 안 됩니다');
+  });
+
+  it('resolved인데 선택 후보가 있으면 실패한다', () => {
+    failsWith(
+      { ...baseAnalysis(), domainChoiceCandidates: ['financial_hardship', 'fear_uncertainty'] },
+      'resolved면 domainChoiceCandidates는 비어 있어야 합니다',
+    );
+  });
+
+  it('needs_choice인데 primaryDomain이 null이 아니면 실패한다', () => {
+    failsWith({ ...needsChoice(), primaryDomain: 'financial_hardship' }, 'needs_choice면 primaryDomain은 null이어야 합니다');
+  });
+
+  it('needs_choice인데 후보가 정확히 2개가 아니면 실패한다', () => {
+    for (const candidates of [[], ['financial_hardship'], ['financial_hardship', 'fear_uncertainty', 'grief_loss']]) {
+      failsWith({ ...needsChoice(), domainChoiceCandidates: candidates }, '정확히 2개여야 합니다');
+    }
+  });
+
+  it('후보가 중복되면 실패한다', () => {
+    failsWith({ ...needsChoice(), domainChoiceCandidates: ['grief_loss', 'grief_loss'] }, '같은 domain이 중복');
+  });
+
+  it('후보가 표준 영역이 아니면 실패한다', () => {
+    failsWith({ ...needsChoice(), domainChoiceCandidates: ['grief_loss', 'made_up_domain'] }, '표준 domain이 아닌 값');
+  });
+
+  it('후보에 other_uncovered가 있으면 실패한다', () => {
+    failsWith({ ...needsChoice(), domainChoiceCandidates: ['grief_loss', 'other_uncovered'] }, 'other_uncovered은 넣을 수 없습니다');
+  });
+
+  it('needs_choice인데 secondaryDomains가 비어 있지 않으면 실패한다', () => {
+    failsWith({ ...needsChoice(), secondaryDomains: ['loneliness_isolation'] }, 'needs_choice면 secondaryDomains는 비어 있어야 합니다');
+  });
+
+  it('domainChoiceCandidates가 배열이 아니면 실패한다', () => {
+    failsWith({ ...baseAnalysis(), domainChoiceCandidates: 'grief_loss' }, 'domainChoiceCandidates가 배열이 아닙니다');
+  });
+
+  it('기존 primary·secondary 중복 규칙은 그대로다', () => {
+    failsWith({ ...baseAnalysis(), secondaryDomains: ['grief_loss'] }, 'secondaryDomains에 primaryDomain이 중복');
+    failsWith({ ...baseAnalysis(), secondaryDomains: ['loneliness_isolation', 'loneliness_isolation'] }, 'secondaryDomains에 같은 domain이 중복');
+  });
+
+  it('needs_choice여도 안전·태그·confidence 검증은 약해지지 않는다', () => {
+    failsWith({ ...needsChoice(), safety: { level: 'caution', categories: [] } }, 'categories가 최소 하나');
+    failsWith({ ...needsChoice(), situationTags: ['없는 태그'] }, '표준 사전에 없는 태그');
+    failsWith({ ...needsChoice(), confidence: 2 }, 'confidence는 0과 1 사이');
+    const withSafety = { ...needsChoice(), safety: { level: 'caution', categories: ['abuse'] } };
+    assert.equal(validateSituationAnalysis(withSafety).valid, true);
+  });
 });

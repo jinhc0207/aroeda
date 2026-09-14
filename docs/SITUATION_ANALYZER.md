@@ -93,6 +93,10 @@ Situation Analysis의 `confidence`는
 
 ```ts
 {
+  domainPriority: 'resolved' | 'needs_choice',
+  primaryDomain: SituationDomain | null,
+  domainChoiceCandidates: SituationDomain[],
+  secondaryDomains: SituationDomain[],
   situationTags: string[],
   emotionTags: string[],
   spiritualQuestionTags: string[],
@@ -109,6 +113,46 @@ Situation Analysis의 `confidence`는
 태그는 표준 태그 사전(`src/data/analysis-taxonomy.ts`)에 있는 값만 쓸 수 있다.
 이 사전은 사람이 따로 적어 두는 목록이 아니라 현재 Scripture Card에 들어 있는 값에서 자동으로 만들어진다.
 카드가 늘어나면 사전도 함께 늘어난다.
+
+모든 필드는 필수다. 예전 모양(`domainPriority`·`domainChoiceCandidates` 없음)은 검증에서 거절한다.
+
+### 영역 우선순위 (Domain Priority Decision Contract v1, 2026-09-14)
+
+사연 속 중심 영역을 하나로 정할 수 있는지 먼저 판단한다.
+
+| domainPriority | primaryDomain | domainChoiceCandidates | secondaryDomains |
+| --- | --- | --- | --- |
+| `resolved` | 표준 domain (null 금지) | `[]` | 기존 규칙 (primary와 중복 금지) |
+| `needs_choice` | `null` | 서로 다른 표준 domain 정확히 2개 (`other_uncovered` 금지) | `[]` |
+
+`resolved`로 판단하는 경우:
+
+- "무엇보다", "가장", "제일 힘든 건"처럼 사용자가 우선순위를 직접 말함
+- 한 영역이 다른 영역의 원인·결과이거나, 한쪽이 그 상황에서 생긴 감정일 때
+  (예: 번아웃 때문에 기도할 힘이 없음 → `burnout_exhaustion` 중심)
+
+`needs_choice`로 판단하는 경우:
+
+- 서로 독립된 두 일이 순서·비중 표시 없이 함께 나올 때
+  (예: 월세 걱정 + 다음 주 면접 → `[financial_hardship, fear_uncertainty]`)
+
+지키는 것:
+
+- 중심을 정할 근거가 없으면 가짜 primaryDomain을 만들지 않는다.
+- 두 영역이 "똑같이 중요하다"고 단정하지 않는다. 우선순위가 분명하지 않다는 뜻일 뿐이다.
+- 문장 순서만으로 중심을 정하지 않는다. 후보 순서에는 의미가 없다.
+- safety는 domainPriority와 상관없이 항상 정확히 표시한다.
+- 꿈·환상·징조를 하나님의 직접 메시지라고 단정하지 않는다.
+
+OpenAI Structured Outputs schema는 모든 필드를 required로 두고,
+`primaryDomain`은 `type: ['string', 'null']` + enum에 `null`을 포함하는 단순한 nullable 형태를 쓴다.
+루트에 `oneOf`/`anyOf`를 쓰지 않는다. 두 상태 사이의 관계 규칙은 서버 validator가 검사한다.
+
+V1 한계:
+
+- 세 개 이상의 독립된 영역이 나오면 후보는 두 개만 담는다. 어떤 두 개를 고를지는 Analyzer 판단이라 임의 선택 위험이 있다.
+- 실제 OpenAI가 resolved/needs_choice를 얼마나 정확히 나누는지는 아직 검증하지 않았다.
+  테스트는 계약형 mock으로 규격과 Gate 흐름만 확인한다.
 
 ### 안전 분류
 

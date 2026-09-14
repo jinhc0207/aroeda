@@ -21,10 +21,17 @@ import {
 } from '@/lib/request-recommendation';
 import { supabase } from '@/lib/supabase';
 import { SCRIPTURE_CARDS } from '@/data/scripture-cards';
+import type { SituationDomain } from '@/data/situation-domains';
 import { useSituation } from '@/state/situation';
 
 /** 서버가 준 카드 id가 실제로 우리가 가진 카드인지 확인한다. */
 const cardExists = (cardId: string) => SCRIPTURE_CARDS.some((card) => card.id === cardId);
+
+/** 그 카드가 실제로 그 영역을 다루는지 확인한다. 서버가 준 카드·영역 짝을 그대로 믿지 않는다. */
+const cardBelongsToDomain = (cardId: string, domain: SituationDomain) => {
+  const card = SCRIPTURE_CARDS.find((item) => item.id === cardId);
+  return card ? card.domains.includes(domain) : false;
+};
 
 /**
  * supabase.functions.invoke 결과를 단순한 모양으로 바꾼다.
@@ -42,7 +49,16 @@ async function invokeRecommendScripture(body: { situation: string }) {
 }
 
 export default function SituationScreen() {
-  const { situation, setSituation, setSelectedCardId } = useSituation();
+  const {
+    situation,
+    setSituation,
+    setRecommendation,
+    setDomainChoiceOptions,
+    clearRecommendation,
+    getResetCount,
+    beginRecommendation,
+    endRecommendation,
+  } = useSituation();
   const [isFocused, setIsFocused] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -65,27 +81,52 @@ export default function SituationScreen() {
       return;
     }
 
+    // 내 정보 삭제가 진행 중이면 새 추천을 시작하지 않는다.
+    // 삭제 중에 새 익명 이용자가 만들어지거나, 지워질 정보로 요청이 나가지 않게 한다.
+    // 추천을 기다리는 동안에는 반대로 삭제가 시작되지 않는다.
+    if (!beginRecommendation()) {
+      setNotice('내 정보 삭제가 끝난 뒤에 다시 시도해주세요.');
+      return;
+    }
+
     setNotice(null);
     setDevDiagnostic(null);
     setIsSubmitting(true);
-    // 새로 요청할 때 이전 추천이 남아 있지 않게 한다.
-    setSelectedCardId(null);
+    // 새로 요청할 때 이전 추천(카드·영역·영역 선택지)이 남아 있지 않게 한다.
+    clearRecommendation();
 
+    // 이 요청을 보낸 뒤 내 정보 삭제가 있었는지 알아보기 위해 지금 값을 기억한다.
+    const resetCountAtStart = getResetCount();
+
+    // 결과가 어떻든(예외 포함) 기다림 표시와 추천 잠금을 반드시 푼다.
     const outcome = await requestRecommendation(situation, {
       ensureSession: () => ensureAnonymousSession(supabase.auth),
       invokeRecommendScripture,
       cardExists,
+      cardBelongsToDomain,
+    }).finally(() => {
+      setIsSubmitting(false);
+      endRecommendation();
     });
 
+    // 기다리는 동안 내 정보가 삭제됐다면 이 답은 버린다.
+    // 지운 상황과 말씀을 되살리거나 다른 화면으로 옮기지 않는다.
+    // 서버에서 이미 시작한 처리를 취소하는 것은 아니다. 답을 쓰지 않을 뿐이다.
+    if (getResetCount() !== resetCountAtStart) return;
+
     if (outcome.status === 'recommend') {
-      setSelectedCardId(outcome.cardId);
-      setIsSubmitting(false);
+      setRecommendation({ cardId: outcome.cardId, selectedDomain: outcome.selectedDomain });
       router.push('/scripture');
       return;
     }
 
+    if (outcome.status === 'domain_choice') {
+      setDomainChoiceOptions(outcome.options);
+      router.push('/domain-choice');
+      return;
+    }
+
     if (outcome.status === 'route') {
-      setIsSubmitting(false);
       router.push(outcome.route === 'no_coverage' ? '/no-coverage' : `/${outcome.route}`);
       return;
     }
@@ -96,7 +137,6 @@ export default function SituationScreen() {
         : '지금은 말씀을 찾지 못했어요. 잠시 후 다시 시도해주세요.',
     );
     setDevDiagnostic(outcome.diagnostic);
-    setIsSubmitting(false);
   };
 
   const devDiagnosticText = formatDevDiagnostic(__DEV__, devDiagnostic);
@@ -166,6 +206,18 @@ export default function SituationScreen() {
             <View style={styles.footer}>
               <Text style={styles.footerText}>당신의 상황에 귀 기울이고,</Text>
               <Text style={styles.footerText}>함께 붙들 말씀을 찾아드릴게요.</Text>
+
+              {/* 말씀을 찾는 동안에는 설정으로 가지 않는다. 기다리던 답이 삭제 뒤에 도착하지 않게 한다. */}
+              <Pressable
+                style={({ pressed }) => [styles.footerLink, pressed && styles.buttonPressed]}
+                onPress={() => router.push('/settings')}
+                disabled={isSubmitting}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: isSubmitting }}
+                accessibilityLabel="개인정보 및 내 정보"
+                hitSlop={8}>
+                <Text style={styles.footerLinkLabel}>개인정보 및 내 정보</Text>
+              </Pressable>
             </View>
           </View>
         </ScrollView>
@@ -284,5 +336,17 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     textAlign: 'center',
     color: colors.textSubtle,
+  },
+  footerLink: {
+    marginTop: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  footerLinkLabel: {
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+    textDecorationLine: 'underline',
+    color: colors.textMuted,
   },
 });

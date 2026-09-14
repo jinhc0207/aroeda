@@ -20,7 +20,9 @@ import { INSTRUCTIONS, MODEL } from '../_shared/analyzer-contract.ts';
 import type { SituationAnalysis } from '../_shared/situation-analysis.ts';
 
 const validAnalysis: SituationAnalysis = {
+  domainPriority: 'resolved',
   primaryDomain: 'grief_loss',
+  domainChoiceCandidates: [],
   secondaryDomains: [],
   situationTags: ['사별'],
   emotionTags: ['슬픔'],
@@ -477,5 +479,88 @@ describe('analyze-situation · 사용량 제한', () => {
         assert.equal(text.includes(banned), false, `${banned}가 응답에 있습니다.`);
       }
     }
+  });
+});
+
+describe('analyze-situation · 영역 우선순위 계약', () => {
+  const needsChoiceAnalysis: SituationAnalysis = {
+    ...validAnalysis,
+    domainPriority: 'needs_choice',
+    primaryDomain: null,
+    domainChoiceCandidates: ['gratitude_joy', 'grief_loss'],
+    secondaryDomains: [],
+  };
+
+  it('공개 분석 응답은 영역 우선순위 필드를 명시적으로 담는다 (resolved)', async () => {
+    const response = await handleAnalyzeSituation(post({ situation: '할머니를 떠나보냈어요.' }), depsWith());
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { ok: boolean; analysis: Record<string, unknown> };
+    assert.equal(body.analysis.domainPriority, 'resolved');
+    assert.equal(body.analysis.primaryDomain, 'grief_loss');
+    assert.deepEqual(body.analysis.domainChoiceCandidates, []);
+    assert.deepEqual(body.analysis.secondaryDomains, []);
+  });
+
+  it('needs_choice 분석도 그대로 통과하고, 응답 키가 정해진 목록뿐이다', async () => {
+    const response = await handleAnalyzeSituation(
+      post({ situation: '합격해서 감사해요. 같은 주에 할아버지를 떠나보낸 슬픔도 있어요.' }),
+      depsWith({ callOpenAI: async () => openAIResponse(needsChoiceAnalysis) }),
+    );
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as Record<string, unknown> & { analysis: Record<string, unknown> };
+    assert.deepEqual(Object.keys(body).sort(), ['analysis', 'ok']);
+    assert.deepEqual(Object.keys(body.analysis).sort(), [
+      'confidence',
+      'domainChoiceCandidates',
+      'domainPriority',
+      'emotionTags',
+      'pastoralFunctions',
+      'prayerModes',
+      'primaryDomain',
+      'safety',
+      'secondaryDomains',
+      'situationTags',
+      'spiritualQuestionTags',
+    ]);
+    assert.equal(body.analysis.domainPriority, 'needs_choice');
+    assert.equal(body.analysis.primaryDomain, null);
+    assert.deepEqual(body.analysis.domainChoiceCandidates, ['gratitude_joy', 'grief_loss']);
+    assert.deepEqual(body.analysis.secondaryDomains, []);
+  });
+
+  it('응답에 OpenAI 원본·usage·사용자 문장을 담지 않는다', async () => {
+    const situation = '합격해서 감사해요. 같은 주에 할아버지를 떠나보낸 슬픔도 있어요.';
+    const response = await handleAnalyzeSituation(
+      post({ situation }),
+      depsWith({ callOpenAI: async () => openAIResponse(needsChoiceAnalysis) }),
+    );
+    const text = await response.text();
+    assert.equal(text.includes('usage'), false);
+    assert.equal(text.includes('output_text'), false);
+    assert.equal(text.includes('input_tokens'), false);
+    assert.equal(text.includes(situation), false);
+  });
+
+  it('새 필드가 없는 예전 모양 응답은 규격 위반(502)으로 거절한다', async () => {
+    const { domainPriority, domainChoiceCandidates, ...oldShape } = validAnalysis;
+    void domainPriority;
+    void domainChoiceCandidates;
+    const response = await handleAnalyzeSituation(
+      post({ situation: '할머니를 떠나보냈어요.' }),
+      depsWith({ callOpenAI: async () => openAIResponse(oldShape) }),
+    );
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { ok: false, error: 'INVALID_ANALYSIS_RESPONSE' });
+  });
+
+  it('needs_choice인데 후보 조건을 어기면 규격 위반(502)이다', async () => {
+    const response = await handleAnalyzeSituation(
+      post({ situation: '두 가지 일이 함께 있어요.' }),
+      depsWith({
+        callOpenAI: async () =>
+          openAIResponse({ ...needsChoiceAnalysis, domainChoiceCandidates: ['grief_loss', 'other_uncovered'] }),
+      }),
+    );
+    assert.equal(response.status, 502);
   });
 });

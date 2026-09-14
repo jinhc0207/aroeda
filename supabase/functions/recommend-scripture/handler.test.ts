@@ -10,12 +10,14 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { MAX_SITUATION_LENGTH, handleRecommendScripture, type Handlerdeps } from './handler.ts';
-import type { GateResult } from '../_shared/recommendation-gate.ts';
+import { runRecommendationGate, type GateResult } from '../_shared/recommendation-gate.ts';
 import { createSupabaseCoverageGapRecorder } from '../_shared/coverage-gap.ts';
 import type { SituationAnalysis } from '../_shared/situation-analysis.ts';
 
 const baseAnalysis: SituationAnalysis = {
+  domainPriority: 'resolved',
   primaryDomain: 'fear_uncertainty',
+  domainChoiceCandidates: [],
   secondaryDomains: [],
   situationTags: [],
   emotionTags: [],
@@ -81,23 +83,24 @@ describe('recommend-scripture · Gate 흐름', () => {
     assert.equal(result.isTie, false);
   });
 
-  it('CASE 2 · 경제적 어려움 + 불안 → no_coverage (SC-001 우회 추천 금지)', async () => {
+  it('CASE 2 · 경제적 어려움 + 불안 → recommend / SC-015', async () => {
     const result = await gateFor(
       analysisOf({
         primaryDomain: 'financial_hardship',
         secondaryDomains: ['fear_uncertainty'],
-        situationTags: ['미래 걱정'],
+        situationTags: ['경제적 어려움', '생활비 부족'],
         emotionTags: ['불안', '걱정'],
         spiritualQuestionTags: ['신뢰'],
         prayerModes: ['간구'],
         pastoralFunctions: ['위로'],
       }),
     );
-    assert.equal(result.route, 'no_coverage');
-    assert.equal(result.reason, 'PRIMARY_DOMAIN_NOT_COVERED');
-    assert.equal(result.selectedCardId, null);
-    assert.deepEqual(result.eligibleCardIds, []);
-    assert.deepEqual(result.rankedCandidates, []);
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-015');
+    // 보조 영역 fear_uncertainty의 카드(SC-001)는 후보가 아니다.
+    assert.deepEqual(result.eligibleDomains, ['financial_hardship']);
+    assert.deepEqual(result.eligibleCardIds.slice().sort(), ['SC-015', 'SC-026', 'SC-027']);
+    assert.deepEqual(result.secondaryDomains, ['fear_uncertainty']);
   });
 
   it('CASE 3 · safety caution → safety', async () => {
@@ -127,7 +130,7 @@ describe('recommend-scripture · Gate 흐름', () => {
     assert.deepEqual(result.rankedCandidates, []);
   });
 
-  it('CASE 5 · gratitude_joy + fear_uncertainty → 후보는 두 domain 카드만', async () => {
+  it('CASE 5 · gratitude_joy + fear_uncertainty → 후보는 primary 카드 SC-004뿐', async () => {
     const result = await gateFor(
       analysisOf({
         primaryDomain: 'gratitude_joy',
@@ -139,12 +142,15 @@ describe('recommend-scripture · Gate 흐름', () => {
         pastoralFunctions: ['감사', '위로'],
       }),
     );
-    assert.deepEqual(result.eligibleDomains, ['gratitude_joy', 'fear_uncertainty']);
-    assert.deepEqual(result.eligibleCardIds.slice().sort(), ['SC-001', 'SC-004']);
-    assert.ok(['SC-004', 'SC-001'].includes(result.selectedCardId ?? ''));
+    assert.deepEqual(result.eligibleDomains, ['gratitude_joy']);
+    assert.deepEqual(result.eligibleCardIds, ['SC-004']);
+    assert.equal(result.eligibleCardIds.includes('SC-001'), false);
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-004');
+    assert.deepEqual(result.secondaryDomains, ['fear_uncertainty']);
   });
 
-  it('CASE 6 · decision_guidance + wisdom_discernment → SC-002 / SC-010만', async () => {
+  it('CASE 6 · decision_guidance + wisdom_discernment → 후보는 primary 카드 SC-002뿐', async () => {
     const result = await gateFor(
       analysisOf({
         primaryDomain: 'decision_guidance',
@@ -156,18 +162,22 @@ describe('recommend-scripture · Gate 흐름', () => {
         pastoralFunctions: ['인도', '지혜'],
       }),
     );
-    assert.deepEqual(result.eligibleCardIds.slice().sort(), ['SC-002', 'SC-010']);
-    assert.equal(result.rankedCandidates.length, 2);
+    assert.deepEqual(result.eligibleDomains, ['decision_guidance']);
+    assert.deepEqual(result.eligibleCardIds, ['SC-002']);
+    assert.equal(result.eligibleCardIds.includes('SC-010'), false);
+    assert.equal(result.rankedCandidates.length, 1);
+    assert.equal(result.selectedCardId, 'SC-002');
   });
 
-  it('CASE 7 · 동점 → ambiguous / selectedCardId null / isTie true', async () => {
+  it('CASE 7 · primary 카드끼리 동점 → ambiguous / selectedCardId null / isTie true', async () => {
+    // family_parenting_conflict 세 카드가 모두 가진 태그만 사용한다.
+    // (예전의 decision_guidance + 보조 wisdom_discernment 교차 동점은 보조 카드가 후보에서 빠져 더 이상 생기지 않는다.)
     const result = await gateFor(
       analysisOf({
-        primaryDomain: 'decision_guidance',
-        secondaryDomains: ['wisdom_discernment'],
-        spiritualQuestionTags: ['인도', '분별'],
-        prayerModes: ['간구'],
-        pastoralFunctions: ['인도'],
+        primaryDomain: 'family_parenting_conflict',
+        secondaryDomains: ['burnout_exhaustion'],
+        spiritualQuestionTags: ['지혜'],
+        pastoralFunctions: ['지혜'],
       }),
     );
     assert.equal(result.route, 'ambiguous');
@@ -175,6 +185,8 @@ describe('recommend-scripture · Gate 흐름', () => {
     assert.equal(result.selectedCardId, null);
     assert.equal(result.isTie, true);
     assert.equal(result.rankedCandidates[0].totalScore, result.rankedCandidates[1].totalScore);
+    assert.deepEqual(result.eligibleDomains, ['family_parenting_conflict']);
+    assert.ok(result.rankedCandidates.every((score) => ['SC-012', 'SC-020', 'SC-021'].includes(score.cardId)));
   });
 });
 
@@ -190,7 +202,10 @@ describe('recommend-scripture · 응답 구조', () => {
     for (const field of [
       'route',
       'reason',
+      'domainPriority',
       'primaryDomain',
+      'domainChoiceCandidates',
+      'domainChoiceOptions',
       'secondaryDomains',
       'safety',
       'coverage',
@@ -545,28 +560,19 @@ describe('recommend-scripture · Coverage Gap 수집', () => {
   it('no_coverage면 영역 이름 하나만 기록한다', async () => {
     const { response, recorded } = await runWith(
       analysisOf({
-        primaryDomain: 'financial_hardship',
+        primaryDomain: 'other_uncovered',
         secondaryDomains: ['fear_uncertainty'],
-        situationTags: ['미래 걱정'],
         emotionTags: ['걱정'],
       }),
     );
 
     const body = (await response.json()) as { result: GateResult };
     assert.equal(body.result.route, 'no_coverage');
-    assert.deepEqual(recorded, ['financial_hardship']);
+    assert.deepEqual(recorded, ['other_uncovered']);
   });
 
   it('다른 uncovered 영역도 정상 기록한다', async () => {
-    for (const domain of [
-      'loneliness_isolation',
-      'family_parenting_conflict',
-      'burnout_exhaustion',
-      'spiritual_dryness',
-      'chronic_illness',
-      'relationship_conflict_forgiveness',
-      'other_uncovered',
-    ] as const) {
+    for (const domain of ['other_uncovered'] as const) {
       const { response, recorded } = await runWith(analysisOf({ primaryDomain: domain }));
       const body = (await response.json()) as { result: GateResult };
 
@@ -605,13 +611,13 @@ describe('recommend-scripture · Coverage Gap 수집', () => {
   });
 
   it('ambiguous면 기록하지 않는다', async () => {
+    // primary 카드끼리의 동점으로 ambiguous를 만든다(보조 카드는 후보가 아니다).
     const { response, recorded } = await runWith(
       analysisOf({
-        primaryDomain: 'decision_guidance',
-        secondaryDomains: ['wisdom_discernment'],
-        spiritualQuestionTags: ['인도', '분별'],
-        prayerModes: ['간구'],
-        pastoralFunctions: ['인도'],
+        primaryDomain: 'family_parenting_conflict',
+        secondaryDomains: ['burnout_exhaustion'],
+        spiritualQuestionTags: ['지혜'],
+        pastoralFunctions: ['지혜'],
       }),
     );
 
@@ -621,7 +627,7 @@ describe('recommend-scripture · Coverage Gap 수집', () => {
   });
 
   it('기록에 실패해도 사용자 응답은 그대로 성공한다 (fail-open)', async () => {
-    const { response, recorded } = await runWith(analysisOf({ primaryDomain: 'burnout_exhaustion' }), {
+    const { response, recorded } = await runWith(analysisOf({ primaryDomain: 'other_uncovered' }), {
       fail: true,
     });
 
@@ -629,7 +635,7 @@ describe('recommend-scripture · Coverage Gap 수집', () => {
     const body = (await response.json()) as { ok: boolean; result: GateResult };
     assert.equal(body.ok, true);
     assert.equal(body.result.route, 'no_coverage');
-    assert.deepEqual(recorded, ['burnout_exhaustion']);
+    assert.deepEqual(recorded, ['other_uncovered']);
   });
 
   it('통계 기록기가 없어도 정상 동작한다', async () => {
@@ -645,13 +651,13 @@ describe('recommend-scripture · Coverage Gap 수집', () => {
     const passed: unknown[] = [];
 
     await handleRecommendScripture(post({ situation }), {
-      ...depsReturning(analysisOf({ primaryDomain: 'financial_hardship', situationTags: ['미래 걱정'] })),
+      ...depsReturning(analysisOf({ primaryDomain: 'other_uncovered' })),
       recordCoverageGap: async (...args: unknown[]) => {
         passed.push(args);
       },
     });
 
-    assert.deepEqual(passed, [['financial_hardship']]);
+    assert.deepEqual(passed, [['other_uncovered']]);
     const text = JSON.stringify(passed);
     assert.equal(text.includes(situation), false);
     assert.equal(text.includes('개인적인'), false);
@@ -670,7 +676,7 @@ describe('recommend-scripture · 통계 기록이 느려도 응답은 그대로'
         init.signal?.addEventListener('abort', () => clearTimeout(timer));
       })) as unknown as typeof fetch;
 
-    const analysis = analysisOf({ primaryDomain: 'financial_hardship', situationTags: ['미래 걱정'] });
+    const analysis = analysisOf({ primaryDomain: 'other_uncovered' });
     const startedAt = Date.now();
 
     const response = await handleRecommendScripture(post({ situation: '생활비가 부족합니다.' }), {
@@ -690,5 +696,146 @@ describe('recommend-scripture · 통계 기록이 느려도 응답은 그대로'
     assert.equal(body.ok, true);
     assert.equal(body.result.route, 'no_coverage');
     assert.ok(elapsed < 1000, `응답이 통계 때문에 지연되었습니다: ${elapsed}ms`);
+  });
+});
+
+describe('recommend-scripture · 영역 선택 필요(domain_choice)', () => {
+  const needsChoice = (overrides: Partial<SituationAnalysis> = {}): SituationAnalysis =>
+    analysisOf({
+      domainPriority: 'needs_choice',
+      primaryDomain: null,
+      domainChoiceCandidates: ['financial_hardship', 'fear_uncertainty'],
+      secondaryDomains: [],
+      ...overrides,
+    });
+
+  const runRecording = async (analysis: SituationAnalysis) => {
+    const recorded: string[] = [];
+    const response = await handleRecommendScripture(post({ situation: '지금 나의 상황입니다.' }), {
+      ...depsReturning(analysis),
+      recordCoverageGap: async (primaryDomain: string) => {
+        recorded.push(primaryDomain);
+      },
+    });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { ok: boolean; result: GateResult };
+    return { result: body.result, recorded };
+  };
+
+  it('needs_choice → domain_choice이고 두 후보를 보존하며 카드를 고르지 않는다', async () => {
+    const { result } = await runRecording(needsChoice());
+    assert.equal(result.route, 'domain_choice');
+    assert.equal(result.reason, 'DOMAIN_PRIORITY_UNRESOLVED');
+    assert.equal(result.domainPriority, 'needs_choice');
+    assert.equal(result.primaryDomain, null);
+    assert.deepEqual(result.domainChoiceCandidates, ['financial_hardship', 'fear_uncertainty']);
+    assert.deepEqual(result.secondaryDomains, []);
+    assert.deepEqual(result.eligibleDomains, []);
+    assert.deepEqual(result.eligibleCardIds, []);
+    assert.deepEqual(result.rankedCandidates, []);
+    assert.equal(result.selectedCardId, null);
+    assert.equal(result.isTie, false);
+    assert.equal(result.coverage, null);
+  });
+
+  it('domain_choice 응답에 두 후보별 option이 후보 순서대로 들어 있고, OpenAI는 한 번만 불린다', async () => {
+    let openAICalls = 0;
+    const analysis = needsChoice({ situationTags: ['생활비 부족', '두려운 일을 앞둠'], emotionTags: ['불안'] });
+    const response = await handleRecommendScripture(post({ situation: '지금 나의 상황입니다.' }), {
+      ...depsReturning(analysis),
+      callOpenAI: async () => {
+        openAICalls += 1;
+        return openAIResponse(analysis);
+      },
+    });
+    const body = (await response.json()) as { ok: boolean; result: GateResult };
+    const { result } = body;
+    assert.equal(openAICalls, 1, '후보별 결과 계산에 OpenAI를 다시 부르지 않는다.');
+    assert.equal(result.route, 'domain_choice');
+    assert.deepEqual(
+      result.domainChoiceOptions.map((option) => option.domain),
+      ['financial_hardship', 'fear_uncertainty'],
+    );
+    for (const option of result.domainChoiceOptions) {
+      assert.deepEqual(Object.keys(option).sort(), ['domain', 'resolution', 'selectedCardId']);
+      // 서버 Gate를 그 영역 기준으로 직접 돌린 결과와 같다. 카드 번호를 하드코딩하지 않는다.
+      const direct = runRecommendationGate({
+        ...analysis,
+        domainPriority: 'resolved',
+        primaryDomain: option.domain,
+        domainChoiceCandidates: [],
+        secondaryDomains: analysis.domainChoiceCandidates.filter((domain) => domain !== option.domain),
+      });
+      assert.equal(option.resolution, direct.route, option.domain);
+      assert.equal(option.selectedCardId, direct.route === 'recommend' ? direct.selectedCardId : null, option.domain);
+    }
+    // top-level 카드 필드는 계속 비어 있다.
+    assert.deepEqual(result.eligibleCardIds, []);
+    assert.deepEqual(result.rankedCandidates, []);
+    assert.equal(result.selectedCardId, null);
+    // option에 태그·점수·분석 결과 전체를 넣지 않는다.
+    const text = JSON.stringify(result.domainChoiceOptions);
+    for (const banned of ['totalScore', 'matchedTags', 'situationTags', '생활비 부족', 'confidence']) {
+      assert.equal(text.includes(banned), false, banned);
+    }
+  });
+
+  it('일반 route 응답에는 domainChoiceOptions가 빈 배열이다', async () => {
+    const cases = [
+      analysisOf({ primaryDomain: 'fear_uncertainty', situationTags: ['두려운 일을 앞둠'] }),
+      analysisOf({ primaryDomain: 'family_parenting_conflict', spiritualQuestionTags: ['지혜'], pastoralFunctions: ['지혜'] }),
+      analysisOf({ primaryDomain: 'other_uncovered' }),
+      needsChoice({ safety: { level: 'urgent', categories: ['abuse'] } }),
+    ];
+    const routes: string[] = [];
+    for (const analysis of cases) {
+      const { result } = await runRecording(analysis);
+      assert.deepEqual(result.domainChoiceOptions, [], result.route);
+      routes.push(result.route);
+    }
+    assert.deepEqual(routes, ['recommend', 'ambiguous', 'no_coverage', 'safety']);
+  });
+
+  it('domain_choice는 coverage gap으로 기록하지 않는다', async () => {
+    const { result, recorded } = await runRecording(needsChoice());
+    assert.equal(result.route, 'domain_choice');
+    assert.deepEqual(recorded, []);
+  });
+
+  it('safety + needs_choice → safety이고 기록하지 않는다', async () => {
+    const { result, recorded } = await runRecording(needsChoice({ safety: { level: 'caution', categories: ['abuse'] } }));
+    assert.equal(result.route, 'safety');
+    assert.equal(result.reason, 'SAFETY_FIRST');
+    assert.deepEqual(result.domainChoiceCandidates, []);
+    assert.deepEqual(result.eligibleCardIds, []);
+    assert.deepEqual(recorded, []);
+  });
+
+  it('resolved 결과에는 domainPriority와 빈 domainChoiceCandidates가 담긴다', async () => {
+    const { result } = await runRecording(
+      analysisOf({ primaryDomain: 'fear_uncertainty', situationTags: ['두려운 일을 앞둠'] }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.domainPriority, 'resolved');
+    assert.deepEqual(result.domainChoiceCandidates, []);
+  });
+
+  it('primary 카드끼리 동점이면 여전히 ambiguous다 (domain_choice와 구분)', async () => {
+    const { result, recorded } = await runRecording(
+      analysisOf({ primaryDomain: 'family_parenting_conflict', spiritualQuestionTags: ['지혜'], pastoralFunctions: ['지혜'] }),
+    );
+    assert.equal(result.route, 'ambiguous');
+    assert.equal(result.reason, 'TOP_SCORE_TIE');
+    assert.equal(result.primaryDomain, 'family_parenting_conflict');
+    assert.deepEqual(result.domainChoiceCandidates, []);
+    assert.deepEqual(recorded, []);
+  });
+
+  it('응답에 OpenAI 원본과 usage를 담지 않는다', async () => {
+    const response = await handleRecommendScripture(post({ situation: '지금 나의 상황입니다.' }), depsReturning(needsChoice()));
+    const text = await response.text();
+    assert.equal(text.includes('usage'), false);
+    assert.equal(text.includes('input_tokens'), false);
+    assert.equal(text.includes('output_text'), false);
   });
 });

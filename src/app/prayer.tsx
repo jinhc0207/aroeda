@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '@/constants/aroeda-theme';
 import { getScriptureCard } from '@/data/scripture-cards';
+import type { SituationDomain } from '@/data/situation-domains';
 import { requestPrayerGuidance, type PrayerGuidance } from '@/lib/request-prayer-guidance';
 import { supabase } from '@/lib/supabase';
 import { useSituation } from '@/state/situation';
@@ -39,7 +40,7 @@ import { useSituation } from '@/state/situation';
  * supabase.functions.invoke 결과를 단순한 모양으로 바꾼다.
  * 왜 실패했는지는 화면이 알 필요가 없다. 어느 경우든 기존 안내로 넘어간다.
  */
-async function invokePrayerGuidance(body: { situation: string; cardId: string }) {
+async function invokePrayerGuidance(body: { situation: string; cardId: string; selectedDomain: SituationDomain }) {
   const { data, error } = await supabase.functions.invoke('generate-prayer-guidance', { body });
   if (error) return { ok: false as const };
   return { ok: true as const, data };
@@ -60,7 +61,15 @@ type GuidanceState =
   | { status: 'fallback' };
 
 export default function PrayerScreen() {
-  const { situation, selectedCardId, setSituation, setSelectedCardId } = useSituation();
+  const {
+    situation,
+    selectedCardId,
+    selectedDomain,
+    setSituation,
+    clearRecommendation,
+    resetCount,
+    getResetCount,
+  } = useSituation();
 
   // 사용자가 적는 기도. 이 화면 안에만 있습니다.
   // 이 값은 서버로 보내지 않습니다. 보낼 자리 자체를 만들지 않았습니다.
@@ -94,17 +103,31 @@ export default function PrayerScreen() {
     if (askedRef.current) return;
 
     askedRef.current = true;
+
+    // 이 말씀을 받은 영역을 모르면(예: 이전 판의 남은 상태) 서버를 부르지 않고
+    // 바로 기존 fallback 안내(기도 방향)로 넘어갑니다.
+    if (!selectedDomain) {
+      setGuidanceState({ status: 'fallback' });
+      return;
+    }
+
     let alive = true;
+    // 이 요청을 보낸 뒤 내 정보 삭제가 있었는지 알아보기 위해 지금 값을 기억합니다.
+    const resetCountAtStart = getResetCount();
     setGuidanceState({ status: 'loading' });
 
     void (async () => {
       const outcome = await requestPrayerGuidance(
-        { situation, cardId: card.id },
+        { situation, cardId: card.id, selectedDomain },
         { invokePrayerGuidance },
       );
 
       // 답을 기다리는 동안 화면을 벗어났으면 아무것도 바꾸지 않습니다.
       if (!alive) return;
+      // 기다리는 동안 내 정보가 삭제됐으면 이 답은 버립니다.
+      // 화면이 뒤에 남아 있어도 지운 상황으로 만든 기도문을 다시 보여 주지 않습니다.
+      // 서버에서 이미 시작한 처리를 취소하는 것은 아닙니다. 답을 쓰지 않을 뿐입니다.
+      if (getResetCount() !== resetCountAtStart) return;
 
       setGuidanceState(
         outcome.status === 'guidance'
@@ -116,7 +139,25 @@ export default function PrayerScreen() {
     return () => {
       alive = false;
     };
-  }, [card, situation]);
+  }, [card, situation, selectedDomain, getResetCount]);
+
+  /**
+   * 내 정보 삭제 뒤에는, 이 화면이 뒤에 남아 있더라도 처음 들어온 것처럼 되돌립니다.
+   * 적던 기도도 메모리에서 비웁니다. 화면이 언제나 사라진다고 기대하지 않습니다.
+   */
+  const seenResetCountRef = useRef(resetCount);
+
+  useEffect(() => {
+    if (seenResetCountRef.current === resetCount) return;
+    seenResetCountRef.current = resetCount;
+
+    askedRef.current = false;
+    setPrayer('');
+    setIsFocused(false);
+    setIsDone(false);
+    setShowPersonalPrayer(false);
+    setGuidanceState({ status: 'idle' });
+  }, [resetCount]);
 
   const goBack = () => {
     if (router.canGoBack()) {
@@ -131,7 +172,7 @@ export default function PrayerScreen() {
     setPrayer('');
     setShowPersonalPrayer(false);
     setSituation('');
-    setSelectedCardId(null);
+    clearRecommendation();
     router.replace('/');
   };
 

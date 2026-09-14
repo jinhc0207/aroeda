@@ -22,7 +22,7 @@ import {
   UNCOVERED_DOMAINS,
   FALLBACK_DOMAIN,
 } from './situation-domains.ts';
-import { SAFETY_CATEGORIES, SAFETY_LEVELS } from './situation-analysis.ts';
+import { DOMAIN_PRIORITY_STATUSES, SAFETY_CATEGORIES, SAFETY_LEVELS } from './situation-analysis.ts';
 
 const domainList = (domains: readonly string[]) =>
   domains.map((domain) => `- ${domain}: ${DOMAIN_DESCRIPTIONS[domain as never]}`).join('\n');
@@ -89,18 +89,57 @@ primaryDomain은 사용자가 처한 삶의 핵심 상황을 나타냅니다.
 "하나님이 멀게 느껴지고 기도해도 아무 느낌이 없습니다."
 → primaryDomain = spiritual_dryness
 
-secondaryDomains는 실제로 복합적인 상황이 함께 존재할 때만 사용합니다.
-태그를 풍성하게 만들기 위해 추가하지 않습니다.
+[Domain Priority]
+
+domainPriority는 문장에서 중심 영역을 정할 수 있는지를 나타냅니다.
+값은 resolved 또는 needs_choice 둘 중 하나입니다.
+
+resolved:
+- 문제가 하나이거나, 사용자가 한 영역을 중심으로 말한 경우입니다.
+- 사용자가 "먼저", "지금은", "무엇보다", "가장 힘든 것은"처럼 처리 순서나 중심을 밝힌 경우입니다.
+- 한 문제가 다른 문제의 원인·결과·감정 반응·과거 배경일 뿐인 경우입니다.
+- 한 가지 문제에 감정이 여러 개 섞여 있을 뿐인 경우입니다.
+- 이때 primaryDomain에 중심 영역 하나를 넣고, domainChoiceCandidates는 빈 배열로 둡니다.
+
+needs_choice:
+- 서로 독립적인 두 삶의 영역이 지금 함께 드러나고,
+- 문장에 어느 쪽을 먼저 다룰지 정할 충분한 근거가 없는 경우입니다.
+- 이때 primaryDomain은 null로 둡니다. 가짜 중심 영역을 만들지 않습니다.
+- domainChoiceCandidates에 서로 다른 영역 두 개를 넣고, secondaryDomains는 빈 배열로 둡니다.
+- 두 후보의 순서는 우선순위가 아닙니다.
+- 두 문제가 사용자 마음속에서 똑같이 중요하다고 주장하는 것이 아닙니다.
+  문장만으로 처리 순서를 정할 수 없다는 뜻입니다.
+- ${FALLBACK_DOMAIN}은 후보로 넣지 않습니다.
+- 감정, 원인, 결과, 과거 배경을 별도 후보로 만들지 않습니다.
+- 세 가지 이상이 언급되더라도, 가장 분명하게 서로 독립된 두 영역만 후보로 넣습니다.
 
 예:
 
-"새 직장에 합격해서 감사하지만 제가 잘할 수 있을지 두렵습니다."
-→ primaryDomain은 gratitude_joy 또는 fear_uncertainty
-→ 나머지 실제로 함께 있는 domain은 secondaryDomains에 넣을 수 있습니다.
+"생활비가 부족해서 아이 학원을 끊자고 했더니 가족과 매일 다퉈요. 무엇보다 가족 갈등을 풀고 싶어요."
+→ resolved, primaryDomain = family_parenting_conflict, secondaryDomains = [financial_hardship]
 
-하지만 단순한 감정 반응을 억지로 secondary domain으로 만들지 않습니다.
+"일에 너무 지쳐서 요즘은 기도할 힘도 없어요."
+→ resolved, primaryDomain = burnout_exhaustion
+(기도할 힘이 없는 것은 소진의 결과로 표현되어 있습니다.)
+
+"이번 달 월세 낼 돈이 모자라요. 그리고 다음 주 면접 결과가 어떻게 나올지 몰라 떨려요."
+→ needs_choice, primaryDomain = null,
+  domainChoiceCandidates = [financial_hardship, fear_uncertainty], secondaryDomains = []
+
+"자격증 시험에 합격해 감사해요. 같은 주에 할아버지를 떠나보낸 슬픔도 함께 안고 있어요."
+→ needs_choice, primaryDomain = null,
+  domainChoiceCandidates = [gratitude_joy, grief_loss], secondaryDomains = []
+
+secondaryDomains는 resolved에서만 사용합니다.
+실제로 복합적인 상황이 함께 존재할 때만 넣고, 태그를 풍성하게 만들기 위해 추가하지 않습니다.
+단순한 감정 반응을 억지로 secondary domain으로 만들지 않습니다.
 함께 있는 상황이 없으면 secondaryDomains는 빈 배열로 둡니다.
 primaryDomain과 같은 값을 secondaryDomains에 다시 넣지 않습니다.
+
+안전 신호(safety)는 domainPriority와 상관없이 항상 정확히 표시합니다.
+needs_choice라는 이유로 안전 신호를 빼거나 약하게 표시하지 않습니다.
+
+사용자가 꿈·환상·징조를 말하더라도, 그것이 하나님의 직접 메시지인지 아닌지 단정하지 않습니다.
 
 핵심 상황이 아래 목록 어디에도 적절히 들어가지 않으면 ${FALLBACK_DOMAIN}을 사용합니다.
 
@@ -266,11 +305,21 @@ pastoralFunctions: ${PASTORAL_FUNCTIONS.join(', ')}
  * Structured Outputs용 JSON Schema.
  * strict 모드에서는 숫자 범위(minimum/maximum)를 쓸 수 없으므로
  * confidence의 0~1 범위는 응답을 받은 뒤 validateSituationAnalysis로 확인한다.
+ *
+ * domainPriority에 따른 조건 관계(resolved면 primaryDomain 필수, needs_choice면 null과 후보 2개 등)는
+ * 루트 oneOf/anyOf로 표현하지 않는다. 응답을 받은 뒤 validateSituationAnalysis가 확인한다.
+ * primaryDomain의 null 허용은 OpenAI Structured Outputs 문서의 단순한 형태
+ * (type: ['string', 'null'], enum에 null 포함)를 쓴다.
  */
 export const SITUATION_ANALYSIS_SCHEMA = {
   type: 'object',
   properties: {
-    primaryDomain: { type: 'string', enum: [...SITUATION_DOMAINS] },
+    domainPriority: { type: 'string', enum: [...DOMAIN_PRIORITY_STATUSES] },
+    primaryDomain: { type: ['string', 'null'], enum: [...SITUATION_DOMAINS, null] },
+    domainChoiceCandidates: {
+      type: 'array',
+      items: { type: 'string', enum: SITUATION_DOMAINS.filter((domain) => domain !== FALLBACK_DOMAIN) },
+    },
     secondaryDomains: { type: 'array', items: { type: 'string', enum: [...SITUATION_DOMAINS] } },
     situationTags: { type: 'array', items: { type: 'string', enum: SITUATION_TAGS } },
     emotionTags: { type: 'array', items: { type: 'string', enum: EMOTION_TAGS } },
@@ -292,7 +341,9 @@ export const SITUATION_ANALYSIS_SCHEMA = {
     confidence: { type: 'number' },
   },
   required: [
+    'domainPriority',
     'primaryDomain',
+    'domainChoiceCandidates',
     'secondaryDomains',
     'situationTags',
     'emotionTags',

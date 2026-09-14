@@ -23,7 +23,9 @@ export const MOCK_ANALYSIS_CASES: MockAnalysisCase[] = [
     name: 'CASE 1 · 이사 앞에서',
     userText: '내년에 이사를 해야 하는데 어디로 가야 할지 벌써부터 마음이 무거워요.',
     analysis: {
+      domainPriority: 'resolved',
       primaryDomain: 'decision_guidance',
+      domainChoiceCandidates: [],
       secondaryDomains: [],
       situationTags: ['이사', '미래 선택', '방향을 모름'],
       emotionTags: ['걱정'],
@@ -39,7 +41,9 @@ export const MOCK_ANALYSIS_CASES: MockAnalysisCase[] = [
     name: 'CASE 2 · 아들의 합격',
     userText: '오늘 아들이 바라던 학교에 합격했어요. 너무 기쁘고 하나님께 감사하고 싶어요.',
     analysis: {
+      domainPriority: 'resolved',
       primaryDomain: 'gratitude_joy',
+      domainChoiceCandidates: [],
       secondaryDomains: [],
       situationTags: ['좋은 일이 생김', '기쁜 소식', '감사하고 싶음'],
       emotionTags: ['기쁨', '감사'],
@@ -55,7 +59,9 @@ export const MOCK_ANALYSIS_CASES: MockAnalysisCase[] = [
     name: 'CASE 3 · 몇 년째 달라지지 않는 기도',
     userText: '몇 년째 기도하고 있는데 아무것도 달라지지 않아요. 이제 기도하는 것도 지쳤어요.',
     analysis: {
+      domainPriority: 'resolved',
       primaryDomain: 'waiting_unanswered_prayer',
+      domainChoiceCandidates: [],
       secondaryDomains: [],
       situationTags: ['오래된 기도', '응답이 보이지 않음', '상황이 변하지 않음'],
       emotionTags: ['지침', '답답함'],
@@ -71,7 +77,9 @@ export const MOCK_ANALYSIS_CASES: MockAnalysisCase[] = [
     name: 'CASE 4 · 뒤처지는 것 같은 마음',
     userText: '친구들은 다 잘되는 것 같은데 저만 뒤처지는 것 같아서 속상해요.',
     analysis: {
+      domainPriority: 'resolved',
       primaryDomain: 'comparison_identity',
+      domainChoiceCandidates: [],
       secondaryDomains: [],
       situationTags: ['다른 사람과 비교', '뒤처진 것 같음', '다른 사람의 성공이 신경 쓰임'],
       emotionTags: ['열등감'],
@@ -87,7 +95,9 @@ export const MOCK_ANALYSIS_CASES: MockAnalysisCase[] = [
     name: 'CASE 5 · 반복되는 모욕',
     userText: '직장 상사가 사람들 앞에서 반복적으로 저를 모욕합니다. 너무 화가 나고 억울해요.',
     analysis: {
+      domainPriority: 'resolved',
       primaryDomain: 'injustice_mistreatment',
+      domainChoiceCandidates: [],
       secondaryDomains: [],
       situationTags: ['괴롭힘', '부당대우', '억울한 일을 당함'],
       emotionTags: ['분노', '억울함'],
@@ -104,7 +114,9 @@ export const MOCK_ANALYSIS_CASES: MockAnalysisCase[] = [
     name: 'CASE 6 · 어머니를 잃은 뒤',
     userText: '어머니가 돌아가신 뒤 계속 생각나고 너무 보고 싶어요.',
     analysis: {
+      domainPriority: 'resolved',
       primaryDomain: 'grief_loss',
+      domainChoiceCandidates: [],
       secondaryDomains: [],
       situationTags: ['사별', '상실', '죽음'],
       emotionTags: ['슬픔', '그리움'],
@@ -120,7 +132,9 @@ export const MOCK_ANALYSIS_CASES: MockAnalysisCase[] = [
     name: 'CASE 7 · 같은 죄를 다시 지음',
     userText: '하나님께 죄송하다고 했는데 또 같은 죄를 지었어요.',
     analysis: {
+      domainPriority: 'resolved',
       primaryDomain: 'repentance_guilt',
+      domainChoiceCandidates: [],
       secondaryDomains: [],
       situationTags: ['같은 죄를 반복함', '회개하고 싶음'],
       emotionTags: ['죄책감'],
@@ -136,7 +150,9 @@ export const MOCK_ANALYSIS_CASES: MockAnalysisCase[] = [
     name: 'CASE 8 · 조용히 하나님과',
     userText: '오늘은 특별한 일은 없어요. 그냥 하나님과 조용히 이야기하고 싶어요.',
     analysis: {
+      domainPriority: 'resolved',
       primaryDomain: 'quiet_communion',
+      domainChoiceCandidates: [],
       secondaryDomains: [],
       situationTags: ['특별한 문제가 없음', '조용히 하나님과 있고 싶음'],
       emotionTags: ['고요함'],

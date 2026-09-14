@@ -24,7 +24,7 @@ export const COVERED_DOMAINS = [
   'wisdom_discernment',
 ] as const;
 
-/** 아뢰다가 분류는 하지만 아직 카드가 없는 상황 */
+/** 아뢰다가 분류는 하지만 대표 카드가 아직 충분하지 않은 상황 */
 export const UNCOVERED_DOMAINS = [
   'loneliness_isolation',
   'family_parenting_conflict',

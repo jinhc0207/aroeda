@@ -34,9 +34,12 @@ POST /recommend-scripture
 {
   "ok": true,
   "result": {
-    "route": "safety | no_coverage | recommend | ambiguous",
-    "reason": "SAFETY_FIRST | PRIMARY_DOMAIN_NOT_COVERED | CARD_SELECTED | TOP_SCORE_TIE",
-    "primaryDomain": "...",
+    "route": "safety | domain_choice | no_coverage | recommend | ambiguous",
+    "reason": "SAFETY_FIRST | DOMAIN_PRIORITY_UNRESOLVED | PRIMARY_DOMAIN_NOT_COVERED | CARD_SELECTED | TOP_SCORE_TIE",
+    "domainPriority": "resolved | needs_choice",
+    "primaryDomain": "... | null",
+    "domainChoiceCandidates": [],
+    "domainChoiceOptions": [],
     "secondaryDomains": [],
     "safety": { "level": "...", "categories": [] },
     "coverage": { "primaryDomain": "...", "covered": true, "cardIds": [] },
@@ -50,7 +53,8 @@ POST /recommend-scripture
 ```
 
 `result`는 `_shared/recommendation-gate.ts`의 `GateResult`를 그대로 돌려준 것입니다.
-새 필드를 만들지 않았습니다.
+`coverage`는 영역이 정해지지 않은 `domain_choice`(와 needs_choice인 `safety`)에서 `null`입니다.
+`domainChoiceOptions`는 `domain_choice`에서만 두 개이고, 나머지 route에서는 `[]`입니다.
 
 실패 응답과 오류 코드는 analyze-situation과 동일합니다.
 
@@ -67,6 +71,9 @@ POST /recommend-scripture
 
 ## route별 의미
 
+- `domain_choice` — 중심 영역을 하나로 정할 근거가 없는 상황. `primaryDomain`과 `coverage`는 `null`, top-level 카드 필드는 비어 있습니다.
+  `domainChoiceOptions`에 두 후보 각각을 골랐을 때의 `resolution`(recommend/ambiguous/no_coverage)과 `selectedCardId`가 후보 순서대로 들어갑니다.
+  이미 받은 분석으로만 계산하므로 OpenAI를 다시 부르지 않습니다. coverage gap으로 기록하지 않습니다.
 - `safety` — 안전 대응이 먼저인 상황. 이 함수는 신호만 돌려주고 상담 문구·전화번호·기도문·성경본문을 만들지 않습니다.
 - `no_coverage` — 지금 카드로 다룰 수 없는 상황. secondaryDomains에 카드가 있어도 우회 추천하지 않으며 `selectedCardId`는 항상 `null`입니다.
 - `recommend` — `selectedCardId`에 카드 id(SC-xxx)가 들어갑니다. 성경 원문은 아직 반환하지 않습니다.

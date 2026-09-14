@@ -14,9 +14,25 @@
  */
 
 import type { SessionSummary } from './anonymous-session.ts';
+import { isChoosableDomain } from './domain-choice-resolution.ts';
+import type { SituationDomain } from '../data/situation-domains.ts';
 
-export const GATE_ROUTES = ['recommend', 'no_coverage', 'safety', 'ambiguous'] as const;
+export const GATE_ROUTES = ['recommend', 'no_coverage', 'safety', 'ambiguous', 'domain_choice'] as const;
 export type GateRouteName = (typeof GATE_ROUTES)[number];
+
+/** domain_choice에서 후보 영역 하나를 골랐을 때의 결과. `docs/RECOMMENDATION_GATE.md` 참고. */
+export type DomainChoiceResolution = 'recommend' | 'ambiguous' | 'no_coverage';
+
+const DOMAIN_CHOICE_RESOLUTIONS: readonly DomainChoiceResolution[] = ['recommend', 'ambiguous', 'no_coverage'];
+const isDomainChoiceResolution = (value: unknown): value is DomainChoiceResolution =>
+  typeof value === 'string' && (DOMAIN_CHOICE_RESOLUTIONS as readonly string[]).includes(value);
+
+export type DomainChoiceOption = {
+  domain: SituationDomain;
+  resolution: DomainChoiceResolution;
+  /** resolution이 recommend일 때만 카드 번호가 있다. */
+  selectedCardId: string | null;
+};
 
 /**
  * 개발자만 보는 실패 진단 코드.
@@ -55,11 +71,15 @@ export type RecommendationDeps = {
   invokeRecommendScripture: (body: { situation: string }) => Promise<InvokeOutcome>;
   /** 로컬 Scripture Card에 실제로 있는 id인지 확인한다. */
   cardExists: (cardId: string) => boolean;
+  /** 카드가 실제로 그 영역에 속하는지 확인한다. recommend와 domain_choice option 검증에 쓴다. */
+  cardBelongsToDomain: (cardId: string, domain: SituationDomain) => boolean;
 };
 
 export type RecommendationOutcome =
-  | { status: 'recommend'; cardId: string }
-  | { status: 'route'; route: Exclude<GateRouteName, 'recommend'> }
+  | { status: 'recommend'; cardId: string; selectedDomain: SituationDomain }
+  /** 중심 영역을 하나로 정할 근거가 없어, 사용자가 고를 두 후보를 그대로 전달한다. */
+  | { status: 'domain_choice'; options: [DomainChoiceOption, DomainChoiceOption] }
+  | { status: 'route'; route: Exclude<GateRouteName, 'recommend' | 'domain_choice'> }
   /**
    * auth: 세션 준비 실패 / rate_limited: 사용량 제한 / general: 그 밖의 실패
    * diagnostic은 개발 모드에서만 화면에 낸다. 사용자 문구(kind)는 바꾸지 않는다.
@@ -69,18 +89,79 @@ export type RecommendationOutcome =
 const isGateRoute = (value: unknown): value is GateRouteName =>
   typeof value === 'string' && (GATE_ROUTES as readonly string[]).includes(value);
 
-/** 응답에서 route와 카드 id만 꺼낸다. 모양이 다르면 null. */
-function parseGateResponse(data: unknown): { route: GateRouteName; selectedCardId: unknown } | null {
+const INVALID_RESPONSE = {
+  status: 'error',
+  kind: 'general',
+  diagnostic: 'FUNCTION_RESPONSE_INVALID',
+} as const;
+
+/** 응답에서 이 흐름이 쓸 값만 꺼낸다. 모양이 다르면 null. */
+function parseGateResponse(data: unknown): {
+  route: GateRouteName;
+  selectedCardId: unknown;
+  primaryDomain: unknown;
+  domainChoiceCandidates: unknown;
+  domainChoiceOptions: unknown;
+} | null {
   if (typeof data !== 'object' || data === null) return null;
 
   const { ok, result } = data as { ok?: unknown; result?: unknown };
   if (ok !== true) return null;
   if (typeof result !== 'object' || result === null) return null;
 
-  const { route, selectedCardId } = result as { route?: unknown; selectedCardId?: unknown };
+  const { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions } =
+    result as Record<string, unknown>;
   if (!isGateRoute(route)) return null;
 
-  return { route, selectedCardId };
+  return { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions };
+}
+
+/**
+ * domain_choice 응답의 두 후보와 두 option을 검증한다.
+ *
+ *   - 후보와 option 모두 정확히 둘이고, 같은 순서로 짝지어진다 (순서는 우선순위를 뜻하지 않는다).
+ *   - 후보는 서로 다른, 사용자가 고를 수 있는 표준 영역이어야 한다(other_uncovered 불가, 중복 불가).
+ *   - resolution이 recommend면 카드가 실제로 있고 그 영역에 속해야 한다.
+ *   - resolution이 ambiguous/no_coverage면 카드 번호가 없어야 한다.
+ *
+ * 하나라도 어긋나면 null이다. 서버 응답을 그대로 믿고 화면에 넘기지 않는다.
+ */
+function parseDomainChoiceOptions(
+  domainChoiceCandidates: unknown,
+  domainChoiceOptions: unknown,
+  deps: Pick<RecommendationDeps, 'cardExists' | 'cardBelongsToDomain'>,
+): [DomainChoiceOption, DomainChoiceOption] | null {
+  if (!Array.isArray(domainChoiceCandidates) || domainChoiceCandidates.length !== 2) return null;
+  if (!domainChoiceCandidates.every(isChoosableDomain)) return null;
+  const candidates = domainChoiceCandidates as SituationDomain[];
+  if (candidates[0] === candidates[1]) return null;
+
+  if (!Array.isArray(domainChoiceOptions) || domainChoiceOptions.length !== 2) return null;
+
+  const options: DomainChoiceOption[] = [];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const raw = domainChoiceOptions[index];
+    if (typeof raw !== 'object' || raw === null) return null;
+
+    const { domain, resolution, selectedCardId } = raw as Record<string, unknown>;
+    // 순서가 일치해야 한다: option[i]는 candidates[i]에 대한 결과여야 한다.
+    // 이 시점부터 candidates[index]가 검증된 값이므로 domain 대신 그 값을 쓴다.
+    if (domain !== candidates[index]) return null;
+    const optionDomain = candidates[index]!;
+    if (!isDomainChoiceResolution(resolution)) return null;
+
+    if (resolution === 'recommend') {
+      if (typeof selectedCardId !== 'string') return null;
+      if (!deps.cardExists(selectedCardId)) return null;
+      if (!deps.cardBelongsToDomain(selectedCardId, optionDomain)) return null;
+      options.push({ domain: optionDomain, resolution, selectedCardId });
+    } else {
+      if (selectedCardId !== null) return null;
+      options.push({ domain: optionDomain, resolution, selectedCardId: null });
+    }
+  }
+
+  return [options[0]!, options[1]!];
 }
 
 /**
@@ -125,7 +206,20 @@ export async function requestRecommendation(
 
   const parsed = parseGateResponse(outcome.data);
   if (!parsed) {
-    return { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' };
+    return INVALID_RESPONSE;
+  }
+
+  if (parsed.route === 'domain_choice') {
+    // domain_choice는 top-level 카드를 고르지 않은 상태다. 문서(RECOMMENDATION_GATE.md STEP 1-1)대로
+    // primaryDomain과 top-level selectedCardId가 모두 비어 있어야 한다. 둘 중 하나라도 값이 있으면
+    // option이 아무리 멀쩡해도 서로 모순된 응답이므로 option을 읽기 전에 거절한다.
+    if (parsed.primaryDomain !== null || parsed.selectedCardId !== null) {
+      return INVALID_RESPONSE;
+    }
+
+    const options = parseDomainChoiceOptions(parsed.domainChoiceCandidates, parsed.domainChoiceOptions, deps);
+    if (!options) return INVALID_RESPONSE;
+    return { status: 'domain_choice', options };
   }
 
   if (parsed.route !== 'recommend') {
@@ -134,10 +228,15 @@ export async function requestRecommendation(
 
   // recommend인데 카드가 없거나 우리가 모르는 id면 임의의 카드로 대체하지 않는다.
   if (typeof parsed.selectedCardId !== 'string' || !deps.cardExists(parsed.selectedCardId)) {
-    return { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' };
+    return INVALID_RESPONSE;
   }
 
-  return { status: 'recommend', cardId: parsed.selectedCardId };
+  // 영역이 표준값이 아니거나, 고른 카드가 실제로 그 영역에 속하지 않으면 믿지 않는다.
+  if (!isChoosableDomain(parsed.primaryDomain) || !deps.cardBelongsToDomain(parsed.selectedCardId, parsed.primaryDomain)) {
+    return INVALID_RESPONSE;
+  }
+
+  return { status: 'recommend', cardId: parsed.selectedCardId, selectedDomain: parsed.primaryDomain };
 }
 
 /** invoke가 실패로 끝났을 때 상태 코드만으로 안전하게 분류한다. 응답 본문은 보지 않는다. */

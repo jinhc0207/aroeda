@@ -220,9 +220,9 @@ describe('기도 경험 · E. 기도를 마치기', () => {
   it('처음으로 돌아가는 길이 있다', () => {
     assert.ok(PRAYER.includes('처음으로 돌아가기'));
     assert.ok(PRAYER.includes("router.replace('/')"));
-    // 새 이야기를 위해 앞의 것을 비운다.
+    // 새 이야기를 위해 앞의 것(상황·카드·영역·영역 선택지)을 비운다.
     assert.ok(PRAYER.includes("setSituation('')"));
-    assert.ok(PRAYER.includes('setSelectedCardId(null)'));
+    assert.ok(PRAYER.includes('clearRecommendation()'));
   });
 
   it('말씀을 다시 볼 수도 있다', () => {
@@ -289,7 +289,7 @@ describe('기도 경험 · G. 앞의 흐름은 그대로', () => {
     assert.ok(index.includes('`/${outcome.route}`'));
 
     // 그 이름의 주인은 여전히 요청 계약 쪽이다.
-    assert.deepEqual([...GATE_ROUTES], ['recommend', 'no_coverage', 'safety', 'ambiguous']);
+    assert.deepEqual([...GATE_ROUTES], ['recommend', 'no_coverage', 'safety', 'ambiguous', 'domain_choice']);
   });
 
   it('기도 화면은 상태를 새로 만들지 않고 기존 것을 쓴다', () => {

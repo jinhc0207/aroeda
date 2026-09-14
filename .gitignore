@@ -45,3 +45,16 @@ example
 # generated native folders
 /ios
 /android
+
+# Supabase CLI local project link state (machine-specific, not a source file)
+/supabase/.temp/
+
+# 로컬 작업 산출물: 배포용으로 손으로 만든 zip과 스크립트 실행 결과 파일.
+# 파일 자체는 지우지 않는다 — 여기서 Git 추적 대상에서만 뺀다.
+# *.zip을 통째로 무시하지 않는다. 아래 이름에 해당하는 것만 뺀다.
+/aroeda-*.zip
+/recommend-scripture-coverage-gap-v1*.zip
+/research-prioritizer-deploy.zip
+/research-prioritizer-deploy-manifest.txt
+/domain-output.txt
+/stress-output.txt

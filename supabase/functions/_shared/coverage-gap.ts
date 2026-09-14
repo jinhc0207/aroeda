@@ -99,7 +99,8 @@ export function createSupabaseCoverageGapRecorder(config: CoverageGapConfig): Co
  * 어떤 경우에도 예외를 밖으로 던지지 않는다. 통계 때문에 사용자 응답이 실패하면 안 된다.
  */
 export async function recordCoverageGapIfNeeded(
-  result: { route: string; primaryDomain: string },
+  // domain_choice처럼 primaryDomain이 정해지지 않은 결과는 route가 no_coverage가 아니므로 기록하지 않는다.
+  result: { route: string; primaryDomain: string | null },
   recorder: CoverageGapRecorder | undefined,
 ): Promise<void> {
   if (!recorder) return;

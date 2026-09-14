@@ -37,6 +37,8 @@ import {
 } from '../../supabase/functions/generate-prayer-guidance/handler.ts';
 import { getScriptureCard, SCRIPTURE_CARDS } from '../../supabase/functions/_shared/scripture-cards.ts';
 import { MODEL as ANALYZER_MODEL } from '../../supabase/functions/_shared/analyzer-contract.ts';
+import { runRecommendationGate } from '../../supabase/functions/_shared/recommendation-gate.ts';
+import type { SituationAnalysis } from '../../supabase/functions/_shared/situation-analysis.ts';
 import { requestPrayerGuidance, parsePrayerGuidanceResponse } from './request-prayer-guidance.ts';
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -56,9 +58,13 @@ const PRAYER_SCREEN = '../app/prayer.tsx';
 /** 카드가 다루는 영역 그대로여야 gate가 recommend를 준다. */
 const CARD = getScriptureCard('SC-001');
 const SITUATION = '앞일이 어떻게 될지 몰라서 마음이 불안합니다.';
+/** 사용자가 이 말씀을 받은 영역. 내부 표준 domain 값이다. */
+const SELECTED_DOMAIN = CARD.domains[0];
 
 const analysis = (overrides: Record<string, unknown> = {}) => ({
+  domainPriority: 'resolved',
   primaryDomain: CARD.domains[0],
+  domainChoiceCandidates: [],
   secondaryDomains: [],
   situationTags: [],
   emotionTags: [],
@@ -91,6 +97,9 @@ type Options = {
   quota?: 'allowed' | 'limited' | 'unavailable';
   body?: unknown;
   cardId?: string;
+  selectedDomain?: unknown;
+  /** 추천 판단에 쓸 작은 카드 목록 (coverage 없음 사례용) */
+  cards?: typeof SCRIPTURE_CARDS;
   clock?: number[];
   /** 분석 호출이 답하지 않는 상황 */
   analyzerHangs?: boolean;
@@ -179,6 +188,7 @@ const makeDeps = (options: Options = {}) => {
     },
     log: (message) => logged.push(message),
     requestId: () => 'testreq',
+    ...(options.cards ? { cards: options.cards } : {}),
   };
 
   return {
@@ -203,7 +213,11 @@ const run = async (options: Options = {}) => {
   const body =
     'body' in options
       ? options.body
-      : { situation: SITUATION, cardId: options.cardId ?? CARD.id };
+      : {
+          situation: SITUATION,
+          cardId: options.cardId ?? CARD.id,
+          selectedDomain: 'selectedDomain' in options ? options.selectedDomain : SELECTED_DOMAIN,
+        };
 
   const request = new Request('https://example.functions.supabase.co/generate-prayer-guidance', {
     method: 'POST',
@@ -221,13 +235,14 @@ const run = async (options: Options = {}) => {
 /* ================================================================== */
 
 describe('기도 도움 · A. 요청 계약', () => {
-  it('보낼 수 있는 것은 두 가지뿐이다', () => {
-    assert.deepEqual([...PRAYER_GUIDANCE_REQUEST_FIELDS], ['situation', 'cardId']);
+  it('보낼 수 있는 것은 세 가지뿐이다', () => {
+    assert.deepEqual([...PRAYER_GUIDANCE_REQUEST_FIELDS], ['situation', 'cardId', 'selectedDomain']);
   });
 
   it('올바른 요청은 통과한다', () => {
-    const parsed = parsePrayerGuidanceRequest({ situation: SITUATION, cardId: CARD.id });
+    const parsed = parsePrayerGuidanceRequest({ situation: SITUATION, cardId: CARD.id, selectedDomain: SELECTED_DOMAIN });
     assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.ok && parsed.input, { situation: SITUATION, cardId: CARD.id, selectedDomain: SELECTED_DOMAIN });
   });
 
   it('모르는 항목이 붙으면 거절한다', async () => {
@@ -242,6 +257,7 @@ describe('기도 도움 · A. 요청 계약', () => {
       const parsed = parsePrayerGuidanceRequest({
         situation: SITUATION,
         cardId: CARD.id,
+        selectedDomain: SELECTED_DOMAIN,
         ...extra,
       });
       assert.equal(parsed.ok, false, JSON.stringify(extra));
@@ -251,6 +267,7 @@ describe('기도 도움 · A. 요청 계약', () => {
   it('빠진 항목이 있으면 거절한다', () => {
     assert.equal(parsePrayerGuidanceRequest({ situation: SITUATION }).ok, false);
     assert.equal(parsePrayerGuidanceRequest({ cardId: CARD.id }).ok, false);
+    assert.equal(parsePrayerGuidanceRequest({ situation: SITUATION, cardId: CARD.id }).ok, false);
     assert.equal(parsePrayerGuidanceRequest({}).ok, false);
   });
 
@@ -258,8 +275,8 @@ describe('기도 도움 · A. 요청 계약', () => {
     for (const bad of [null, undefined, [], '문자열', 42, true]) {
       assert.equal(parsePrayerGuidanceRequest(bad).ok, false, String(bad));
     }
-    assert.equal(parsePrayerGuidanceRequest({ situation: '  ', cardId: CARD.id }).ok, false);
-    assert.equal(parsePrayerGuidanceRequest({ situation: SITUATION, cardId: 42 }).ok, false);
+    assert.equal(parsePrayerGuidanceRequest({ situation: '  ', cardId: CARD.id, selectedDomain: SELECTED_DOMAIN }).ok, false);
+    assert.equal(parsePrayerGuidanceRequest({ situation: SITUATION, cardId: 42, selectedDomain: SELECTED_DOMAIN }).ok, false);
   });
 
   it('모르는 말씀 번호면 모델을 부르지 않는다', async () => {
@@ -449,7 +466,8 @@ describe('기도 도움 · C. 안전이 먼저다', () => {
   it('앱의 화면 순서를 믿지 않고 서버가 다시 살핀다', () => {
     const handler = stripComments(read(HANDLER));
     assert.ok(handler.includes('analyzeSituationRequest(request, analysisDeps)'));
-    assert.ok(handler.includes('runRecommendationGate(analyzed.analysis)'));
+    assert.ok(handler.includes('resolveAnalysisForChosenDomain(analyzed.analysis, parsed.input.selectedDomain)'));
+    assert.ok(handler.includes('runRecommendationGate(resolved, deps.cards)'));
     assert.ok(handler.includes("gate.route !== 'recommend'"));
     // 새 안전 규칙을 만들지 않는다.
     assert.equal(handler.includes('self_harm'), false);
@@ -496,7 +514,7 @@ describe('기도 도움 · D. 말씀 해설의 주인은 서버다', () => {
     for (const banned of ['userExplanation:', 'prayerDirection:', 'passage']) {
       assert.equal(helper.includes(banned), false, banned);
     }
-    assert.deepEqual([...PRAYER_GUIDANCE_REQUEST_FIELDS], ['situation', 'cardId']);
+    assert.deepEqual([...PRAYER_GUIDANCE_REQUEST_FIELDS], ['situation', 'cardId', 'selectedDomain']);
     // 서버는 자기 카드를 읽는다.
     assert.ok(stripComments(read(HANDLER)).includes('getScriptureCard(parsed.input.cardId)'));
     assert.ok(contract.includes('input.card.userExplanation'));
@@ -604,7 +622,7 @@ describe('기도 도움 · E. 모델 정책', () => {
     // 실패해도 두 번째 요청이 없다.
     let calls = 0;
     await requestPrayerGuidance(
-      { situation: SITUATION, cardId: CARD.id },
+      { situation: SITUATION, cardId: CARD.id, selectedDomain: SELECTED_DOMAIN },
       {
         invokePrayerGuidance: async () => {
           calls += 1;
@@ -695,9 +713,10 @@ describe('기도 도움 · G. 사용자가 적는 기도는 가지 않는다', (
     const requestBody = helper.split('invokePrayerGuidance({')[1]?.split('});')[0] ?? '';
     assert.notEqual(requestBody, '');
     assert.equal(requestBody.includes('prayerText'), false, requestBody);
-    // 보내는 값은 둘뿐이다.
+    // 보내는 값은 정확히 셋(situation, cardId, selectedDomain)이다.
     assert.ok(helper.includes('situation: input.situation'));
     assert.ok(helper.includes('cardId: input.cardId'));
+    assert.ok(requestBody.includes('selectedDomain'));
   });
 
   it('화면이 기도 입력을 서버로 넘기지 않는다', () => {
@@ -708,6 +727,8 @@ describe('기도 도움 · G. 사용자가 적는 기도는 가지 않는다', (
     assert.equal(call.includes('prayer'), false, call);
     assert.ok(call.includes('situation'));
     assert.ok(call.includes('cardId'));
+    // 일반 추천과 영역 선택 추천 모두 같은 세 필드를 보낸다.
+    assert.ok(call.includes('selectedDomain'));
   });
 
   it('저장하거나 기록하지 않는다', () => {
@@ -746,7 +767,7 @@ describe('기도 도움 · G. 사용자가 적는 기도는 가지 않는다', (
 describe('기도 도움 · H. 실패해도 기도를 막지 않는다', () => {
   it('서버가 답하지 않으면 쓸 수 없음으로 끝난다', async () => {
     const outcome = await requestPrayerGuidance(
-      { situation: SITUATION, cardId: CARD.id },
+      { situation: SITUATION, cardId: CARD.id, selectedDomain: SELECTED_DOMAIN },
       { invokePrayerGuidance: async () => ({ ok: false }) },
     );
     assert.deepEqual(outcome, { status: 'unavailable' });
@@ -754,7 +775,7 @@ describe('기도 도움 · H. 실패해도 기도를 막지 않는다', () => {
 
   it('부르다 터져도 예외를 밖으로 던지지 않는다', async () => {
     const outcome = await requestPrayerGuidance(
-      { situation: SITUATION, cardId: CARD.id },
+      { situation: SITUATION, cardId: CARD.id, selectedDomain: SELECTED_DOMAIN },
       {
         invokePrayerGuidance: async () => {
           throw new Error('network');
@@ -762,6 +783,23 @@ describe('기도 도움 · H. 실패해도 기도를 막지 않는다', () => {
       },
     );
     assert.deepEqual(outcome, { status: 'unavailable' });
+  });
+
+  it('선택 영역이 없거나(null) 표준값이 아니거나 other_uncovered면 서버를 부르지 않는다', async () => {
+    for (const selectedDomain of [null, undefined, '', 42, '두려움과 불확실함', 'made_up_domain', 'other_uncovered']) {
+      let calls = 0;
+      const outcome = await requestPrayerGuidance(
+        { situation: SITUATION, cardId: CARD.id, selectedDomain },
+        {
+          invokePrayerGuidance: async () => {
+            calls += 1;
+            return { ok: true, data: { ok: true, guidance: goodGuidance() } };
+          },
+        },
+      );
+      assert.deepEqual(outcome, { status: 'unavailable' }, JSON.stringify(selectedDomain));
+      assert.equal(calls, 0, JSON.stringify(selectedDomain));
+    }
   });
 
   it('약속과 다른 답은 쓰지 않는다', () => {
@@ -1046,5 +1084,219 @@ describe('기도 도움 · K. 전체 20초가 진짜 마감이다', () => {
   it('사용량 확인도 신호를 실제 요청에 잇는다', () => {
     const rate = stripComments(read('../../supabase/functions/_shared/rate-limit.ts'));
     assert.ok(rate.includes('options?.signal ? { signal: options.signal } : {}'));
+  });
+});
+
+/* ================================================================== */
+/* L. 선택 영역을 서버가 다시 확인한다                                   */
+/* ================================================================== */
+
+describe('기도 도움 · L. 선택 영역을 서버가 다시 확인한다', () => {
+  const needsChoice = (candidates: string[], overrides: Record<string, unknown> = {}) => ({
+    domainPriority: 'needs_choice',
+    primaryDomain: null,
+    domainChoiceCandidates: candidates,
+    secondaryDomains: [],
+    ...overrides,
+  });
+
+  /** 그 영역을 골랐을 때 서버 Gate가 정하는 카드. 카드 번호를 하드코딩하지 않는다. */
+  const cardFor = (overrides: Record<string, unknown>, domain: string) => {
+    const base = analysis(overrides) as unknown as SituationAnalysis;
+    const others = base.domainChoiceCandidates.filter((candidate) => candidate !== domain);
+    const gate = runRecommendationGate({
+      ...base,
+      domainPriority: 'resolved',
+      primaryDomain: domain as SituationAnalysis['primaryDomain'],
+      domainChoiceCandidates: [],
+      secondaryDomains: base.domainPriority === 'needs_choice' ? others : base.secondaryDomains,
+    });
+    assert.equal(gate.route, 'recommend', `${domain} 사례는 카드 한 장이 정해져야 합니다.`);
+    return gate.selectedCardId as string;
+  };
+
+  const assertRejected = (
+    outcome: Awaited<ReturnType<typeof run>>,
+    label: string,
+    expectedAnalyzerCalls = 1,
+  ) => {
+    assert.equal(outcome.response.status, 503, label);
+    assert.deepEqual(outcome.parsed, { ok: false, error: 'PRAYER_GUIDANCE_UNAVAILABLE' }, label);
+    assert.equal(outcome.guidanceCalls.length, 0, label);
+    assert.equal(outcome.analyzerCalls.length, expectedAnalyzerCalls, label);
+  };
+
+  const assertSucceeded = (outcome: Awaited<ReturnType<typeof run>>, label: string) => {
+    assert.equal(outcome.response.status, 200, label);
+    assert.equal(outcome.parsed.ok, true, label);
+    assert.equal(outcome.analyzerCalls.length, 1, label);
+    assert.equal(outcome.guidanceCalls.length, 1, label);
+  };
+
+  it('selectedDomain이 없거나 문자열이 아니거나 모르는 값이거나 other_uncovered면 사용량·분석 전에 거절한다', async () => {
+    for (const [label, body] of [
+      ['누락', { situation: SITUATION, cardId: CARD.id }],
+      ['null', { situation: SITUATION, cardId: CARD.id, selectedDomain: null }],
+      ['숫자', { situation: SITUATION, cardId: CARD.id, selectedDomain: 42 }],
+      ['배열', { situation: SITUATION, cardId: CARD.id, selectedDomain: [SELECTED_DOMAIN] }],
+      ['한글 문구', { situation: SITUATION, cardId: CARD.id, selectedDomain: '두려움과 불확실함' }],
+      ['모르는 값', { situation: SITUATION, cardId: CARD.id, selectedDomain: 'made_up_domain' }],
+      ['fallback', { situation: SITUATION, cardId: CARD.id, selectedDomain: 'other_uncovered' }],
+    ] as const) {
+      const outcome = await run({ body });
+      assertRejected(outcome, label, 0);
+      assert.equal(outcome.quotaSignals.length, 0, `${label}: 사용량을 확인하지 않는다`);
+    }
+  });
+
+  it('needs_choice + 첫 후보 + 그 영역 카드 → 성공', async () => {
+    const overrides = needsChoice(['fear_uncertainty', 'financial_hardship'], {
+      spiritualQuestionTags: ['지혜'],
+      pastoralFunctions: ['지혜'],
+    });
+    const cardId = cardFor(overrides, 'fear_uncertainty');
+    assertSucceeded(
+      await run({ analysisOverrides: overrides, selectedDomain: 'fear_uncertainty', cardId }),
+      '첫 후보',
+    );
+  });
+
+  it('needs_choice + 둘째 후보 + 그 영역 카드 → 성공', async () => {
+    const overrides = needsChoice(['fear_uncertainty', 'financial_hardship'], {
+      spiritualQuestionTags: ['지혜'],
+      pastoralFunctions: ['지혜'],
+    });
+    const cardId = cardFor(overrides, 'financial_hardship');
+    assert.equal(getScriptureCard(cardId).domains.includes('financial_hardship'), true);
+    assertSucceeded(
+      await run({ analysisOverrides: overrides, selectedDomain: 'financial_hardship', cardId }),
+      '둘째 후보',
+    );
+  });
+
+  it('needs_choice 후보 밖 영역을 고르면 거절한다 (카드가 맞아도)', async () => {
+    assertRejected(
+      await run({
+        analysisOverrides: needsChoice(['financial_hardship', 'grief_loss']),
+        selectedDomain: 'fear_uncertainty',
+        cardId: CARD.id,
+      }),
+      '후보 밖',
+    );
+  });
+
+  it('resolved + primary 선택 → 성공', async () => {
+    assertSucceeded(await run({ selectedDomain: 'fear_uncertainty', cardId: CARD.id }), 'primary');
+  });
+
+  it('재분석에서 선택 영역이 secondary로 나와도 성공한다', async () => {
+    const overrides = { primaryDomain: 'financial_hardship', secondaryDomains: ['fear_uncertainty'] };
+    const cardId = cardFor(overrides, 'fear_uncertainty');
+    assertSucceeded(
+      await run({ analysisOverrides: overrides, selectedDomain: 'fear_uncertainty', cardId }),
+      'secondary',
+    );
+  });
+
+  it('재분석에서 선택 영역이 사라졌으면 거절한다', async () => {
+    assertRejected(
+      await run({
+        analysisOverrides: { primaryDomain: 'grief_loss', secondaryDomains: ['loneliness_isolation'] },
+        selectedDomain: 'fear_uncertainty',
+        cardId: CARD.id,
+      }),
+      '사라진 영역',
+    );
+  });
+
+  it('선택 영역과 다른 domain의 카드면 거절한다 (그 카드 영역이 분석에 있어도)', async () => {
+    const griefCard = SCRIPTURE_CARDS.find((card) => card.domains.includes('grief_loss'))!;
+    for (const overrides of [
+      needsChoice(['fear_uncertainty', 'grief_loss']),
+      { primaryDomain: 'fear_uncertainty', secondaryDomains: ['grief_loss'] },
+    ]) {
+      assertRejected(
+        await run({ analysisOverrides: overrides, selectedDomain: 'fear_uncertainty', cardId: griefCard.id }),
+        JSON.stringify(overrides),
+      );
+    }
+  });
+
+  it('safety caution/urgent는 선택 영역과 관계없이 거절한다', async () => {
+    for (const level of ['caution', 'urgent'] as const) {
+      for (const overrides of [
+        needsChoice(['fear_uncertainty', 'financial_hardship'], { safety: { level, categories: ['abuse'] } }),
+        { safety: { level, categories: ['suicide'] } },
+        { primaryDomain: 'financial_hardship', secondaryDomains: ['fear_uncertainty'], safety: { level, categories: ['abuse'] } },
+      ]) {
+        const outcome = await run({ analysisOverrides: overrides, selectedDomain: 'fear_uncertainty', cardId: CARD.id });
+        assertRejected(outcome, `${level} ${JSON.stringify(overrides)}`);
+        assert.ok(outcome.logged.some((line) => line.endsWith('prayer_guidance_safety_first')), level);
+      }
+    }
+  });
+
+  it('선택 영역의 카드가 동점(ambiguous)이면 거절한다', async () => {
+    const familyCard = SCRIPTURE_CARDS.find((card) => card.domains.includes('family_parenting_conflict'))!;
+    const overrides = needsChoice(['family_parenting_conflict', 'fear_uncertainty'], {
+      spiritualQuestionTags: ['지혜'],
+      pastoralFunctions: ['지혜'],
+    });
+    assertRejected(
+      await run({ analysisOverrides: overrides, selectedDomain: 'family_parenting_conflict', cardId: familyCard.id }),
+      'ambiguous',
+    );
+  });
+
+  it('선택 영역에 카드가 없으면(coverage 없음) 거절한다', async () => {
+    // 작은 카드 목록을 주입해 grief_loss 카드를 뺀다. 요청한 카드는 서버 카드 사전에는 있다.
+    const griefCard = SCRIPTURE_CARDS.find((card) => card.domains.includes('grief_loss'))!;
+    const cards = SCRIPTURE_CARDS.filter((card) => !card.domains.includes('grief_loss'));
+    assertRejected(
+      await run({
+        analysisOverrides: needsChoice(['grief_loss', 'fear_uncertainty']),
+        selectedDomain: 'grief_loss',
+        cardId: griefCard.id,
+        cards,
+      }),
+      'no_coverage',
+    );
+  });
+
+  it('선택 영역을 받았다고 분석 결과에 억지로 넣지 않는다', () => {
+    const handler = stripComments(read(HANDLER));
+    // 요청 값을 분석 결과의 primary나 후보로 직접 쓰지 않고, 해석 함수로만 확인한다.
+    assert.equal(/primaryDomain:\s*parsed\.input\.selectedDomain/.test(handler), false);
+    assert.equal(handler.includes('domainChoiceCandidates.push'), false);
+    assert.equal(handler.includes('secondaryDomains.push'), false);
+    // 안전 확인이 선택 영역 해석보다 먼저 온다.
+    assert.ok(handler.indexOf("safety.level !== 'normal'") < handler.indexOf('resolveAnalysisForChosenDomain('));
+    // 분석 호출과 기도 도움 호출은 각각 한 자리뿐이다.
+    assert.equal((handler.match(/analyzeSituationRequest\(/g) || []).length, 1);
+    assert.equal((handler.match(/deps\.callGuidance\(/g) || []).length, 1);
+  });
+
+  it('로그와 응답에 사용자 문장·선택 영역·카드 번호가 없다', async () => {
+    const outcomes = [
+      await run({ selectedDomain: 'fear_uncertainty', cardId: CARD.id }),
+      await run({ analysisOverrides: { primaryDomain: 'grief_loss' }, selectedDomain: 'fear_uncertainty', cardId: CARD.id }),
+      await run({
+        analysisOverrides: needsChoice(['fear_uncertainty', 'financial_hardship'], { safety: { level: 'urgent', categories: ['abuse'] } }),
+        selectedDomain: 'fear_uncertainty',
+        cardId: CARD.id,
+      }),
+      await run({ body: { situation: SITUATION, cardId: CARD.id, selectedDomain: 'other_uncovered' } }),
+    ];
+    for (const outcome of outcomes) {
+      const text = JSON.stringify(outcome.parsed);
+      for (const line of [...outcome.logged, text]) {
+        for (const banned of [SITUATION, 'fear_uncertainty', 'other_uncovered', CARD.id]) {
+          assert.equal(line.includes(banned), false, `${banned} in ${line}`);
+        }
+      }
+      for (const banned of ['usage', 'input_tokens', 'output_text', 'selectedDomain']) {
+        assert.equal(text.includes(banned), false, banned);
+      }
+    }
   });
 });

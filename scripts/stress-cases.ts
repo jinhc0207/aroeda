@@ -1,13 +1,13 @@
 /**
  * 스트레스 테스트 사례 모음 (로컬 테스트 전용)
  *
- * 현재 Scripture Card는 10개뿐이다.
- * 모든 상황을 이 10개 중 하나에 억지로 연결하지 않기 위해,
+ * 현재 Scripture Card는 17개다.
+ * 대표 카드가 있는 영역과 아직 더 깊은 자료가 필요한 영역을 나누어,
  * 네 종류를 구분해서 관찰한다.
  *
  *   A. 현재 카드에 명확히 맞는 상황
  *   B. 두 개 이상의 카드가 경쟁할 수 있는 복합 상황
- *   C. 현재 10개 카드에 뚜렷한 답이 없는 상황
+ *   C. 확장 카드가 실제 입력을 받는 상황
  *   D. 일반 말씀 추천보다 안전 대응이 우선되어야 하는 상황
  *
  * 이 파일에는 threshold(몇 점 이하면 추천하지 않는다)를 두지 않는다.
@@ -173,55 +173,55 @@ export const STRESS_CASES: StressCase[] = [
     expectedCards: ['SC-002', 'SC-007', 'SC-010'],
   },
 
-  // ── GROUP C · 현재 카드가 충분하지 않을 가능성이 높은 상황 ──────────
+  // ── GROUP C · 이번에 확장한 대표 카드 영역 ────────────────────────────
   {
     id: 'C1',
     group: 'C',
     text: '요즘 사람들을 만나도 외롭고 제 이야기를 할 사람이 없는 것 같아요.',
-    expectationType: 'no_clear_match',
-    note: '외로움을 정면으로 다루는 카드가 아직 없다.',
+    expectationType: 'candidate_set',
+    expectedCards: ['SC-011'],
   },
   {
     id: 'C2',
     group: 'C',
     text: '아이와 계속 부딪히는데 어떻게 대화해야 할지 모르겠어요.',
-    expectationType: 'no_clear_match',
-    note: '가족 관계와 양육을 다루는 카드가 아직 없다.',
+    expectationType: 'candidate_set',
+    expectedCards: ['SC-012'],
   },
   {
     id: 'C3',
     group: 'C',
     text: '회사 일을 할 의욕이 완전히 사라졌어요. 그냥 모든 게 지칩니다.',
-    expectationType: 'no_clear_match',
-    note: '소진(번아웃)을 다루는 카드가 아직 없다.',
+    expectationType: 'candidate_set',
+    expectedCards: ['SC-013'],
   },
   {
     id: 'C4',
     group: 'C',
     text: '하나님이 멀게 느껴지고 기도를 해도 아무 느낌이 없습니다.',
-    expectationType: 'no_clear_match',
-    note: '영적 침체를 다루는 카드가 아직 없다. SC-003과 겹칠 수 있으나 같은 상황은 아니다.',
+    expectationType: 'candidate_set',
+    expectedCards: ['SC-014'],
   },
   {
     id: 'C5',
     group: 'C',
     text: '갑자기 경제적으로 너무 어려워져서 생활비가 걱정됩니다.',
-    expectationType: 'no_clear_match',
-    note: '생계와 물질적 필요를 다루는 카드가 아직 없다.',
+    expectationType: 'candidate_set',
+    expectedCards: ['SC-015'],
   },
   {
     id: 'C6',
     group: 'C',
     text: '병원에서 만성질환 진단을 받았어요. 앞으로 이 병과 어떻게 살아가야 할지 막막합니다.',
-    expectationType: 'no_clear_match',
-    note: '질병과 함께 살아가는 상황을 다루는 카드가 아직 없다.',
+    expectationType: 'candidate_set',
+    expectedCards: ['SC-016'],
   },
   {
     id: 'C7',
     group: 'C',
     text: '교회 사람과 크게 갈등이 생겼는데 용서와 관계 회복을 어떻게 해야 할지 모르겠습니다.',
-    expectationType: 'no_clear_match',
-    note: '대인 갈등과 용서를 다루는 카드가 아직 없다. SC-006의 용서와는 방향이 다르다.',
+    expectationType: 'candidate_set',
+    expectedCards: ['SC-017'],
   },
 
   // ── GROUP D · 안전 우선 상황 ─────────────────────────────────────────

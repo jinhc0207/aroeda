@@ -52,8 +52,8 @@ describe('Situation Domain 사전', () => {
 });
 
 describe('Scripture Card domain', () => {
-  it('10개 카드 모두 domain을 가진다', () => {
-    assert.equal(SCRIPTURE_CARDS.length, 10);
+  it('31개 카드 모두 domain을 가진다', () => {
+    assert.equal(SCRIPTURE_CARDS.length, 31);
     for (const card of SCRIPTURE_CARDS) {
       assert.ok(Array.isArray(card.domains), `${card.id}에 domains가 없습니다.`);
       assert.equal(card.domains.length, 1, `${card.id}는 V1에서 domain 하나만 가집니다.`);
@@ -61,8 +61,8 @@ describe('Scripture Card domain', () => {
     }
   });
 
-  it('카드의 domain은 covered 목록에만 존재한다', () => {
-    const covered = new Set<string>(COVERED_DOMAINS);
+  it('카드의 domain은 표준 domain 목록에만 존재한다', () => {
+    const covered = new Set<string>(SITUATION_DOMAINS.filter((domain) => domain !== FALLBACK_DOMAIN));
     for (const card of SCRIPTURE_CARDS) {
       for (const domain of card.domains) {
         assert.ok(covered.has(domain), `${card.id}의 ${domain}이 covered 목록에 없습니다.`);
@@ -70,13 +70,18 @@ describe('Scripture Card domain', () => {
     }
   });
 
-  it('covered domain 10개가 모두 카드에 하나씩 연결되어 있다', () => {
+  it('covered domain이 모두 카드에 하나씩 연결되어 있다', () => {
     const inCards = coveredDomainsInCards();
-    assert.equal(inCards.length, COVERED_DOMAINS.length);
+    assert.equal(inCards.length, SITUATION_DOMAINS.length - 1);
     for (const domain of COVERED_DOMAINS) {
       const result = getCoverage(domain);
       assert.equal(result.covered, true, `${domain}을 다루는 카드가 없습니다.`);
       assert.equal(result.cardIds.length, 1, `${domain}에 카드가 하나만 연결되어야 합니다.`);
+    }
+    for (const domain of UNCOVERED_DOMAINS) {
+      const result = getCoverage(domain);
+      assert.equal(result.covered, true, `${domain} 확장 카드가 없습니다.`);
+      assert.equal(result.cardIds.length, 3, `${domain}에 확장 카드 3개가 연결되어야 합니다.`);
     }
   });
 });
@@ -99,14 +104,26 @@ describe('Coverage 확인 (T1~T13)', () => {
     });
   }
 
+  const expandedCases: { id: string; domain: string; cardId: string }[] = [
+    { id: 'T6', domain: 'loneliness_isolation', cardId: 'SC-011' },
+    { id: 'T7', domain: 'family_parenting_conflict', cardId: 'SC-012' },
+    { id: 'T8', domain: 'burnout_exhaustion', cardId: 'SC-013' },
+    { id: 'T9', domain: 'spiritual_dryness', cardId: 'SC-014' },
+    { id: 'T10', domain: 'financial_hardship', cardId: 'SC-015' },
+    { id: 'T11', domain: 'chronic_illness', cardId: 'SC-016' },
+    { id: 'T12', domain: 'relationship_conflict_forgiveness', cardId: 'SC-017' },
+  ];
+
+  for (const testCase of expandedCases) {
+    it(`${testCase.id} · ${testCase.domain} → expanded card ${testCase.cardId}`, () => {
+      const result = getCoverage(testCase.domain);
+      assert.equal(result.covered, true);
+      assert.equal(result.cardIds.length, 3);
+      assert.ok(result.cardIds.includes(testCase.cardId));
+    });
+  }
+
   const uncoveredCases: { id: string; domain: string }[] = [
-    { id: 'T6', domain: 'loneliness_isolation' },
-    { id: 'T7', domain: 'family_parenting_conflict' },
-    { id: 'T8', domain: 'burnout_exhaustion' },
-    { id: 'T9', domain: 'spiritual_dryness' },
-    { id: 'T10', domain: 'financial_hardship' },
-    { id: 'T11', domain: 'chronic_illness' },
-    { id: 'T12', domain: 'relationship_conflict_forgiveness' },
     { id: 'T13', domain: 'other_uncovered' },
   ];
 
@@ -128,7 +145,9 @@ describe('Coverage 확인 (T1~T13)', () => {
 
 describe('Situation Analysis의 domain 검증', () => {
   const base = () => ({
+    domainPriority: 'resolved' as const,
     primaryDomain: 'grief_loss' as const,
+    domainChoiceCandidates: [],
     secondaryDomains: [],
     situationTags: ['사별'],
     emotionTags: ['슬픔'],

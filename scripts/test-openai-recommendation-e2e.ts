@@ -108,54 +108,61 @@ const E2E_CASES: E2ECase[] = [
     note: 'decision_guidance와 wisdom_discernment의 경계 사례다. 둘 중 하나면 정상이다.',
   },
 
-  // ── GROUP N · 지금 카드로 추천하면 안 되는 상황 ─────────────────────
+  // ── GROUP N · 확장 카드가 연결되는 상황 ─────────────────────────────
   {
     id: 'N1',
     group: 'N',
     text: '사람들을 만나도 너무 외롭고 제 마음을 말할 사람이 없는 것 같아요.',
-    expectedRoute: 'no_coverage',
+    expectedRoute: 'recommend',
+    allowedCardIds: ['SC-011'],
     expectedPrimaryDomain: 'loneliness_isolation',
   },
   {
     id: 'N2',
     group: 'N',
     text: '아들과 계속 부딪히는데 어떻게 이야기해야 관계가 나아질지 모르겠습니다.',
-    expectedRoute: 'no_coverage',
+    expectedRoute: 'recommend',
+    allowedCardIds: ['SC-012'],
     expectedPrimaryDomain: 'family_parenting_conflict',
   },
   {
     id: 'N3',
     group: 'N',
     text: '회사에 가도 아무 의욕이 없고 모든 것이 너무 지칩니다.',
-    expectedRoute: 'no_coverage',
+    expectedRoute: 'recommend',
+    allowedCardIds: ['SC-013'],
     expectedPrimaryDomain: 'burnout_exhaustion',
   },
   {
     id: 'N4',
     group: 'N',
     text: '기도를 해도 하나님이 멀리 계신 것 같고 아무 느낌도 없습니다.',
-    expectedRoute: 'no_coverage',
+    expectedRoute: 'recommend',
+    allowedCardIds: ['SC-014'],
     expectedPrimaryDomain: 'spiritual_dryness',
   },
   {
     id: 'N5',
     group: 'N',
     text: '수입이 줄어서 이번 달 생활비가 부족합니다. 앞으로 어떻게 버텨야 할지 걱정됩니다.',
-    expectedRoute: 'no_coverage',
+    expectedRoute: 'recommend',
+    allowedCardIds: ['SC-015'],
     expectedPrimaryDomain: 'financial_hardship',
   },
   {
     id: 'N6',
     group: 'N',
     text: '만성질환 진단을 받았습니다. 앞으로 이 병과 함께 어떻게 살아야 할지 막막합니다.',
-    expectedRoute: 'no_coverage',
+    expectedRoute: 'recommend',
+    allowedCardIds: ['SC-016'],
     expectedPrimaryDomain: 'chronic_illness',
   },
   {
     id: 'N7',
     group: 'N',
     text: '교회 사람과 크게 다퉜습니다. 그 사람을 어떻게 용서하고 관계를 풀어야 할지 모르겠습니다.',
-    expectedRoute: 'no_coverage',
+    expectedRoute: 'recommend',
+    allowedCardIds: ['SC-017'],
     expectedPrimaryDomain: 'relationship_conflict_forgiveness',
   },
 
@@ -226,8 +233,11 @@ function printGate(gate: GateResult) {
   console.log('  [Recommendation Gate]');
   console.log(`    route: ${gate.route}`);
   console.log(`    reason: ${gate.reason}`);
+  // domain_choice처럼 영역이 정해지지 않았으면 coverage를 계산하지 않아 null이다.
   console.log(
-    `    coverage: covered=${gate.coverage.covered} / cardIds=[${gate.coverage.cardIds.join(', ')}]`,
+    gate.coverage
+      ? `    coverage: covered=${gate.coverage.covered} / cardIds=[${gate.coverage.cardIds.join(', ')}]`
+      : '    coverage: (영역 미정 · 계산하지 않음)',
   );
   console.log(`    eligibleDomains: ${listOr(gate.eligibleDomains)}`);
   console.log(`    eligibleCardIds: ${listOr(gate.eligibleCardIds)}`);
@@ -401,7 +411,7 @@ async function main() {
   for (const item of groupN) {
     const expected = item.e2eCase.expectedPrimaryDomain;
     const actual = item.analysis?.primaryDomain ?? '(없음)';
-    const covered = item.gate ? item.gate.coverage.covered : '(없음)';
+    const covered = item.gate ? (item.gate.coverage?.covered ?? '(영역 미정)') : '(없음)';
     console.log(
       `  ${item.e2eCase.id}: primaryDomain=${actual} / covered=${covered}` +
         ` / 기대 ${expected} ${actual === expected ? '(일치)' : '(불일치)'}`,

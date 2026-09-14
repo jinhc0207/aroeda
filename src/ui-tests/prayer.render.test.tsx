@@ -28,7 +28,7 @@
 // describe / it / expect / jest 를 여기서 직접 가져온다.
 // 이 프로젝트의 TypeScript 설정은 전역 타입을 node 하나로 좁혀 두었다.
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { useEffect } from 'react';
 
 import PrayerScreen from '@/app/prayer';
@@ -93,11 +93,12 @@ const GUIDANCE_FIXTURE = {
  * 그래야 "말씀이 없습니다" 화면을 잘못 검사하지 않는다.
  */
 function WithSituation({ cardId, situation }: { cardId: string; situation: string }) {
-  const { situation: current, selectedCardId, setSituation, setSelectedCardId } = useSituation();
+  const { situation: current, selectedCardId, setSituation, setRecommendation } = useSituation();
+  const selectedDomain = getScriptureCard(cardId).domains[0]!;
 
   useEffect(() => {
     setSituation(situation);
-    setSelectedCardId(cardId);
+    setRecommendation({ cardId, selectedDomain });
     // 설정 함수는 Provider가 새로 만들 수 있으므로 값만 본다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cardId, situation]);
@@ -153,7 +154,7 @@ describe('기도 화면 · 들어오면 기도문을 준비한다', () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
-  it('서버로 나가는 것은 상황과 말씀 번호 둘뿐이다', async () => {
+  it('서버로 나가는 것은 상황·말씀 번호·선택 영역 셋뿐이다', async () => {
     respondOk();
 
     await renderPrayer();
@@ -164,10 +165,11 @@ describe('기도 화면 · 들어오면 기도문을 준비한다', () => {
     expect(functionName).toBe('generate-prayer-guidance');
 
     const body = options.body as Record<string, unknown>;
-    // 딱 두 가지만. 하나라도 더 붙으면 여기서 걸린다.
-    expect(Object.keys(body).sort()).toEqual(['cardId', 'situation']);
+    // 딱 세 가지만. 하나라도 더 붙으면 여기서 걸린다.
+    expect(Object.keys(body).sort()).toEqual(['cardId', 'selectedDomain', 'situation']);
     expect(body.situation).toBe(SITUATION);
     expect(body.cardId).toBe(CARD.id);
+    expect(body.selectedDomain).toBe(CARD.domains[0]);
   });
 
   it('말씀 설명과 기도 방향을 우리 쪽에서 보내지 않는다', async () => {
@@ -370,5 +372,102 @@ describe('기도 화면 · 마치는 흐름', () => {
     await fireEvent.press(screen.getByLabelText('말씀 다시 보기'));
 
     expect(router.replace).toHaveBeenCalledWith('/scripture');
+  });
+});
+
+/* ================================================================== */
+/* 내 정보 삭제와 겹칠 때                                                */
+/* ================================================================== */
+
+/*
+ * 화면이 언제나 사라진다고 기대하지 않는다.
+ * 그래서 삭제 뒤에도 기도 화면을 내리지 않고 그대로 둔 채 확인한다.
+ */
+
+let probe: ReturnType<typeof useSituation> | null = null;
+
+function KeepMounted() {
+  const context = useSituation();
+  probe = context;
+
+  useEffect(() => {
+    context.setSituation(SITUATION);
+    context.setRecommendation({ cardId: CARD.id, selectedDomain: CARD.domains[0]! });
+    // 처음 한 번만 채운다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return <PrayerScreen />;
+}
+
+const renderKeepMounted = () =>
+  render(
+    <SituationProvider>
+      <KeepMounted />
+    </SituationProvider>,
+  );
+
+const NEXT_SITUATION = 'UI_TEST_삭제_뒤_다시_이야기한_상황';
+const STALE_PRAYER = 'UI_TEST_삭제_전_요청으로_준비된_기도문';
+
+describe('기도 화면 · 내 정보 삭제와 겹칠 때', () => {
+  it('삭제 전에 보낸 기도문 요청의 답이 늦게 와도 보여 주지 않는다', async () => {
+    const finishers: Array<(value: unknown) => void> = [];
+    invoke.mockImplementation(() => new Promise((resolve) => finishers.push(resolve)));
+
+    await renderKeepMounted();
+    expect(invoke).toHaveBeenCalledTimes(1);
+
+    // 기다리는 동안 내 정보가 삭제된다. 화면은 뒤에 그대로 남아 있다.
+    await act(async () => probe!.clearAfterDataDeletion());
+    expect(screen.getByText('먼저 함께 붙들 말씀을 찾아볼게요.')).toBeTruthy();
+
+    // 그 뒤 같은 화면에 새 상황으로 다시 말씀이 들어온다.
+    await act(async () => {
+      probe!.setSituation(NEXT_SITUATION);
+      probe!.setRecommendation({ cardId: CARD.id, selectedDomain: CARD.domains[0]! });
+    });
+    expect(invoke).toHaveBeenCalledTimes(2);
+
+    // 이제서야 삭제 전 요청의 답이 도착한다.
+    await act(async () => {
+      finishers[0]({ data: { ok: true, guidance: { prayerText: STALE_PRAYER } }, error: null });
+    });
+    expect(screen.queryByText(STALE_PRAYER)).toBeNull();
+    expect(screen.getByText(/잠시 함께 정리하고 있어요/)).toBeTruthy();
+
+    await act(async () => {
+      finishers[1]({ data: { ok: true, guidance: GUIDANCE_FIXTURE }, error: null });
+    });
+    expect(screen.getByText(GUIDANCE_FIXTURE.prayerText)).toBeTruthy();
+    expect(screen.queryByText(STALE_PRAYER)).toBeNull();
+
+    // 새 요청에는 새 상황만 실린다.
+    const [, options] = invoke.mock.calls[1] as [string, { body: Record<string, unknown> }];
+    expect(options.body.situation).toBe(NEXT_SITUATION);
+  });
+
+  it('삭제 뒤에는 화면이 남아 있어도 적던 기도와 입력창 상태를 비운다', async () => {
+    respondOk();
+
+    await renderKeepMounted();
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
+    await fireEvent.press(screen.getByLabelText('내 말로 적어보기'));
+    await fireEvent.changeText(screen.getByLabelText('기도 적는 곳'), PRIVATE_DRAFT);
+
+    await act(async () => probe!.clearAfterDataDeletion());
+    expect(screen.queryByLabelText('기도 적는 곳')).toBeNull();
+    expect(screen.queryByText(PRIVATE_DRAFT)).toBeNull();
+
+    await act(async () => {
+      probe!.setSituation(NEXT_SITUATION);
+      probe!.setRecommendation({ cardId: CARD.id, selectedDomain: CARD.domains[0]! });
+    });
+    await screen.findByText(GUIDANCE_FIXTURE.prayerText);
+
+    // 입력창은 다시 닫혀 있고, 열어도 적던 기도는 남아 있지 않다.
+    expect(screen.queryByLabelText('기도 적는 곳')).toBeNull();
+    await fireEvent.press(screen.getByLabelText('내 말로 적어보기'));
+    expect(screen.getByLabelText('기도 적는 곳').props.value).toBe('');
   });
 });

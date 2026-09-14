@@ -13,10 +13,11 @@ import type { SessionSummary } from './anonymous-session.ts';
 import {
   requestRecommendation,
   formatDevDiagnostic,
+  type DomainChoiceOption,
   type InvokeOutcome,
   type RecommendationDeps,
 } from './request-recommendation.ts';
-import { SCRIPTURE_CARDS } from '../data/scripture-cards.ts';
+import { SCRIPTURE_CARDS, getScriptureCard } from '../data/scripture-cards.ts';
 
 const readySession: SessionSummary = { sessionExists: true, isAnonymous: true, source: 'restored' };
 const failedSession: SessionSummary = {
@@ -27,13 +28,29 @@ const failedSession: SessionSummary = {
 };
 
 const cardExists = (cardId: string) => SCRIPTURE_CARDS.some((card) => card.id === cardId);
+const cardBelongsToDomain = (cardId: string, domain: string) => {
+  const card = SCRIPTURE_CARDS.find((item) => item.id === cardId);
+  return card ? card.domains.includes(domain as never) : false;
+};
 
-const gatePayload = (route: string, selectedCardId: string | null) => ({
+/**
+ * primaryDomain 인자를 아예 주지 않으면(undefined) selectedCardId가 실제로 속한 영역을 그대로 쓴다
+ * (모르는 id면 fear_uncertainty). null 등 값을 직접 넘기면 그 값을 그대로 쓴다 — 잘못된 값도 시험해야 하므로
+ * "지정 안 함"과 "null을 지정함"을 구분한다.
+ */
+const gatePayload = (route: string, selectedCardId: string | null, primaryDomain?: string | null) => ({
   ok: true,
   result: {
     route,
     reason: route === 'recommend' ? 'CARD_SELECTED' : 'PRIMARY_DOMAIN_NOT_COVERED',
-    primaryDomain: 'fear_uncertainty',
+    primaryDomain:
+      primaryDomain !== undefined
+        ? primaryDomain
+        : selectedCardId && cardExists(selectedCardId)
+          ? getScriptureCard(selectedCardId).domains[0]
+          : 'fear_uncertainty',
+    domainChoiceCandidates: [],
+    domainChoiceOptions: [],
     secondaryDomains: [],
     safety: { level: 'normal', categories: [] },
     coverage: { primaryDomain: 'fear_uncertainty', covered: true, cardIds: ['SC-001'] },
@@ -41,6 +58,33 @@ const gatePayload = (route: string, selectedCardId: string | null) => ({
     eligibleCardIds: ['SC-001'],
     rankedCandidates: [],
     selectedCardId,
+    isTie: false,
+  },
+});
+
+/**
+ * top-level primaryDomain/selectedCardId는 기본으로 null이다(문서의 domain_choice 불변식).
+ * 모순 응답을 시험할 때만 overrides로 값을 채워 넣는다.
+ */
+const domainChoicePayload = (
+  candidates: string[],
+  options: DomainChoiceOption[],
+  overrides: { primaryDomain?: unknown; selectedCardId?: unknown } = {},
+) => ({
+  ok: true,
+  result: {
+    route: 'domain_choice',
+    reason: 'DOMAIN_PRIORITY_UNRESOLVED',
+    primaryDomain: 'primaryDomain' in overrides ? overrides.primaryDomain : null,
+    domainChoiceCandidates: candidates,
+    domainChoiceOptions: options,
+    secondaryDomains: [],
+    safety: { level: 'normal', categories: [] },
+    coverage: null,
+    eligibleDomains: [],
+    eligibleCardIds: [],
+    rankedCandidates: [],
+    selectedCardId: 'selectedCardId' in overrides ? overrides.selectedCardId : null,
     isTie: false,
   },
 });
@@ -67,6 +111,7 @@ function fakeDeps(options: {
       return options.outcome ?? { ok: true, data: gatePayload('recommend', 'SC-001') };
     },
     cardExists,
+    cardBelongsToDomain,
   };
 
   return { deps, calls, sent };
@@ -99,20 +144,49 @@ describe('말씀 추천 요청', () => {
     }
   });
 
-  it('recommend면 카드 id를 돌려주고 서버는 한 번만 부른다', async () => {
+  it('recommend면 카드 id와 그 카드의 영역을 돌려주고 서버는 한 번만 부른다', async () => {
     const { deps, calls, sent } = fakeDeps({});
     const outcome = await requestRecommendation('두렵습니다.', deps);
 
     assert.equal(calls.invoke, 1);
     assert.deepEqual(sent, [{ situation: '두렵습니다.' }]);
-    assert.deepEqual(outcome, { status: 'recommend', cardId: 'SC-001' });
+    assert.deepEqual(outcome, { status: 'recommend', cardId: 'SC-001', selectedDomain: 'fear_uncertainty' });
   });
 
   it('서버가 고른 다른 카드도 그대로 쓴다', async () => {
     const { deps } = fakeDeps({ outcome: { ok: true, data: gatePayload('recommend', 'SC-009') } });
     const outcome = await requestRecommendation('어머니가 돌아가셨어요.', deps);
 
-    assert.deepEqual(outcome, { status: 'recommend', cardId: 'SC-009' });
+    assert.deepEqual(outcome, { status: 'recommend', cardId: 'SC-009', selectedDomain: 'grief_loss' });
+  });
+
+  it('카드가 primaryDomain에 실제로 속하지 않으면 믿지 않는다', async () => {
+    // SC-001은 fear_uncertainty 카드인데, 서버가 다른 영역을 primaryDomain이라고 우긴다.
+    const { deps } = fakeDeps({
+      outcome: { ok: true, data: gatePayload('recommend', 'SC-001', 'grief_loss') },
+    });
+    const outcome = await requestRecommendation('두렵습니다.', deps);
+
+    assert.deepEqual(outcome, {
+      status: 'error',
+      kind: 'general',
+      diagnostic: 'FUNCTION_RESPONSE_INVALID',
+    });
+  });
+
+  it('primaryDomain이 other_uncovered이거나 모르는 값이면 믿지 않는다', async () => {
+    for (const primaryDomain of ['other_uncovered', '없는영역', null, 42]) {
+      const { deps } = fakeDeps({
+        outcome: { ok: true, data: gatePayload('recommend', 'SC-001', primaryDomain as never) },
+      });
+      const outcome = await requestRecommendation('두렵습니다.', deps);
+
+      assert.deepEqual(
+        outcome,
+        { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' },
+        JSON.stringify(primaryDomain),
+      );
+    }
   });
 
   it('no_coverage / safety / ambiguous는 각각 그대로 전달한다', async () => {
@@ -231,6 +305,204 @@ describe('말씀 추천 요청', () => {
       assert.ok(!serialized.includes('network'));
       assert.ok(!serialized.includes('failed to fetch'));
     }
+  });
+});
+
+describe('영역 선택(domain_choice) 응답', () => {
+  const recommendOption = (domain: string, cardId: string): DomainChoiceOption => ({
+    domain: domain as never,
+    resolution: 'recommend',
+    selectedCardId: cardId,
+  });
+  const noCoverageOption = (domain: string): DomainChoiceOption => ({
+    domain: domain as never,
+    resolution: 'no_coverage',
+    selectedCardId: null,
+  });
+  const ambiguousOption = (domain: string): DomainChoiceOption => ({
+    domain: domain as never,
+    resolution: 'ambiguous',
+    selectedCardId: null,
+  });
+
+  it('후보 둘·option 둘이 순서대로 맞으면 그대로 돌려준다', async () => {
+    const options = [recommendOption('fear_uncertainty', 'SC-001'), noCoverageOption('financial_hardship')];
+    const { deps } = fakeDeps({
+      outcome: {
+        ok: true,
+        data: domainChoicePayload(['fear_uncertainty', 'financial_hardship'], options),
+      },
+    });
+
+    const outcome = await requestRecommendation('생활비도 걱정, 면접도 걱정입니다.', deps);
+
+    assert.deepEqual(outcome, { status: 'domain_choice', options });
+  });
+
+  it('option은 멀쩡해도 top-level primaryDomain이 문자열이면 거절한다', async () => {
+    // option 판독까지 가면 통과할 완전히 유효한 후보·option인데도, top-level primaryDomain이
+    // 채워져 있으면 domain_choice의 불변식(아직 영역이 정해지지 않았다)에 어긋난다.
+    const options = [recommendOption('fear_uncertainty', 'SC-001'), noCoverageOption('financial_hardship')];
+    const { deps } = fakeDeps({
+      outcome: {
+        ok: true,
+        data: domainChoicePayload(['fear_uncertainty', 'financial_hardship'], options, {
+          primaryDomain: 'fear_uncertainty',
+        }),
+      },
+    });
+
+    const outcome = await requestRecommendation('상황입니다.', deps);
+
+    assert.deepEqual(outcome, { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' });
+  });
+
+  it('option은 멀쩡해도 top-level selectedCardId가 카드 번호면 거절한다', async () => {
+    const options = [recommendOption('fear_uncertainty', 'SC-001'), noCoverageOption('financial_hardship')];
+    const { deps } = fakeDeps({
+      outcome: {
+        ok: true,
+        data: domainChoicePayload(['fear_uncertainty', 'financial_hardship'], options, {
+          selectedCardId: 'SC-001',
+        }),
+      },
+    });
+
+    const outcome = await requestRecommendation('상황입니다.', deps);
+
+    assert.deepEqual(outcome, { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' });
+  });
+
+  it('primaryDomain과 selectedCardId가 둘 다 채워져 있어도 거절한다', async () => {
+    const options = [recommendOption('fear_uncertainty', 'SC-001'), noCoverageOption('financial_hardship')];
+    const { deps } = fakeDeps({
+      outcome: {
+        ok: true,
+        data: domainChoicePayload(['fear_uncertainty', 'financial_hardship'], options, {
+          primaryDomain: 'fear_uncertainty',
+          selectedCardId: 'SC-001',
+        }),
+      },
+    });
+
+    const outcome = await requestRecommendation('상황입니다.', deps);
+
+    assert.deepEqual(outcome, { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' });
+  });
+
+  it('resolution이 recommend가 아니면 cardId가 null이 아닐 때 거절한다', async () => {
+    for (const bad of [
+      { domain: 'fear_uncertainty', resolution: 'ambiguous', selectedCardId: 'SC-001' },
+      { domain: 'fear_uncertainty', resolution: 'no_coverage', selectedCardId: 'SC-001' },
+    ]) {
+      const options = [bad, noCoverageOption('financial_hardship')];
+      const { deps } = fakeDeps({
+        outcome: { ok: true, data: domainChoicePayload(['fear_uncertainty', 'financial_hardship'], options as never) },
+      });
+
+      const outcome = await requestRecommendation('상황입니다.', deps);
+
+      assert.deepEqual(outcome, { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' });
+    }
+  });
+
+  it('recommend option의 카드가 실제로 없거나 그 영역 카드가 아니면 거절한다', async () => {
+    for (const badCardId of ['SC-999', 'SC-015']) {
+      // SC-015는 실제 카드이지만 financial_hardship이지 fear_uncertainty가 아니다.
+      const options = [recommendOption('fear_uncertainty', badCardId), noCoverageOption('financial_hardship')];
+      const { deps } = fakeDeps({
+        outcome: {
+          ok: true,
+          data: domainChoicePayload(['fear_uncertainty', 'financial_hardship'], options),
+        },
+      });
+
+      const outcome = await requestRecommendation('상황입니다.', deps);
+
+      assert.deepEqual(
+        outcome,
+        { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' },
+        badCardId,
+      );
+    }
+  });
+
+  it('후보가 둘이 아니거나 서로 같거나 other_uncovered/모르는 영역이면 거절한다', async () => {
+    const badCandidateSets: string[][] = [
+      ['fear_uncertainty'],
+      ['fear_uncertainty', 'financial_hardship', 'grief_loss'],
+      ['fear_uncertainty', 'fear_uncertainty'],
+      ['fear_uncertainty', 'other_uncovered'],
+      ['fear_uncertainty', '없는영역'],
+    ];
+
+    for (const candidates of badCandidateSets) {
+      const options = candidates
+        .slice(0, 2)
+        .map((domain) => noCoverageOption(domain)) as [DomainChoiceOption, DomainChoiceOption];
+      const { deps } = fakeDeps({
+        outcome: { ok: true, data: domainChoicePayload(candidates, options) },
+      });
+
+      const outcome = await requestRecommendation('상황입니다.', deps);
+
+      assert.deepEqual(
+        outcome,
+        { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' },
+        JSON.stringify(candidates),
+      );
+    }
+  });
+
+  it('option 순서가 후보 순서와 다르면 거절한다', async () => {
+    // candidates는 [fear_uncertainty, financial_hardship] 순인데 option은 뒤바뀌어 있다.
+    const options = [noCoverageOption('financial_hardship'), recommendOption('fear_uncertainty', 'SC-001')];
+    const { deps } = fakeDeps({
+      outcome: { ok: true, data: domainChoicePayload(['fear_uncertainty', 'financial_hardship'], options) },
+    });
+
+    const outcome = await requestRecommendation('상황입니다.', deps);
+
+    assert.deepEqual(outcome, { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' });
+  });
+
+  it('option이 둘이 아니거나 모양이 다르면 거절한다', async () => {
+    const brokenOptionSets: unknown[] = [
+      [recommendOption('fear_uncertainty', 'SC-001')],
+      [recommendOption('fear_uncertainty', 'SC-001'), noCoverageOption('financial_hardship'), ambiguousOption('grief_loss')],
+      [null, noCoverageOption('financial_hardship')],
+      ['recommend', noCoverageOption('financial_hardship')],
+    ];
+
+    for (const options of brokenOptionSets) {
+      const { deps } = fakeDeps({
+        outcome: {
+          ok: true,
+          data: domainChoicePayload(['fear_uncertainty', 'financial_hardship'], options as never),
+        },
+      });
+
+      const outcome = await requestRecommendation('상황입니다.', deps);
+
+      assert.deepEqual(
+        outcome,
+        { status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID' },
+        JSON.stringify(options),
+      );
+    }
+  });
+
+  it('결과에 사용자 문장이 담기지 않는다', async () => {
+    const situation = '아무에게도 말하지 못한 개인적인 이야기이고, 다른 걱정도 함께 있습니다.';
+    const options = [recommendOption('fear_uncertainty', 'SC-001'), noCoverageOption('financial_hardship')];
+    const { deps } = fakeDeps({
+      outcome: { ok: true, data: domainChoicePayload(['fear_uncertainty', 'financial_hardship'], options) },
+    });
+
+    const outcome = await requestRecommendation(situation, deps);
+
+    assert.equal(JSON.stringify(outcome).includes(situation), false);
+    assert.equal(JSON.stringify(outcome).includes('개인적인'), false);
   });
 });
 

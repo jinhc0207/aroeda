@@ -19,6 +19,7 @@ import {
 import { isValidQueueDate } from './research-prioritizer.ts';
 import type { EvaluationPayload, ResearchQueueItem } from './research-prioritizer.ts';
 import { SCRIPTURE_CARDS } from './scripture-cards.ts';
+import { COVERED_DOMAINS } from './situation-domains.ts';
 
 /**
  * 지금 카드가 다루고 있는 영역 목록.
@@ -27,7 +28,10 @@ import { SCRIPTURE_CARDS } from './scripture-cards.ts';
  * 나중에 카드 공개 상태(release status) 시스템이 생기면 이 함수만 바꾸면 된다.
  */
 export function getActiveCoveredDomains(cards = SCRIPTURE_CARDS): string[] {
-  return [...new Set(cards.flatMap((card) => card.domains))].sort();
+  // 확장 카드는 사용자 추천에 먼저 반영하되, 연구 큐의 기존 10개 기준은 유지한다.
+  // 확장 영역은 대표 카드가 생겼어도 추가 자료 연구 대상으로 계속 남겨 둔다.
+  const available = new Set(cards.flatMap((card) => card.domains));
+  return COVERED_DOMAINS.filter((domain) => available.has(domain)).sort();
 }
 
 /** RPC가 돌려줄 수 있는 영역 (읽기 전용 RPC의 필터와 같은 목록) */
