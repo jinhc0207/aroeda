@@ -61,16 +61,24 @@ const SITUATION = '앞일이 어떻게 될지 몰라서 마음이 불안합니�
 /** 사용자가 이 말씀을 받은 영역. 내부 표준 domain 값이다. */
 const SELECTED_DOMAIN = CARD.domains[0];
 
+/**
+ * 기본 태그는 CARD(SC-001) 자신의 태그를 그대로 쓴다.
+ *
+ * Scripture Card Expansion v2(2026-09-15) 이후 fear_uncertainty는 카드 3장(SC-001·032·033)이다.
+ * 빈 태그로는 셋이 0점 동점(ambiguous)이 되어 gate가 더 이상 자동으로 SC-001을 고르지 않는다.
+ * CARD 자신의 태그를 그대로 주면 모든 항목에서 만점(100점)을 받아 다른 두 카드보다
+ * 확실히 앞서므로, 이 파일의 기본 시나리오는 여전히 SC-001로 recommend된다.
+ */
 const analysis = (overrides: Record<string, unknown> = {}) => ({
   domainPriority: 'resolved',
   primaryDomain: CARD.domains[0],
   domainChoiceCandidates: [],
   secondaryDomains: [],
-  situationTags: [],
-  emotionTags: [],
-  spiritualQuestionTags: [],
-  prayerModes: [],
-  pastoralFunctions: [],
+  situationTags: [...CARD.situationTags],
+  emotionTags: [...CARD.emotionTags],
+  spiritualQuestionTags: [...CARD.spiritualQuestionTags],
+  prayerModes: [...CARD.prayerModes],
+  pastoralFunctions: [...CARD.pastoralFunction],
   safety: { level: 'normal', categories: [] },
   confidence: 0.8,
   ...overrides,

@@ -104,7 +104,9 @@ describe('Recommendation Gate · 추천 가능한 상황', () => {
     assert.equal(result.selectedCardId, 'SC-001');
     assert.equal(result.reason, 'CARD_SELECTED');
     assert.equal(result.isTie, false);
-    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-001']);
+    // Scripture Card Expansion v2(2026-09-15): fear_uncertainty는 이제 카드 3장이다.
+    // 이 입력의 situationTags는 SC-001에만 있으므로 여전히 SC-001이 단독 1위다.
+    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-001', 'SC-032', 'SC-033']);
   });
 
   it('TEST 2 · 감사 → recommend / SC-004', () => {
@@ -119,7 +121,8 @@ describe('Recommendation Gate · 추천 가능한 상황', () => {
     const result = runRecommendationGate(analysis);
     assert.equal(result.route, 'recommend');
     assert.equal(result.selectedCardId, 'SC-004');
-    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-004']);
+    // gratitude_joy도 이제 카드 3장이다. SC-004가 이 입력에서 여전히 단독 1위다.
+    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-004', 'SC-038', 'SC-039']);
   });
 
   it('TEST 3 · 사별 → recommend / SC-009', () => {
@@ -134,7 +137,8 @@ describe('Recommendation Gate · 추천 가능한 상황', () => {
     const result = runRecommendationGate(analysis);
     assert.equal(result.route, 'recommend');
     assert.equal(result.selectedCardId, 'SC-009');
-    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-009']);
+    // grief_loss도 이제 카드 3장이다. SC-009가 이 입력에서 여전히 단독 1위다.
+    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-009', 'SC-048', 'SC-049']);
   });
 });
 
@@ -281,15 +285,22 @@ describe('Recommendation Gate · 복합 사연은 primary 카드만 후보', () 
     const result = runRecommendationGate(analysis);
 
     assert.deepEqual(result.eligibleDomains, ['gratitude_joy']);
-    assert.deepEqual(result.eligibleCardIds, ['SC-004']);
+    // gratitude_joy는 이제 카드 3장이다(SC-004·038·039). SC-001은 fear_uncertainty 카드이므로 여전히 후보가 아니다.
+    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-004', 'SC-038', 'SC-039']);
     assert.equal(result.eligibleCardIds.includes('SC-001'), false);
-    assert.equal(result.rankedCandidates.length, 1);
+    assert.equal(result.rankedCandidates.length, 3);
     assert.equal(result.route, 'recommend');
     assert.equal(result.selectedCardId, 'SC-004');
     assertPrimaryOnly(result, 'gratitude_joy', ['fear_uncertainty']);
   });
 
-  it('TEST 10 · decision_guidance + wisdom_discernment → 후보는 SC-002 한 장 (SC-010은 후보 아님)', () => {
+  it('TEST 10 · decision_guidance + wisdom_discernment → 후보는 decision_guidance 카드뿐 (SC-010은 후보 아님)', () => {
+    // Scripture Card Expansion v2(2026-09-15)로 decision_guidance는 카드 3장(SC-002·034·035)이 됐다.
+    // 이 입력은 상담·조언을 구한다는 단서가 없는 "일반" 결정 사연이다.
+    // SC-034(조언을 들으며 결정하기)의 spiritualQuestionTags에서 '인도'를 빼(['지혜','공동체']만 남김)
+    // 상담 단서 없는 일반 입력에서 SC-034가 SC-002를 밀어내지 않도록 검수 수정했다(2026-09-15).
+    // 그래서 이 입력은 다시 SC-002가 단독 1위다. 이 테스트의 원래 목적(후보가 primary
+    // 영역 밖으로 나가지 않는다, 즉 SC-010이 후보가 아니다)도 그대로 지켜진다.
     const analysis = analysisOf({
       primaryDomain: 'decision_guidance',
       secondaryDomains: ['wisdom_discernment'],
@@ -301,11 +312,31 @@ describe('Recommendation Gate · 복합 사연은 primary 카드만 후보', () 
     });
     const result = runRecommendationGate(analysis);
 
-    assert.deepEqual(result.eligibleCardIds, ['SC-002']);
+    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-002', 'SC-034', 'SC-035']);
     assert.equal(result.eligibleCardIds.includes('SC-010'), false);
-    assert.equal(result.rankedCandidates.length, 1);
+    assert.equal(result.rankedCandidates.length, 3);
     assert.equal(result.route, 'recommend');
     assert.equal(result.selectedCardId, 'SC-002');
+    assert.equal(result.isTie, false);
+  });
+
+  it('SC-034 조언 특화 입력 → decision_guidance 안에서도 SC-034가 단독 1위', () => {
+    // 상담·조언을 구한다는 SC-034 고유 situationTags가 있으면 SC-034가 이긴다.
+    // 일반 입력(위 TEST 10)과 짝을 이루는 회귀다: 침범 수정이 SC-034 자신의 대표 입력까지
+    // 무력화하지 않았는지 함께 확인한다.
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'decision_guidance',
+        situationTags: ['여러 사람의 조언을 구함', '관계에 대한 선택', '가족과 상의할 결정'],
+        emotionTags: ['혼란', '걱정', '불확실함'],
+        spiritualQuestionTags: ['지혜', '공동체'],
+        prayerModes: ['간구', '결단'],
+        pastoralFunctions: ['지혜', '인도'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-034');
+    assert.equal(result.isTie, false);
   });
 
   it('primary 1개 + secondary 1개: 후보 영역에 secondary가 들어가지 않는다', () => {
@@ -317,7 +348,8 @@ describe('Recommendation Gate · 복합 사연은 primary 카드만 후보', () 
       }),
     );
     assert.deepEqual(result.eligibleDomains, ['grief_loss']);
-    assert.deepEqual(result.eligibleCardIds, ['SC-009']);
+    // grief_loss는 이제 카드 3장이다(SC-009·048·049).
+    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-009', 'SC-048', 'SC-049']);
     assertPrimaryOnly(result, 'grief_loss', ['loneliness_isolation']);
   });
 
@@ -342,6 +374,12 @@ describe('Recommendation Gate · 복합 사연은 primary 카드만 후보', () 
   it('secondary 전용 카드는 태그가 그 카드에 강하게 맞아도 후보·순위에 들어오지 않는다', () => {
     // SC-011(loneliness_isolation)의 태그를 그대로 준다.
     // 예전 규칙이었다면 SC-011이 후보에 들어와 SC-009를 밀어낼 수 있었다.
+    //
+    // Scripture Card Expansion v2(2026-09-15) 이후: grief_loss 확장 카드 SC-048(슬퍼할 시간을
+    // 허락하기)도 '허탈함'·'위로' 태그를 나눠 가져, 이 입력에서 SC-009와 정확히 동점(ambiguous)이
+    // 된다. 이것은 SC-011이 후보에 끼어든 결과가 아니라 두 primary(grief_loss) 카드 사이의
+    // 정당한 동점이다 — "동점이면 임의로 고르지 않는다"는 원칙이 실제 데이터로도 지켜진다.
+    // 이 테스트가 지키려는 것(secondary 전용 카드가 후보·순위에 들어오지 않는다)은 아래에서 그대로 본다.
     const result = runRecommendationGate(
       analysisOf({
         primaryDomain: 'grief_loss',
@@ -353,8 +391,16 @@ describe('Recommendation Gate · 복합 사연은 primary 카드만 후보', () 
         pastoralFunctions: ['교제'],
       }),
     );
-    assert.equal(result.route, 'recommend');
-    assert.equal(result.selectedCardId, 'SC-009');
+    assert.equal(result.route, 'ambiguous');
+    assert.equal(result.selectedCardId, null);
+    assert.equal(result.isTie, true);
+    assert.deepEqual(
+      result.rankedCandidates
+        .filter((score) => score.totalScore === result.rankedCandidates[0].totalScore)
+        .map((score) => score.cardId)
+        .sort(),
+      ['SC-009', 'SC-048'],
+    );
     for (const id of ['SC-011', 'SC-018', 'SC-019']) {
       assert.equal(result.eligibleCardIds.includes(id), false, id);
       assert.equal(result.rankedCandidates.some((score) => score.cardId === id), false, id);
@@ -477,7 +523,8 @@ describe('Recommendation Gate · 동점 처리', () => {
     assert.equal(result.route, 'recommend');
     assert.equal(result.selectedCardId, 'SC-002');
     assert.equal(result.isTie, false);
-    assert.deepEqual(result.eligibleCardIds, ['SC-002']);
+    // decision_guidance는 이제 카드 3장이다(SC-002·034·035).
+    assert.deepEqual(result.eligibleCardIds.sort(), ['SC-002', 'SC-034', 'SC-035']);
   });
 });
 
@@ -666,10 +713,17 @@ describe('Recommendation Gate · 영역 선택 option (domainChoiceOptions)', ()
 
   it('실제 카드 데이터: 한 후보는 recommend, 다른 후보는 ambiguous가 될 수 있다', () => {
     // family_parenting_conflict 세 카드(SC-012·020·021)는 '지혜' 태그 점수가 같아 동점이다.
-    // fear_uncertainty는 카드 한 장이 정해진다. 카드 번호는 하드코딩하지 않고 직접 계산과 비교한다.
+    //
+    // Scripture Card Expansion v2(2026-09-15) 이후 fear_uncertainty도 카드 3장이라
+    // '지혜' 태그만으로는 (어느 fear_uncertainty 카드도 '지혜'를 갖지 않아) 셋 다 0점 동점이 된다.
+    // situationTags·emotionTags를 더해 SC-001만 단독으로 뚜렷이 높은 점수를 받게 한다.
+    // 카드 번호는 하드코딩하지 않고 직접 계산과 비교한다.
     const analysis = needsChoiceOf(['family_parenting_conflict', 'fear_uncertainty'], {
-      spiritualQuestionTags: ['지혜'],
-      pastoralFunctions: ['지혜'],
+      situationTags: ['두려운 일을 앞둠', '불확실한 결과'],
+      emotionTags: ['두려움'],
+      spiritualQuestionTags: ['지혜', '신뢰'],
+      prayerModes: ['간구'],
+      pastoralFunctions: ['지혜', '위로'],
     });
     const result = runRecommendationGate(analysis);
     const [family, fear] = result.domainChoiceOptions;

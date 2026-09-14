@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { runRecommendationGate } from './recommendation-gate.ts';
+import { SCRIPTURE_CARDS } from '../data/scripture-cards.ts';
 import type { SituationAnalysis } from './situation-analysis.ts';
 
 const analysisOf = (
@@ -139,4 +140,50 @@ describe('말씀 영역 확장 · 실제 입력 방향 시뮬레이션', () => {
     assert.equal(result.route, 'no_coverage');
     assert.equal(result.selectedCardId, null);
   });
+});
+
+/* ================================================================== */
+/* Scripture Card Expansion v2 (2026-09-15) · 신규 20장 situationTags 분리 무결성 */
+/* ================================================================== */
+
+/**
+ * 카드가 1장뿐이던 10개 영역에 정확히 2장씩 추가해(총 20장) 17개 영역 모두 3장이 되었다.
+ *
+ * 이 블록이 확인하는 것은 딱 하나, "카드 데이터의 situationTags 분리 무결성"이다.
+ * 각 신규 카드 자신의 situationTags를 그대로 Gate 입력으로 되먹였을 때, 같은 영역의
+ * 다른 두 카드와 확실히 구분되어 단독 1위 recommend가 되는지를 본다.
+ *
+ * 이것은 자연어 문장이 아니라 카드에 이미 저장된 태그를 그대로 되돌려 넣는 것이므로,
+ * 실제 사용자 입력이나 Situation Analyzer가 그 문장에서 이 태그들을 정확히 추출하는지는
+ * 이 테스트로 검증하지 않는다(Analyzer 정확도는 OpenAI를 실제로 불러야 알 수 있고,
+ * 이 파일은 OpenAI·네트워크 없이 도는 로컬 시뮬레이션이다).
+ *
+ * situationTags만 쓰는 이유: emotionTags·spiritualQuestionTags·prayerModes·pastoralFunction은
+ * 표준 사전 안에서 카드끼리 값을 나눠 쓰므로, 정말 분리되어 있는지는 그 영역 안에서
+ * 카드마다 유일한 situationTags만으로 보아야 한다. 다른 사전까지 더해야만 분리된다면
+ * 그것을 숨기지 않는다(이 파일의 20건 모두 situationTags만으로 분리된다).
+ */
+describe('Scripture Card Expansion v2 · 신규 카드 20장 situationTags 분리 무결성', () => {
+  const newCardIds = Array.from({ length: 20 }, (_, index) => `SC-0${32 + index}`);
+  assert.equal(newCardIds.length, 20);
+  assert.deepEqual(newCardIds[0], 'SC-032');
+  assert.deepEqual(newCardIds[19], 'SC-051');
+
+  for (const cardId of newCardIds) {
+    const card = SCRIPTURE_CARDS.find((item) => item.id === cardId);
+    assert.ok(card, `${cardId} 카드를 찾지 못했습니다.`);
+    const domain = card!.domains[0];
+
+    it(`${cardId}(${domain}) · 자신의 situationTags로 같은 영역의 다른 카드와 분리된다`, () => {
+      const analysis = analysisOf(domain, { situationTags: [...card!.situationTags] });
+      const result = runRecommendationGate(analysis);
+
+      assert.equal(result.route, 'recommend', `${cardId}: route=${result.route}`);
+      assert.equal(result.selectedCardId, cardId);
+      assert.equal(result.isTie, false, `${cardId}: 동점이 발생했습니다.`);
+      assert.equal(result.coverage?.covered, true);
+      // 같은 영역의 다른 두 카드도 여전히 후보다 — 이 카드만 남기고 나머지를 빼는 것이 아니다.
+      assert.equal(result.eligibleCardIds.length, 3, `${cardId}: 영역 카드가 3장이어야 합니다.`);
+    });
+  }
 });

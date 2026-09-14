@@ -241,6 +241,17 @@ describe('한글 성경 표기 · D. 기존 카드', () => {
     (card) => !card.passages || card.passages.length <= 1,
   );
 
+  /**
+   * SC-050(잠언 18:13, 17)은 같은 장 안에서 떨어진 두 절을 쉼표로 잇는 표기다.
+   * 이 파일의 E 블록이 이미 명시하듯("떨어져 있는 곳을 잇는 표기를 지어내지 않는다"),
+   * formatKoreanBibleReferenceSequence는 장을 넘어가며 붙어 있는 본문만 한 줄로 줄이고
+   * 쉼표 형식은 만들어 주지 않는다(정해진 적이 없다). 그래서 SC-050의 referenceLabel은
+   * 계산으로 되살아나지 않는다. Scripture Card Expansion v2(2026-09-15)의 확정 사양대로
+   * 손으로 적은 표기이며, Gate·Matcher는 passages 배열(각 절 범위)을 그대로 읽으므로
+   * 이 표기 제한이 추천 동작에는 영향을 주지 않는다.
+   */
+  const COMMA_FORMAT_CARD_IDS = ['SC-050'];
+
   it('한 장짜리 카드가 여러 장 있다', () => {
     assert.ok(singleChapterCards.length >= 8);
   });
@@ -257,7 +268,10 @@ describe('한글 성경 표기 · D. 기존 카드', () => {
   });
 
   it('여러 장에 걸친 카드도 같다', () => {
-    const multi = SCRIPTURE_CARDS.filter((card) => card.passages && card.passages.length > 1);
+    const multi = SCRIPTURE_CARDS.filter(
+      (card) =>
+        card.passages && card.passages.length > 1 && !COMMA_FORMAT_CARD_IDS.includes(card.id),
+    );
     assert.ok(multi.length >= 1);
 
     for (const card of multi) {
@@ -272,8 +286,9 @@ describe('한글 성경 표기 · D. 기존 카드', () => {
     }
   });
 
-  it('카드 열 장 모두 계산으로 되살릴 수 있다', () => {
+  it('여러 장에 걸치지 않는 카드는 모두 계산으로 되살릴 수 있다', () => {
     for (const card of SCRIPTURE_CARDS) {
+      if (COMMA_FORMAT_CARD_IDS.includes(card.id)) continue;
       const rest = card.passages ? card.passages.slice(1) : [];
       assert.equal(
         formatKoreanBibleReferenceSequence(card.passage, rest),
@@ -281,6 +296,24 @@ describe('한글 성경 표기 · D. 기존 카드', () => {
         card.id,
       );
     }
+  });
+
+  it('SC-050(같은 장의 쉼표 표기)은 계산 표기가 없고, passages는 13·17절만 정확히 담는다', () => {
+    const card = SCRIPTURE_CARDS.find((item) => COMMA_FORMAT_CARD_IDS.includes(item.id))!;
+    assert.ok(card, 'SC-050을 찾지 못했습니다.');
+
+    // 손으로 적은 정확한 라벨 그 자체를 직접 검증한다.
+    assert.equal(card.referenceLabel, '잠언 18:13, 17');
+
+    const rest = card.passages ? card.passages.slice(1) : [];
+    assert.equal(formatKoreanBibleReferenceSequence(card.passage, rest), null);
+
+    // 대표 passage는 passages[0]과 같고, 13절과 17절만 읽으며 14~16절을 끼워 넣지 않는다.
+    assert.deepEqual(card.passage, card.passages?.[0]);
+    assert.deepEqual(
+      card.passages?.map((p) => `${p.chapter}:${p.startVerse}-${p.endVerse}`),
+      ['18:13-13', '18:17-17'],
+    );
   });
 });
 

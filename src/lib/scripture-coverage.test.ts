@@ -52,8 +52,8 @@ describe('Situation Domain 사전', () => {
 });
 
 describe('Scripture Card domain', () => {
-  it('31개 카드 모두 domain을 가진다', () => {
-    assert.equal(SCRIPTURE_CARDS.length, 31);
+  it('51개 카드 모두 domain을 가진다', () => {
+    assert.equal(SCRIPTURE_CARDS.length, 51);
     for (const card of SCRIPTURE_CARDS) {
       assert.ok(Array.isArray(card.domains), `${card.id}에 domains가 없습니다.`);
       assert.equal(card.domains.length, 1, `${card.id}는 V1에서 domain 하나만 가집니다.`);
@@ -70,13 +70,15 @@ describe('Scripture Card domain', () => {
     }
   });
 
-  it('covered domain이 모두 카드에 하나씩 연결되어 있다', () => {
+  it('covered domain이 모두 카드 3장씩 연결되어 있다', () => {
+    // Scripture Card Expansion v2(2026-09-15): 카드가 1장뿐이던 10개 영역에 정확히 2장씩 추가해,
+    // 이제 COVERED_DOMAINS(원래 10개)와 UNCOVERED_DOMAINS(이전 확장 7개) 17개 모두 카드 3장이다.
     const inCards = coveredDomainsInCards();
     assert.equal(inCards.length, SITUATION_DOMAINS.length - 1);
     for (const domain of COVERED_DOMAINS) {
       const result = getCoverage(domain);
       assert.equal(result.covered, true, `${domain}을 다루는 카드가 없습니다.`);
-      assert.equal(result.cardIds.length, 1, `${domain}에 카드가 하나만 연결되어야 합니다.`);
+      assert.equal(result.cardIds.length, 3, `${domain}에 카드 3개가 연결되어야 합니다.`);
     }
     for (const domain of UNCOVERED_DOMAINS) {
       const result = getCoverage(domain);
@@ -87,6 +89,8 @@ describe('Scripture Card domain', () => {
 });
 
 describe('Coverage 확인 (T1~T13)', () => {
+  // Scripture Card Expansion v2(2026-09-15) 이전에는 카드가 하나뿐이던 영역이다.
+  // 이제 원래 카드를 포함해 3장이 연결된다. 기존 카드가 여전히 그 안에 있는지만 본다.
   const coveredCases: { id: string; domain: string; cardId: string }[] = [
     { id: 'T1', domain: 'fear_uncertainty', cardId: 'SC-001' },
     { id: 'T2', domain: 'decision_guidance', cardId: 'SC-002' },
@@ -96,10 +100,11 @@ describe('Coverage 확인 (T1~T13)', () => {
   ];
 
   for (const testCase of coveredCases) {
-    it(`${testCase.id} · ${testCase.domain} → covered / ${testCase.cardId}`, () => {
+    it(`${testCase.id} · ${testCase.domain} → covered / ${testCase.cardId} 포함 3장`, () => {
       const result = getCoverage(testCase.domain);
       assert.equal(result.covered, true);
-      assert.deepEqual(result.cardIds, [testCase.cardId]);
+      assert.equal(result.cardIds.length, 3);
+      assert.ok(result.cardIds.includes(testCase.cardId));
       assert.equal(result.primaryDomain, testCase.domain);
     });
   }
@@ -230,7 +235,10 @@ describe('기존 Mock 8개의 domain', () => {
 
       const coverage = getCoverage(mockCase.analysis.primaryDomain);
       assert.equal(coverage.covered, true);
-      assert.deepEqual(coverage.cardIds, [mockCase.expectedCardId]);
+      // Scripture Card Expansion v2 이후 이 영역들은 카드 3장을 갖는다.
+      // 기존 mock이 가리키던 카드가 여전히 그 안에 있는지만 본다.
+      assert.equal(coverage.cardIds.length, 3);
+      assert.ok(coverage.cardIds.includes(mockCase.expectedCardId));
     });
   }
 });

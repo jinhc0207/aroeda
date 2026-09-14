@@ -124,7 +124,7 @@ describe('Scripture Matching Engine', () => {
       ] as const) {
         assert.equal(typeof top[key], 'number', `${key}가 숫자가 아닙니다.`);
       }
-      assert.equal(result.scores.length, 31, '카드 31개 전부의 점수가 나와야 합니다.');
+      assert.equal(result.scores.length, 51, '카드 51개 전부의 점수가 나와야 합니다.');
     });
   }
 
@@ -133,7 +133,7 @@ describe('Scripture Matching Engine', () => {
     const result = matchScriptureCards({ situationTags: ['존재하지 않는 상황'] });
     assert.equal(result.topScore, 0);
     assert.equal(result.isTie, true);
-    assert.equal(result.topCards.length, 31);
+    assert.equal(result.topCards.length, 51);
   });
 
   it('알 수 없는 태그가 섞여 있어도 멈추지 않는다', () => {
@@ -150,7 +150,7 @@ describe('Scripture Matching Engine', () => {
 
   it('빈 입력에도 오류를 내지 않는다', () => {
     const result = matchScriptureCards({});
-    assert.equal(result.scores.length, 31);
+    assert.equal(result.scores.length, 51);
     assert.equal(result.topScore, 0);
     assert.equal(result.isTie, true);
   });

@@ -202,8 +202,8 @@ describe('Bible Reference · 여러 장에 걸친 본문', () => {
 });
 
 describe('Bible Reference · 지금 쓰고 있는 Scripture Card', () => {
-  it('카드 31개의 모든 본문 위치가 실제 성경에 있다', () => {
-    assert.equal(SCRIPTURE_CARDS.length, 31);
+  it('카드 51개의 모든 본문 위치가 실제 성경에 있다', () => {
+    assert.equal(SCRIPTURE_CARDS.length, 51);
 
     for (const card of SCRIPTURE_CARDS) {
       const single = checkBibleReference(card.passage, `${card.id}.passage`);

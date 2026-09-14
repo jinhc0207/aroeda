@@ -143,14 +143,16 @@ describe('recommend-scripture · Gate 흐름', () => {
       }),
     );
     assert.deepEqual(result.eligibleDomains, ['gratitude_joy']);
-    assert.deepEqual(result.eligibleCardIds, ['SC-004']);
+    // Scripture Card Expansion v2(2026-09-15): gratitude_joy는 이제 카드 3장(SC-004·038·039)이다.
+    // 이 입력에서는 여전히 SC-004가 단독 1위다.
+    assert.deepEqual(result.eligibleCardIds.slice().sort(), ['SC-004', 'SC-038', 'SC-039']);
     assert.equal(result.eligibleCardIds.includes('SC-001'), false);
     assert.equal(result.route, 'recommend');
     assert.equal(result.selectedCardId, 'SC-004');
     assert.deepEqual(result.secondaryDomains, ['fear_uncertainty']);
   });
 
-  it('CASE 6 · decision_guidance + wisdom_discernment → 후보는 primary 카드 SC-002뿐', async () => {
+  it('CASE 6 · decision_guidance + wisdom_discernment → 후보는 decision_guidance 카드뿐', async () => {
     const result = await gateFor(
       analysisOf({
         primaryDomain: 'decision_guidance',
@@ -163,9 +165,13 @@ describe('recommend-scripture · Gate 흐름', () => {
       }),
     );
     assert.deepEqual(result.eligibleDomains, ['decision_guidance']);
-    assert.deepEqual(result.eligibleCardIds, ['SC-002']);
+    // Scripture Card Expansion v2(2026-09-15): decision_guidance는 이제 카드 3장(SC-002·034·035)이다.
+    // 이 입력은 상담·조언을 구한다는 단서가 없는 일반 결정 사연이다. SC-034의 spiritualQuestionTags에서
+    // '인도'를 뺀 검수 수정(2026-09-15) 뒤에는 SC-002가 다시 단독 1위다. 이 테스트의 목적
+    // (SC-010이 후보가 아니다)은 그대로 지켜진다.
+    assert.deepEqual(result.eligibleCardIds.slice().sort(), ['SC-002', 'SC-034', 'SC-035']);
     assert.equal(result.eligibleCardIds.includes('SC-010'), false);
-    assert.equal(result.rankedCandidates.length, 1);
+    assert.equal(result.rankedCandidates.length, 3);
     assert.equal(result.selectedCardId, 'SC-002');
   });
 

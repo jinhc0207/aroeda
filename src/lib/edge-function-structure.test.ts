@@ -147,8 +147,10 @@ describe('Analyzer 규칙 동일성', () => {
   });
 
   it('지시문이 검증된 상태 그대로다', () => {
-    // 영역 우선순위(Domain Priority) 계약을 넣은 뒤 실제 INSTRUCTIONS.length를 계산해 갱신한 값이다.
-    assert.equal(INSTRUCTIONS.length, 7798, '지시문 길이가 달라졌습니다.');
+    // Scripture Card Expansion v2(2026-09-15)로 situationTags가 103→163개로 늘며
+    // 지시문에 그대로 나열되는 태그 목록이 길어졌다. 지시문 템플릿 자체는 바뀌지 않았다.
+    // 실제 INSTRUCTIONS.length를 계산해 갱신한 값이다.
+    assert.equal(INSTRUCTIONS.length, 8656, '지시문 길이가 달라졌습니다.');
     for (const marker of [
       '[level]',
       '[자살 / 자해]',
@@ -214,13 +216,16 @@ describe('Analyzer 규칙 동일성', () => {
   });
 
   it('Domain과 Taxonomy 값이 그대로다', () => {
+    // Scripture Card Expansion v2(2026-09-15): 31→51장. 새 카드는 emotionTags·spiritualQuestionTags·
+    // prayerModes·pastoralFunction에 새 값을 추가하지 않았으므로 그 네 사전은 그대로다.
+    // situationTags만 새 카드 분리를 위해 60개가 늘어 103→163이다.
     assert.equal(SITUATION_DOMAINS.length, 18);
-    assert.equal(TAXONOMY.situationTags.length, 103);
+    assert.equal(TAXONOMY.situationTags.length, 163);
     assert.equal(TAXONOMY.emotionTags.length, 32);
     assert.equal(TAXONOMY.spiritualQuestionTags.length, 43);
     assert.equal(TAXONOMY.prayerModes.length, 8);
     assert.equal(TAXONOMY.pastoralFunctions.length, 20);
-    assert.equal(SCRIPTURE_CARDS.length, 31);
+    assert.equal(SCRIPTURE_CARDS.length, 51);
   });
 });
 
