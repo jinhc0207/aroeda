@@ -1,19 +1,25 @@
 /**
- * Scripture Card 51장 균형 평가 코퍼스 (2026-09-15, 2026-09-16 검수 수정)
+ * 실제 사용자 자연어 기반 말씀 추천 품질 평가 코퍼스 (2026-09-15, 2026-09-16 검수 수정)
  *
- * 51개 카드가 각각 정확히 3번씩 preferredCardId로 등장하는 153개 평가 사례다.
- * 문장은 새로 짓지 않고 `scripts/situation-scenario-corpus.ts`의 기존 340문장
+ * 153개 평가 사례의 문장은 새로 짓지 않고 `scripts/situation-scenario-corpus.ts`의 기존 340문장
  * (EXPANSION_SCENARIOS)에서만 가져왔다. `SAFETY_BOUNDARY_SCENARIOS`(안전 경계로
  * 확정된 문장)와 교집합이 없다 — 이 파일의 정적 테스트가 domain·rank·text로
  * 직접 대조해 확인한다.
  *
- * 이 파일은 정적 데이터다. preferredCardId와 acceptableCardIds는 사람이 각
+ * 최초 구성은 51개 카드를 각각 3번씩 preferredCardId로 배정했지만, 실제 문장 의미보다
+ * 카드별 횟수를 우선하는 왜곡이 확인되어 그 균형 조건을 폐기했다. `domain`은 원본 코퍼스의
+ * 편집 분류이고, `expectedPrimaryDomain`과 카드 정답은 문장 자체의 의미를 다시 판단한 값이다.
+ * 두 값은 다를 수 있다. 새 카드 20장의 도달 가능성은 이 배열의 분포를 억지로 맞추지 않고,
+ * 파일 아래의 `NEW_CARD_REACHABILITY_CASES`에서 별도로 검사한다.
+ *
+ * 이 파일은 정적 데이터다. recommend 기대 사례의 preferredCardId와 acceptableCardIds는 사람이 각
  * 문장과 카드의 situationTags를 직접 대조해서 세운 **평가 가설**이지, 코드가
  * 자동으로 "검증"한 결과가 아니다. 이 파일의 정적 테스트(같은 폴더의
  * `.test.ts`)가 실제로 확인하는 것은 다음 4가지뿐이다.
  *   - 원본 위치: 문장·domain·rank·cluster가 EXPANSION_SCENARIOS와 정확히 같다.
- *   - 개수: 51개 카드가 각각 정확히 3번, 총 153개.
- *   - 카드 영역: preferred/acceptable 카드가 모두 expectedPrimaryDomain에 속한다.
+ *   - 개수: 자연어 품질 사례 153개와 별도 신규 카드 도달성 사례 20개.
+ *   - 경로별 계약: recommend만 카드 정답을 갖고, domain_choice와 no_coverage는 카드 정답을 갖지 않는다.
+ *   - 카드 영역: recommend 사례의 preferred/acceptable 카드가 모두 expectedPrimaryDomain에 속한다.
  *   - 중복·안전 경계 제외: 문장·ID 중복이 없고 SAFETY_BOUNDARY_SCENARIOS와
  *     교집합이 없다.
  * "이 문장에서 Situation Analyzer가 실제로 이 태그를 뽑아내는가"는 이 파일도
@@ -40,14 +46,47 @@
  *   확장 이전부터 그 영역을 다루던 카드(10개 영역) 또는 카드 ID가 가장 작은
  *   카드(나머지 7개 영역)다.
  *
- * isNewCardSmoke (정확히 20개, SC-032~SC-051이 한 번씩)
- *   새로 추가된 카드 20장이 각각 최소 한 번은 실제로 호출되는지 보는 집합이다.
+ * isNewCardSmoke
+ *   최초 균형 평가에서 new-card smoke로 사용했던 문항을 추적하기 위한 과거 메타데이터다.
+ *   현재 `--mode=new-cards`는 이 값을 사용하지 않고 `NEW_CARD_REACHABILITY_CASES`를 사용한다.
  */
 
 import type { ExpansionDomain, ScenarioCluster } from './situation-scenario-corpus.ts';
 import type { SituationDomain } from '../src/data/situation-domains.ts';
 
-export type EvaluationCase = {
+export type RecommendationExpectation = {
+  id: string;
+  text: string;
+  expectedPrimaryDomain: SituationDomain;
+  expectedRoute: 'recommend';
+  preferredCardId: string;
+  acceptableCardIds: string[];
+  rationale: string;
+};
+
+export type DomainChoiceExpectation = {
+  id: string;
+  text: string;
+  expectedPrimaryDomain: null;
+  expectedRoute: 'domain_choice';
+  expectedDomainChoiceCandidates: readonly [SituationDomain, SituationDomain];
+  rationale: string;
+};
+
+export type NoCoverageExpectation = {
+  id: string;
+  text: string;
+  expectedPrimaryDomain: 'other_uncovered';
+  expectedRoute: 'no_coverage';
+  rationale: string;
+};
+
+export type EvaluationExpectation =
+  | RecommendationExpectation
+  | DomainChoiceExpectation
+  | NoCoverageExpectation;
+
+type EvaluationMetadata = {
   /** 연속된 평가 ID (EVAL-001 ~ EVAL-153) */
   id: string;
   /** EXPANSION_SCENARIOS에서 그대로 가져온 원문 */
@@ -58,20 +97,17 @@ export type EvaluationCase = {
   rank: number;
   /** 원본 코퍼스의 cluster */
   cluster: ScenarioCluster;
-  /** Situation Analyzer가 골라야 할 primaryDomain (domain과 항상 같다) */
-  expectedPrimaryDomain: SituationDomain;
-  /** 안전 경계 문장이 아니므로 항상 'recommend' */
-  expectedRoute: 'recommend';
-  /** Gate가 1위로 뽑아야 할 카드 */
-  preferredCardId: string;
-  /** top1이 이 중 하나면 합리적이라고 인정하는 카드 목록. preferred를 반드시 포함하고 1~2장이다. */
-  acceptableCardIds: string[];
-  /** 사람이 검수하기 위한 선정 근거. 자동 검증 대상이 아니다. */
-  rationale: string;
   /** smoke(17개, 영역당 1개) 집합에 포함되는지 */
   smoke: boolean;
-  /** new-card smoke(20개, SC-032~SC-051 각 1개) 집합에 포함되는지 */
+  /** 최초 균형 평가의 new-card smoke 문항이었는지 남기는 과거 메타데이터 */
   isNewCardSmoke: boolean;
+};
+
+export type EvaluationCase = EvaluationMetadata & EvaluationExpectation;
+
+export type NewCardReachabilityCase = RecommendationExpectation & {
+  /** 새 카드 도달성 평가 ID (REACH-032 ~ REACH-051) */
+  id: string;
 };
 
 export const EVALUATION_CASES: readonly EvaluationCase[] = [
@@ -113,10 +149,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'risk',
     expectedPrimaryDomain: 'fear_uncertainty',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-001',
-    acceptableCardIds: ['SC-001'],
+    preferredCardId: 'SC-033',
+    acceptableCardIds: ['SC-033', 'SC-001'],
     rationale:
-      'SC-001는 이 영역이 카드 1장뿐이던 확장 이전부터 이 문장 유형을 대표해 왔다. 문장에 다른 두 카드의 더 좁은 단서가 없어 SC-001가 여전히 preferred다. 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '예상하지 못한 일을 걱정한다는 SC-033의 구체 태그가 문장과 그대로 맞는다. 일반적인 미래 걱정의 SC-001도 목회적으로 자연스러워 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -186,12 +222,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'fear_uncertainty',
     rank: 14,
     cluster: 'transition',
-    expectedPrimaryDomain: 'fear_uncertainty',
+    expectedPrimaryDomain: 'decision_guidance',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-033',
-    acceptableCardIds: ['SC-033', 'SC-001'],
+    preferredCardId: 'SC-002',
+    acceptableCardIds: ['SC-002'],
     rationale:
-      'SC-033의 situationTags가 이 문장의 구체적 상황(cluster: transition)과 직접 겹친다. SC-001도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '두려움은 새 직장으로 옮긴 선택을 되돌아보는 감정이고, 문장의 질문은 선택이 옳았는지에 있다. 일반적인 진로·미래 선택을 다루는 SC-002를 정답 가설로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -246,12 +282,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'decision_guidance',
     rank: 17,
     cluster: 'calling',
-    expectedPrimaryDomain: 'decision_guidance',
+    expectedPrimaryDomain: 'wisdom_discernment',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-002',
-    acceptableCardIds: ['SC-002'],
+    preferredCardId: 'SC-010',
+    acceptableCardIds: ['SC-010'],
     rationale:
-      'SC-002는 이 영역이 카드 1장뿐이던 확장 이전부터 이 문장 유형을 대표해 왔다. 문장에 다른 두 카드의 더 좁은 단서가 없어 SC-002가 여전히 preferred다. 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '어떤 행동이나 선택지를 정하는 문장보다 지금 하는 일이 하나님의 길인지 분별하고 지혜를 구하는 문장이다. 일반적인 분별과 지혜를 다루는 SC-010을 정답 가설로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -428,10 +464,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'marriage_conception',
     expectedPrimaryDomain: 'waiting_unanswered_prayer',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-036',
-    acceptableCardIds: ['SC-036', 'SC-003'],
+    preferredCardId: 'SC-037',
+    acceptableCardIds: ['SC-037', 'SC-036'],
     rationale:
-      'SC-036의 situationTags가 이 문장의 구체적 상황(cluster: marriage_conception)과 직접 겹친다. SC-003도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '아이를 구하는 같은 기도를 몇 년째 계속한다는 행동이 SC-037과 가장 직접 맞는다. 긴 기다림을 다루는 SC-036도 자연스러워 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -443,10 +479,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'career_breakthrough',
     expectedPrimaryDomain: 'waiting_unanswered_prayer',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-037',
-    acceptableCardIds: ['SC-037', 'SC-003'],
+    preferredCardId: 'SC-036',
+    acceptableCardIds: ['SC-036', 'SC-003'],
     rationale:
-      'SC-037의 situationTags가 이 문장의 구체적 상황(cluster: career_breakthrough)과 직접 겹친다. SC-003도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '같은 기도를 다시 드리겠다는 결단보다 취업을 위해 오래 기도했지만 길이 열리지 않은 기다림이 중심이다. 긴 기다림을 다루는 SC-036을 우선하고 응답이 보이지 않는 탄식의 SC-003도 허용한다.',
     smoke: false,
     isNewCardSmoke: true,
   },
@@ -458,10 +494,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'reconciliation_wait',
     expectedPrimaryDomain: 'waiting_unanswered_prayer',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-037',
-    acceptableCardIds: ['SC-037', 'SC-003'],
+    preferredCardId: 'SC-036',
+    acceptableCardIds: ['SC-036', 'SC-003'],
     rationale:
-      'SC-037의 situationTags가 이 문장의 구체적 상황(cluster: reconciliation_wait)과 직접 겹친다. SC-003도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '화해를 위해 계속 기도하겠다는 결단보다 오래 기도했지만 아직 이루어지지 않은 기다림이 중심이다. 긴 기다림을 다루는 SC-036을 우선하고 응답이 보이지 않는 탄식의 SC-003도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -681,12 +717,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'quiet_communion',
     rank: 9,
     cluster: 'gratitude_pause',
-    expectedPrimaryDomain: 'quiet_communion',
+    expectedPrimaryDomain: 'gratitude_joy',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-040',
-    acceptableCardIds: ['SC-040'],
+    preferredCardId: 'SC-004',
+    acceptableCardIds: ['SC-004'],
     rationale:
-      'SC-040의 situationTags가 이 문장의 구체적 상황(cluster: gratitude_pause)과 직접 겹친다. SC-005의 \'특별한 문제가 없음\' 전제가 이 문장의 바쁨·쉴 틈 없음과 어긋나 SC-005를 대안으로 넣지 않았다.',
+      '잠깐 멈추는 것은 배경이고 사용자가 직접 말한 목적은 감사다. 감사하고 싶은 마음을 정면으로 다루는 SC-004를 정답 가설로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -696,12 +732,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'quiet_communion',
     rank: 11,
     cluster: 'gratitude_pause',
-    expectedPrimaryDomain: 'quiet_communion',
+    expectedPrimaryDomain: 'burnout_exhaustion',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-040',
-    acceptableCardIds: ['SC-040'],
+    preferredCardId: 'SC-022',
+    acceptableCardIds: ['SC-022', 'SC-023'],
     rationale:
-      'SC-040의 situationTags가 이 문장의 구체적 상황(cluster: gratitude_pause)과 직접 겹친다. SC-005의 \'특별한 문제가 없음\' 전제가 이 문장의 바쁨·쉴 틈 없음과 어긋나 SC-005를 대안으로 넣지 않았다.',
+      '하나님과 조용히 머물고 싶다는 표현보다 쉼 없이 달려온 상태와 휴식의 필요가 중심이다. 직접 쉬고 싶다는 SC-022를 우선하고 회복과 멈춤을 다루는 SC-023도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -728,10 +764,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'presence_desire',
     expectedPrimaryDomain: 'quiet_communion',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-041',
-    acceptableCardIds: ['SC-041'],
+    preferredCardId: 'SC-005',
+    acceptableCardIds: ['SC-005', 'SC-041'],
     rationale:
-      'SC-041의 situationTags가 이 문장의 구체적 상황(cluster: presence_desire)과 직접 겹친다. SC-005의 \'특별한 문제가 없음\' 전제가 이 문장의 복잡한 생각·마음을 내려놓으려는 상태와 어긋나 SC-005를 대안으로 넣지 않았다.',
+      '바쁨을 멈추거나 따로 쉬어야 한다는 단서 없이 그저 하나님 가까이 머물고 싶은 소망이다. 특별한 문제 없이 하나님과 함께 머무는 SC-005를 우선하고 말없이 하나님을 바라보는 SC-041도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -831,12 +867,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'repentance_guilt',
     rank: 11,
     cluster: 'relational_wrong',
-    expectedPrimaryDomain: 'repentance_guilt',
+    expectedPrimaryDomain: 'relationship_conflict_forgiveness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-042',
-    acceptableCardIds: ['SC-042'],
+    preferredCardId: 'SC-031',
+    acceptableCardIds: ['SC-031'],
     rationale:
-      'SC-042의 situationTags가 이 문장의 구체적 상황(cluster: relational_wrong)과 직접 겹친다. SC-006의 \'같은 죄를 반복함\'(반복) 전제가 이 문장의 특정 사건 하나를 인정·고백하려는 상황과 어긋나 SC-006을 대안으로 넣지 않았다.',
+      '자신의 잘못이 배경에 있지만 문장이 직접 말하는 미완료 행동은 친구에게 사과하는 일이다. 사과와 책임을 통해 관계 문제를 풀도록 돕는 SC-031을 정답 가설로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -923,10 +959,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'calling_identity',
     expectedPrimaryDomain: 'comparison_identity',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-007',
-    acceptableCardIds: ['SC-007'],
+    preferredCardId: 'SC-044',
+    acceptableCardIds: ['SC-044'],
     rationale:
-      'SC-007는 이 영역이 카드 1장뿐이던 확장 이전부터 이 문장 유형을 대표해 왔다. 문장에 다른 두 카드의 더 좁은 단서가 없어 SC-007가 여전히 preferred다. 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '다른 사람의 기준으로 자기 존재 가치를 판단해 가치가 흔들리는 상황은 SC-044의 구체 태그와 직접 맞는다. SC-007은 비교와 뒤처짐을 더 일반적으로 다루므로 이 문장에서는 허용하지 않는다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1086,12 +1122,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'injustice_mistreatment',
     rank: 18,
     cluster: 'betrayal',
-    expectedPrimaryDomain: 'injustice_mistreatment',
+    expectedPrimaryDomain: 'relationship_conflict_forgiveness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-046',
-    acceptableCardIds: ['SC-046', 'SC-008'],
+    preferredCardId: 'SC-017',
+    acceptableCardIds: ['SC-017'],
     rationale:
-      'SC-046의 situationTags가 이 문장의 구체적 상황(cluster: betrayal)과 직접 겹친다. SC-008도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '사회적 불의나 부당대우보다 신뢰했던 한 사람에게 받은 관계적 상처가 명시돼 있다. 상처 준 사람과 관계 갈등을 다루는 SC-017을 정답 가설로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1326,12 +1362,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'wisdom_discernment',
     rank: 3,
     cluster: 'discernment_general',
-    expectedPrimaryDomain: 'wisdom_discernment',
+    expectedPrimaryDomain: 'decision_guidance',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-010',
-    acceptableCardIds: ['SC-010'],
+    preferredCardId: 'SC-002',
+    acceptableCardIds: ['SC-002'],
     rationale:
-      'SC-010는 이 영역이 카드 1장뿐이던 확장 이전부터 이 문장 유형을 대표해 왔다. 문장에 다른 두 카드의 더 좁은 단서가 없어 SC-010가 여전히 preferred다. 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '지혜는 필요한 도움이고 문장의 실제 과제는 무엇인가를 선택하는 일이다. 구체적인 결혼·비용 단서가 없는 일반 선택을 다루는 SC-002를 정답 가설로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1386,12 +1422,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'wisdom_discernment',
     rank: 17,
     cluster: 'life_direction',
-    expectedPrimaryDomain: 'wisdom_discernment',
+    expectedPrimaryDomain: 'decision_guidance',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-051',
-    acceptableCardIds: ['SC-051', 'SC-010'],
+    preferredCardId: 'SC-002',
+    acceptableCardIds: ['SC-002'],
     rationale:
-      'SC-051의 situationTags가 이 문장의 구체적 상황(cluster: life_direction)과 직접 겹친다. SC-010도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '문장은 가르침이나 성경 해석의 진위를 분별하는 문제가 아니라 인생의 다음 행동을 정하는 문제다. 원본 코퍼스의 편집 domain은 wisdom_discernment지만 실제 분석 기대값은 decision_guidance이며, 일반적인 결정과 인도를 다루는 SC-002를 정답으로 둔다.',
     smoke: false,
     isNewCardSmoke: true,
   },
@@ -1401,12 +1437,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'wisdom_discernment',
     rank: 18,
     cluster: 'life_direction',
-    expectedPrimaryDomain: 'wisdom_discernment',
+    expectedPrimaryDomain: 'decision_guidance',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-051',
-    acceptableCardIds: ['SC-051', 'SC-010'],
+    preferredCardId: 'SC-002',
+    acceptableCardIds: ['SC-002'],
     rationale:
-      'SC-051의 situationTags가 이 문장의 구체적 상황(cluster: life_direction)과 직접 겹친다. SC-010도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '지혜는 필요한 도움이고, 문장이 직접 묻는 과제는 앞으로 나아갈 방향을 정하는 일이다. 가르침·교리·성경 해석의 진위를 살피는 문제가 아니므로 decision_guidance와 일반적인 인도 카드 SC-002를 정답 가설로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1416,12 +1452,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'wisdom_discernment',
     rank: 20,
     cluster: 'life_direction',
-    expectedPrimaryDomain: 'wisdom_discernment',
+    expectedPrimaryDomain: 'decision_guidance',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-051',
-    acceptableCardIds: ['SC-051', 'SC-010'],
+    preferredCardId: 'SC-002',
+    acceptableCardIds: ['SC-002'],
     rationale:
-      'SC-051의 situationTags가 이 문장의 구체적 상황(cluster: life_direction)과 직접 겹친다. SC-010도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '여러 선택지 가운데 다음 길을 고르는 상황으로, 가르침의 신뢰성을 살피는 SC-051보다 decision_guidance가 중심이다. 일반적인 결정과 인도를 다루는 SC-002를 정답으로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1476,12 +1512,11 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'loneliness_isolation',
     rank: 2,
     cluster: 'presence',
-    expectedPrimaryDomain: 'loneliness_isolation',
-    expectedRoute: 'recommend',
-    preferredCardId: 'SC-018',
-    acceptableCardIds: ['SC-018', 'SC-011'],
+    expectedPrimaryDomain: null,
+    expectedRoute: 'domain_choice',
+    expectedDomainChoiceCandidates: ['loneliness_isolation', 'spiritual_dryness'],
     rationale:
-      'SC-018의 situationTags가 이 문장의 구체적 상황(cluster: presence)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). SC-011도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '사람들에게 버림받은 관계적 고립과 하나님이 떠난 듯한 영적 메마름을 한 문장에 독립적으로 함께 말한다. 어느 영역을 먼저 다룰지 문장만으로 정할 수 없어 두 영역 선택이 정답이다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1506,12 +1541,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'loneliness_isolation',
     rank: 20,
     cluster: 'presence',
-    expectedPrimaryDomain: 'loneliness_isolation',
+    expectedPrimaryDomain: 'spiritual_dryness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-018',
-    acceptableCardIds: ['SC-018'],
+    preferredCardId: 'SC-014',
+    acceptableCardIds: ['SC-014'],
     rationale:
-      'SC-018의 situationTags가 이 문장의 구체적 상황(cluster: presence)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '사람과의 고립은 말하지 않고 하나님의 함께하심만 의심한다. 하나님이 멀게 느껴지는 영적 메마름과 SC-014가 직접 맞는다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1523,10 +1558,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'belonging',
     expectedPrimaryDomain: 'loneliness_isolation',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-019',
-    acceptableCardIds: ['SC-019'],
+    preferredCardId: 'SC-011',
+    acceptableCardIds: ['SC-011', 'SC-019'],
     rationale:
-      'SC-019의 situationTags가 이 문장의 구체적 상황(cluster: belonging)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '이사 뒤 아는 사람이 없는 현재의 관계적 고립을 직접 말하므로 SC-011을 우선한다. 새 공동체와 연결되는 방향의 SC-019도 자연스러워 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1626,12 +1661,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'family_parenting_conflict',
     rank: 8,
     cluster: 'communication',
-    expectedPrimaryDomain: 'family_parenting_conflict',
+    expectedPrimaryDomain: 'repentance_guilt',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-020',
-    acceptableCardIds: ['SC-020'],
+    preferredCardId: 'SC-042',
+    acceptableCardIds: ['SC-042'],
     rationale:
-      'SC-020의 situationTags가 이 문장의 구체적 상황(cluster: communication)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '가족은 잘못의 대상이고, 문장의 중심은 자신이 상처 준 말을 후회하며 구체적 잘못을 인정하는 데 있다. SC-042를 정답 가설로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1643,10 +1678,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'communication',
     expectedPrimaryDomain: 'family_parenting_conflict',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-020',
-    acceptableCardIds: ['SC-020'],
+    preferredCardId: 'SC-012',
+    acceptableCardIds: ['SC-012', 'SC-020'],
     rationale:
-      'SC-020의 situationTags가 이 문장의 구체적 상황(cluster: communication)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '구체적인 거친 말보다 가족 갈등과 화해를 위한 첫 연락의 두려움이 중심이라 일반 가족 갈등 카드 SC-012를 우선한다. 차분한 대화를 돕는 SC-020도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1731,12 +1766,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'burnout_exhaustion',
     rank: 17,
     cluster: 'rest',
-    expectedPrimaryDomain: 'burnout_exhaustion',
-    expectedRoute: 'recommend',
-    preferredCardId: 'SC-013',
-    acceptableCardIds: ['SC-013'],
+    expectedPrimaryDomain: 'other_uncovered',
+    expectedRoute: 'no_coverage',
     rationale:
-      'SC-013의 situationTags가 이 문장의 구체적 상황(cluster: rest)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '감정이 무뎌졌다는 사실만 있고 지속적 탈진·일 과부하·휴식 필요 등 소진의 원인이 없다. 현재 17개 영역 중 하나를 추측하지 않고 no_coverage로 두는 것이 정답이다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1763,10 +1796,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'limits',
     expectedPrimaryDomain: 'burnout_exhaustion',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-022',
-    acceptableCardIds: ['SC-022'],
+    preferredCardId: 'SC-013',
+    acceptableCardIds: ['SC-013', 'SC-022'],
     rationale:
-      'SC-022의 situationTags가 이 문장의 구체적 상황(cluster: limits)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '모든 것을 포기하고 싶을 만큼 지친 전반적 소진이 SC-013과 가장 직접 맞는다. 완전히 지쳐 쉬어야 하는 SC-022도 자연스러워 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1778,10 +1811,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'rest',
     expectedPrimaryDomain: 'burnout_exhaustion',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-022',
-    acceptableCardIds: ['SC-022'],
+    preferredCardId: 'SC-013',
+    acceptableCardIds: ['SC-013', 'SC-022'],
     rationale:
-      'SC-022의 situationTags가 이 문장의 구체적 상황(cluster: rest)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '아침에 일어나는 일부터 버거운 전반적 소진을 직접 말해 SC-013을 우선한다. 아무것도 하기 어려울 만큼 지친 SC-022도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1821,12 +1854,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'burnout_exhaustion',
     rank: 18,
     cluster: 'limits',
-    expectedPrimaryDomain: 'burnout_exhaustion',
-    expectedRoute: 'recommend',
-    preferredCardId: 'SC-023',
-    acceptableCardIds: ['SC-023'],
+    expectedPrimaryDomain: 'other_uncovered',
+    expectedRoute: 'no_coverage',
     rationale:
-      'SC-023의 situationTags가 이 문장의 구체적 상황(cluster: limits)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '회복하고 싶고 멈추고 싶다는 표현만으로는 무엇에서 회복하려는지, 무엇을 멈추려는지 알 수 없다. 소진을 추론하지 않고 no_coverage로 두는 것이 정답이다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1851,12 +1882,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'spiritual_dryness',
     rank: 6,
     cluster: 'silence',
-    expectedPrimaryDomain: 'spiritual_dryness',
+    expectedPrimaryDomain: 'waiting_unanswered_prayer',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-014',
-    acceptableCardIds: ['SC-014'],
+    preferredCardId: 'SC-003',
+    acceptableCardIds: ['SC-003', 'SC-036'],
     rationale:
-      'SC-014의 situationTags가 이 문장의 구체적 상황(cluster: silence)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '감정이 없는 상태도 함께 말하지만, 오래 기도했는데 응답이 없다는 시간과 기도 대상의 기다림이 문장의 뼈대다. SC-003을 우선하고 긴 기다림의 SC-036도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1928,10 +1959,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'doubt',
     expectedPrimaryDomain: 'spiritual_dryness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-025',
-    acceptableCardIds: ['SC-025'],
+    preferredCardId: 'SC-024',
+    acceptableCardIds: ['SC-024', 'SC-025'],
     rationale:
-      'SC-025의 situationTags가 이 문장의 구체적 상황(cluster: doubt)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '특정 의심을 말하기보다 예전 같은 믿음의 마음이 사라진 영적 침체를 말해 하나님을 다시 찾는 SC-024를 우선한다. 믿고 싶지만 어려운 SC-025도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1956,12 +1987,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'spiritual_dryness',
     rank: 19,
     cluster: 'doubt',
-    expectedPrimaryDomain: 'spiritual_dryness',
+    expectedPrimaryDomain: 'repentance_guilt',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-025',
-    acceptableCardIds: ['SC-025'],
+    preferredCardId: 'SC-043',
+    acceptableCardIds: ['SC-043'],
     rationale:
-      'SC-025의 situationTags가 이 문장의 구체적 상황(cluster: doubt)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '믿음의 의심보다 멀어진 신앙을 다시 시작하려는 귀환의 방향을 직접 말한다. 하나님께 돌아가고 기도를 다시 시작하는 SC-043이 맞다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1988,10 +2019,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'needs',
     expectedPrimaryDomain: 'financial_hardship',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-015',
-    acceptableCardIds: ['SC-015', 'SC-026'],
+    preferredCardId: 'SC-026',
+    acceptableCardIds: ['SC-026', 'SC-015'],
     rationale:
-      'SC-015의 situationTags가 이 문장의 구체적 상황(cluster: needs)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). SC-026도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '월세 뒤 식비가 남지 않는다는 말은 막연한 돈 걱정보다 오늘의 일용할 필요가 부족한 상황이다. 일용할 양식을 구하는 SC-026을 우선하고 생활비 걱정을 다루는 SC-015도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2123,10 +2154,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'lament',
     expectedPrimaryDomain: 'chronic_illness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-016',
-    acceptableCardIds: ['SC-016', 'SC-028'],
+    preferredCardId: 'SC-029',
+    acceptableCardIds: ['SC-029', 'SC-016'],
     rationale:
-      'SC-016의 situationTags가 이 문장의 구체적 상황(cluster: lament)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). SC-028도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '치료가 길어진 사실과 함께 하나님께 왜냐고 묻는 탄식이 중심이라 신음과 탄식을 다루는 SC-029를 우선한다. 장기 치료 속 은혜의 SC-016도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2166,12 +2197,11 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'chronic_illness',
     rank: 10,
     cluster: 'endurance',
-    expectedPrimaryDomain: 'chronic_illness',
-    expectedRoute: 'recommend',
-    preferredCardId: 'SC-028',
-    acceptableCardIds: ['SC-028'],
+    expectedPrimaryDomain: null,
+    expectedRoute: 'domain_choice',
+    expectedDomainChoiceCandidates: ['financial_hardship', 'chronic_illness'],
     rationale:
-      'SC-028의 situationTags가 이 문장의 구체적 상황(cluster: endurance)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '치료비라는 경제 부담과 통증이라는 질병 부담을 독립적으로 함께 말하고 어느 쪽을 먼저 다룰지 표시하지 않았다. 두 영역 선택이 정답이다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2183,10 +2213,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'endurance',
     expectedPrimaryDomain: 'chronic_illness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-028',
-    acceptableCardIds: ['SC-028'],
+    preferredCardId: 'SC-016',
+    acceptableCardIds: ['SC-016', 'SC-028'],
     rationale:
-      'SC-028의 situationTags가 이 문장의 구체적 상황(cluster: endurance)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '좋아졌다 다시 아파지는 반복은 질병과 함께 살아가는 지속적 현실에 가깝기 때문에 SC-016을 우선한다. 몸의 약함과 한계를 다루는 SC-028도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2196,12 +2226,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'chronic_illness',
     rank: 9,
     cluster: 'lament',
-    expectedPrimaryDomain: 'chronic_illness',
+    expectedPrimaryDomain: 'waiting_unanswered_prayer',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-029',
-    acceptableCardIds: ['SC-029'],
+    preferredCardId: 'SC-003',
+    acceptableCardIds: ['SC-003', 'SC-036'],
     rationale:
-      'SC-029의 situationTags가 이 문장의 구체적 상황(cluster: lament)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '질병은 기도 대상이고 문장의 초점은 낫게 해달라는 기도에 변화가 없어 낙심한 상태다. 응답 없음의 SC-003을 우선하고 긴 기다림의 SC-036도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2211,12 +2241,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'chronic_illness',
     rank: 19,
     cluster: 'lament',
-    expectedPrimaryDomain: 'chronic_illness',
-    expectedRoute: 'recommend',
-    preferredCardId: 'SC-029',
-    acceptableCardIds: ['SC-029'],
+    expectedPrimaryDomain: 'other_uncovered',
+    expectedRoute: 'no_coverage',
     rationale:
-      'SC-029의 situationTags가 이 문장의 구체적 상황(cluster: lament)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '죽음이 가까운 이유가 질병인지, 노화인지, 불안인지 문장만으로 알 수 없고 가족과의 임종 대화를 직접 다루는 현재 카드도 없다. 만성질환이나 일반 두려움 카드를 억지로 고르지 않고 no_coverage로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2228,10 +2256,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'endurance',
     expectedPrimaryDomain: 'chronic_illness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-029',
-    acceptableCardIds: ['SC-029'],
+    preferredCardId: 'SC-016',
+    acceptableCardIds: ['SC-016'],
     rationale:
-      'SC-029의 situationTags가 이 문장의 구체적 상황(cluster: endurance)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '필요한 치료를 구하면서 오늘을 견딜 은혜를 바라는 문장이라 치료와 회복을 하나님께 맡기는 SC-016이 가장 직접적이다. SC-029는 오랜 질병 속 말이 나오지 않는 탄식과 연약함을 다루므로, 장기 투병이나 말할 수 없는 고통이 드러나지 않은 이 사례에는 넣지 않았다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2333,10 +2361,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     cluster: 'boundaries',
     expectedPrimaryDomain: 'relationship_conflict_forgiveness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-031',
-    acceptableCardIds: ['SC-031'],
+    preferredCardId: 'SC-017',
+    acceptableCardIds: ['SC-017', 'SC-031'],
     rationale:
-      'SC-031의 situationTags가 이 문장의 구체적 상황(cluster: boundaries)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '상대의 사과가 없는 상황에서 자신이 먼저 화해해야 하는지를 묻는 용서·관계 회복 문제라 SC-017을 우선한다. 책임 있는 직접 대화를 다루는 SC-031도 허용한다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2346,12 +2374,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'relationship_conflict_forgiveness',
     rank: 7,
     cluster: 'repair',
-    expectedPrimaryDomain: 'relationship_conflict_forgiveness',
+    expectedPrimaryDomain: 'repentance_guilt',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-031',
-    acceptableCardIds: ['SC-031'],
+    preferredCardId: 'SC-042',
+    acceptableCardIds: ['SC-042'],
     rationale:
-      'SC-031의 situationTags가 이 문장의 구체적 상황(cluster: repair)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '관계 회복 행동을 묻기보다 자신이 한 말로 상처를 준 잘못과 미안함을 고백한다. 구체적 잘못을 인정하는 SC-042를 정답 가설로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2374,6 +2402,193 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
 
 export const SMOKE_CASES: readonly EvaluationCase[] = EVALUATION_CASES.filter((item) => item.smoke);
 
-export const NEW_CARD_SMOKE_CASES: readonly EvaluationCase[] = EVALUATION_CASES.filter(
-  (item) => item.isNewCardSmoke,
-);
+/**
+ * 신규 카드 20장의 도달 가능성을 보는 직접 평가 세트.
+ *
+ * 자연어 품질 평가의 preferred 분포를 카드별로 강제하지 않기 위해 EVALUATION_CASES와 분리했다.
+ * 각 문장은 해당 카드의 좁은 상황 전제를 자연스럽게 직접 표현한다. 이 세트가 통과한다는 것은
+ * 카드가 실제 Analyzer→Gate 흐름에서 도달 가능하다는 뜻이며, 자연 사용자 입력에서 얼마나 자주
+ * 선택되는지는 EVALUATION_CASES의 별도 품질 지표로 판단한다.
+ */
+export const NEW_CARD_REACHABILITY_CASES = [
+  {
+    id: 'REACH-032',
+    text: '정밀 검사 결과 발표를 기다리며 불안하고 초조해요.',
+    expectedPrimaryDomain: 'fear_uncertainty',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-032',
+    acceptableCardIds: ['SC-032'],
+    rationale: '검사 결과를 기다리는 불안과 초조를 직접 말해 SC-032의 좁은 상황 전제를 겨냥한다.',
+  },
+  {
+    id: 'REACH-033',
+    text: '낯선 도시의 새 직장으로 옮길 생각에 잘 적응할 수 있을지 두려워요.',
+    expectedPrimaryDomain: 'fear_uncertainty',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-033',
+    acceptableCardIds: ['SC-033'],
+    rationale: '새로운 환경과 낯선 곳에서의 적응 불안을 직접 말해 SC-033을 겨냥한다.',
+  },
+  {
+    id: 'REACH-034',
+    text: '이 사람과 결혼할지 결정하기 어려워 가족과 믿을 만한 사람들의 조언을 듣고 싶어요.',
+    expectedPrimaryDomain: 'decision_guidance',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-034',
+    acceptableCardIds: ['SC-034'],
+    rationale: '결혼 여부와 공동체의 조언이라는 SC-034의 두 구체적 단서를 함께 표현한다.',
+  },
+  {
+    id: 'REACH-035',
+    text: '큰돈을 들여 새 사업을 시작할지, 책임과 대가를 따져 결정하고 싶어요.',
+    expectedPrimaryDomain: 'decision_guidance',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-035',
+    acceptableCardIds: ['SC-035'],
+    rationale: '큰 비용과 새 일의 시작, 결정의 대가를 직접 말해 SC-035를 겨냥한다.',
+  },
+  {
+    id: 'REACH-036',
+    text: '몇 년째 응답을 기다리며 기도했지만 기다림이 길어져 지쳤어요.',
+    expectedPrimaryDomain: 'waiting_unanswered_prayer',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-036',
+    acceptableCardIds: ['SC-036'],
+    rationale: '길어진 기다림과 응답을 기다리며 지친 상태를 직접 말해 SC-036을 겨냥한다.',
+  },
+  {
+    id: 'REACH-037',
+    text: '같은 기도를 오래 계속했는데 포기하고 싶어요. 그래도 다시 하나님께 아뢰고 싶어요.',
+    expectedPrimaryDomain: 'waiting_unanswered_prayer',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-037',
+    acceptableCardIds: ['SC-037'],
+    rationale: '같은 기도의 반복과 포기 충동, 다시 아뢰려는 방향을 직접 말해 SC-037을 겨냥한다.',
+  },
+  {
+    id: 'REACH-038',
+    text: '오랫동안 기도하며 기다린 치료 결과가 좋아져 건강이 회복된 것이 정말 감사해요.',
+    expectedPrimaryDomain: 'gratitude_joy',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-038',
+    acceptableCardIds: ['SC-038'],
+    rationale: '긴 기다림 뒤 기도 응답과 건강 회복을 직접 말해 SC-038을 겨냥한다.',
+  },
+  {
+    id: 'REACH-039',
+    text: '가족과 함께 보낸 평범한 저녁이 감사하고, 이 감사를 생활로 표현하고 싶어요.',
+    expectedPrimaryDomain: 'gratitude_joy',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-039',
+    acceptableCardIds: ['SC-039'],
+    rationale: '가족과의 평범한 시간과 일상에서의 감사 표현을 직접 말해 SC-039를 겨냥한다.',
+  },
+  {
+    id: 'REACH-040',
+    text: '바쁘게 보낸 하루를 잠시 멈추고, 하나님과 따로 조용히 머물며 쉬고 싶어요.',
+    expectedPrimaryDomain: 'quiet_communion',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-040',
+    acceptableCardIds: ['SC-040'],
+    rationale: '바쁜 하루를 잠시 멈추고 하나님과 따로 머물며 쉬려는 소망을 직접 말해 SC-040을 겨냥한다.',
+  },
+  {
+    id: 'REACH-041',
+    text: '복잡한 생각을 내려놓고 말없이 하나님을 바라보며 마음을 쏟고 싶어요.',
+    expectedPrimaryDomain: 'quiet_communion',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-041',
+    acceptableCardIds: ['SC-041'],
+    rationale: '생각을 내려놓고 침묵과 마음 쏟기를 원하는 상태를 직접 말해 SC-041을 겨냥한다.',
+  },
+  {
+    id: 'REACH-042',
+    text: '숨겨온 구체적인 잘못을 인정하고 고백하며 새로운 마음을 구하고 싶어요.',
+    expectedPrimaryDomain: 'repentance_guilt',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-042',
+    acceptableCardIds: ['SC-042'],
+    rationale: '구체적 잘못의 인정과 고백, 새 마음을 직접 말해 SC-042를 겨냥한다.',
+  },
+  {
+    id: 'REACH-043',
+    text: '신앙에서 멀어져 기도도 멈췄지만, 다시 기도를 시작하며 하나님께 돌아가고 싶어요.',
+    expectedPrimaryDomain: 'repentance_guilt',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-043',
+    acceptableCardIds: ['SC-043'],
+    rationale: '멀어진 신앙에서 기도를 다시 시작하고 돌아가려는 방향을 직접 말해 SC-043을 겨냥한다.',
+  },
+  {
+    id: 'REACH-044',
+    text: '외모를 다른 사람과 비교하다 보니 내 존재 가치가 흔들리고 부끄러워요.',
+    expectedPrimaryDomain: 'comparison_identity',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-044',
+    acceptableCardIds: ['SC-044'],
+    rationale: '외모 비교로 존재 가치가 흔들리는 상태를 직접 말해 SC-044를 겨냥한다.',
+  },
+  {
+    id: 'REACH-045',
+    text: '다른 사람의 능력과 성과를 보며 위축되고, 내 역할은 쓸모없는 것처럼 느껴져요.',
+    expectedPrimaryDomain: 'comparison_identity',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-045',
+    acceptableCardIds: ['SC-045'],
+    rationale: '능력과 성과 비교, 역할의 무가치감을 직접 말해 SC-045를 겨냥한다.',
+  },
+  {
+    id: 'REACH-046',
+    text: '부당한 사람이 잘되는 모습을 보니 억울하고 화가 나서 분노를 내려놓기 어려워요.',
+    expectedPrimaryDomain: 'injustice_mistreatment',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-046',
+    acceptableCardIds: ['SC-046'],
+    rationale: '불의한 사람의 형통과 억울함, 분노를 직접 말해 SC-046을 겨냥한다.',
+  },
+  {
+    id: 'REACH-047',
+    text: '약한 사람이 불공정한 일을 당하는 것을 봤어요. 안전하게 정의를 위해 행동하고 싶어요.',
+    expectedPrimaryDomain: 'injustice_mistreatment',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-047',
+    acceptableCardIds: ['SC-047'],
+    rationale: '타인이 당한 불의의 목격과 책임 있는 행동 의지를 직접 말해 SC-047을 겨냥한다.',
+  },
+  {
+    id: 'REACH-048',
+    text: '기일이 돌아오니 슬픔이 다시 밀려와요. 상실을 서둘러 정리하지 말고 애도할 시간이 필요해요.',
+    expectedPrimaryDomain: 'grief_loss',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-048',
+    acceptableCardIds: ['SC-048'],
+    rationale: '기일에 되돌아온 슬픔과 충분한 애도 시간을 직접 말해 SC-048을 겨냥한다.',
+  },
+  {
+    id: 'REACH-049',
+    text: '사별한 뒤 깊은 슬픔으로 미래가 보이지 않아요. 죽음과 이별 앞에서 소망이 필요해요.',
+    expectedPrimaryDomain: 'grief_loss',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-049',
+    acceptableCardIds: ['SC-049'],
+    rationale: '사별 뒤 미래가 보이지 않는 깊은 상실과 소망의 필요를 직접 말해 SC-049를 겨냥한다.',
+  },
+  {
+    id: 'REACH-050',
+    text: '서로 엇갈린 설명을 들어 한쪽 말만으로 판단하기 어려워요. 사실을 더 확인하고 싶어요.',
+    expectedPrimaryDomain: 'wisdom_discernment',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-050',
+    acceptableCardIds: ['SC-050'],
+    rationale: '엇갈린 설명과 추가 사실 확인의 필요를 직접 말해 SC-050을 겨냥한다.',
+  },
+  {
+    id: 'REACH-051',
+    text: '온라인 성경 공부에서 들은 해석이 믿을 만한 가르침인지, 사랑과 진실을 함께 살피며 분별하고 싶어요.',
+    expectedPrimaryDomain: 'wisdom_discernment',
+    expectedRoute: 'recommend',
+    preferredCardId: 'SC-051',
+    acceptableCardIds: ['SC-051'],
+    rationale: '성경 해석과 가르침의 신뢰성을 사랑과 진실 안에서 살피려는 상황을 직접 말해 SC-051을 겨냥한다.',
+  },
+] as const satisfies readonly NewCardReachabilityCase[];

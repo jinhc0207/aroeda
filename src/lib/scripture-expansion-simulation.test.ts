@@ -187,3 +187,25 @@ describe('Scripture Card Expansion v2 · 신규 카드 20장 situationTags 분�
     });
   }
 });
+
+describe('Scripture Card Expansion v2 · 실제 OpenAI 평가에서 확인한 카드 경계', () => {
+  it('SC-034는 결혼·재혼 여부의 결정을 다른 일반 결정과 구분한다', () => {
+    const card = SCRIPTURE_CARDS.find((item) => item.id === 'SC-034');
+    assert.ok(card);
+    assert.ok(card!.situationTags.includes('결혼이나 재혼 여부를 결정함'));
+  });
+
+  it('SC-041은 복잡한 생각을 내려놓는 교제에 쉼 기능도 포함한다', () => {
+    const card = SCRIPTURE_CARDS.find((item) => item.id === 'SC-041');
+    assert.ok(card);
+    assert.ok(card!.situationTags.includes('복잡한 생각을 내려놓음'));
+    assert.ok(card!.pastoralFunction.includes('쉼'));
+  });
+
+  it('SC-051은 일반적인 판단 어려움이 아니라 가르침의 신뢰성을 살피는 단서만 갖는다', () => {
+    const card = SCRIPTURE_CARDS.find((item) => item.id === 'SC-051');
+    assert.ok(card);
+    assert.deepEqual(card!.situationTags, ['사랑과 진실을 함께 고려함', '믿을 만한 가르침인지 살핌']);
+    assert.equal(card!.situationTags.includes('무엇이 더 나은지 분별함'), false);
+  });
+});

@@ -1,5 +1,5 @@
 /**
- * End-to-End 테스트 (로컬 전용) — Scripture Card 51장 균형 평가 코퍼스 기반
+ * End-to-End 테스트 (로컬 전용) — 자연어 품질 평가와 신규 카드 도달성 평가
  *
  * 실행:
  *   node scripts/test-openai-recommendation-e2e.ts
@@ -8,7 +8,7 @@
  *   node scripts/test-openai-recommendation-e2e.ts --mode=smoke
  *     → SMOKE_CASES(17개, 17개 영역 각 1개)를 실제로 호출한다.
  *   node scripts/test-openai-recommendation-e2e.ts --mode=new-cards
- *     → NEW_CARD_SMOKE_CASES(20개, SC-032~SC-051 각 1개)를 실제로 호출한다.
+ *     → NEW_CARD_REACHABILITY_CASES(20개, SC-032~SC-051 각 1개)를 실제로 호출한다.
  *   node scripts/test-openai-recommendation-e2e.ts --mode=full
  *     → EVALUATION_CASES(153개) 전부를 실제로 호출한다.
  *
@@ -26,9 +26,10 @@
  *   → validateSituationAnalysis (src/lib/situation-analysis.ts, analyzer-prompt.ts 내부에서 이미 실행)
  *   → Recommendation Gate (src/lib/recommendation-gate.ts)
  *   → 아래 7개 항목을 각각 나눠 집계하고, 실패한 사례는 항목별로 ID를 따로 출력한다.
- *     1. 응답 구조 검증 성공률  2. 안전 오탐 수  3. primary domain 일치율
- *     4. preferred 카드 1위 일치율  5. acceptable 카드 일치율
- *     6. 예상하지 않은 domain_choice·ambiguous·no_coverage 수  7. 토큰 사용량(input/output/total)
+ *     1. 응답 구조 검증 성공률  2. 안전 오탐 수  3. domain 기대 일치율
+ *     4. recommend 기대 사례의 preferred 카드 1위 일치율
+ *     5. recommend 기대 사례의 acceptable 카드 일치율
+ *     6. 기대 route 불일치 수  7. 토큰 사용량(input/output/total)
  *
  * 분석 규칙, Matcher 배점, Gate 판단은 여기서 다시 구현하지 않는다. 그대로 가져다 쓴다.
  */
@@ -43,18 +44,19 @@ import {
 } from './analyzer-prompt.ts';
 import {
   EVALUATION_CASES,
-  NEW_CARD_SMOKE_CASES,
+  NEW_CARD_REACHABILITY_CASES,
   SMOKE_CASES,
   type EvaluationCase,
+  type EvaluationExpectation,
 } from './scripture-recommendation-evaluation-cases.ts';
 import { runRecommendationGate, type GateResult } from '../src/lib/recommendation-gate.ts';
 import type { SituationAnalysis } from '../src/lib/situation-analysis.ts';
 
 type Mode = 'smoke' | 'new-cards' | 'full';
 
-const MODE_CASES: Record<Mode, readonly EvaluationCase[]> = {
+const MODE_CASES: Record<Mode, readonly EvaluationExpectation[]> = {
   smoke: SMOKE_CASES,
-  'new-cards': NEW_CARD_SMOKE_CASES,
+  'new-cards': NEW_CARD_REACHABILITY_CASES,
   full: EVALUATION_CASES,
 };
 
@@ -80,7 +82,7 @@ function printUsage() {
   console.log('사용법: node scripts/test-openai-recommendation-e2e.ts --mode=<smoke|new-cards|full> [--dry-run]');
   console.log('');
   console.log('  --mode=smoke      SMOKE_CASES 17건 (17개 영역 각 1건)');
-  console.log('  --mode=new-cards  NEW_CARD_SMOKE_CASES 20건 (SC-032~SC-051 각 1건)');
+  console.log('  --mode=new-cards  NEW_CARD_REACHABILITY_CASES 20건 (SC-032~SC-051 직접 도달성 각 1건)');
   console.log('  --mode=full       EVALUATION_CASES 153건 전체');
   console.log('  --dry-run         선택된 사례의 id·문장·기대값만 출력한다. OpenAI를 호출하지 않는다.');
   console.log('');
@@ -88,24 +90,36 @@ function printUsage() {
   console.log('실제 호출에는 OPENAI_API_KEY 환경변수가 필요하다.');
 }
 
-function printDryRun(mode: Mode, cases: readonly EvaluationCase[]) {
+function printDryRun(mode: Mode, cases: readonly EvaluationExpectation[]) {
   console.log(`[dry-run] --mode=${mode} · 사례 ${cases.length}개 (OpenAI 호출 0회)`);
   line();
   for (const item of cases) {
-    console.log(`[${item.id}] domain=${item.domain} rank=${item.rank} cluster=${item.cluster}`);
+    if ('domain' in item) {
+      const natural = item as EvaluationCase;
+      console.log(`[${item.id}] sourceDomain=${natural.domain} rank=${natural.rank} cluster=${natural.cluster}`);
+    } else {
+      console.log(`[${item.id}] targetedReachability=true`);
+    }
     console.log(`  원문: ${item.text}`);
     console.log(`  expectedPrimaryDomain: ${item.expectedPrimaryDomain}`);
     console.log(`  expectedRoute: ${item.expectedRoute}`);
-    console.log(`  preferredCardId: ${item.preferredCardId}`);
-    console.log(`  acceptableCardIds: ${item.acceptableCardIds.join(', ')}`);
-    console.log(`  smoke=${item.smoke} isNewCardSmoke=${item.isNewCardSmoke}`);
+    if (item.expectedRoute === 'recommend') {
+      console.log(`  preferredCardId: ${item.preferredCardId}`);
+      console.log(`  acceptableCardIds: ${item.acceptableCardIds.join(', ')}`);
+    } else if (item.expectedRoute === 'domain_choice') {
+      console.log(`  expectedDomainChoiceCandidates: ${item.expectedDomainChoiceCandidates.join(', ')}`);
+    }
+    if ('smoke' in item) {
+      const natural = item as EvaluationCase;
+      console.log(`  smoke=${natural.smoke} legacyNewCardSmoke=${natural.isNewCardSmoke}`);
+    }
   }
   line('=');
   console.log(`[dry-run] 총 ${cases.length}건 출력, OpenAI 호출 0회.`);
 }
 
 type CaseOutcome = {
-  evalCase: EvaluationCase;
+  evalCase: EvaluationExpectation;
   analysis: SituationAnalysis | null;
   gate: GateResult | null;
   structureValid: boolean;
@@ -113,7 +127,7 @@ type CaseOutcome = {
   preferredMatch: boolean | null;
   acceptableMatch: boolean | null;
   safetyFalsePositive: boolean;
-  unexpectedRoute: boolean;
+  routeMismatch: boolean;
 };
 
 function printAnalysis(analysis: SituationAnalysis) {
@@ -132,10 +146,16 @@ function printAnalysis(analysis: SituationAnalysis) {
 
 async function runCase(
   client: Parameters<typeof analyzeSituation>[0],
-  evalCase: EvaluationCase,
+  evalCase: EvaluationExpectation,
   totalUsage: ReturnType<typeof emptyUsage>,
 ): Promise<CaseOutcome> {
-  console.log(`[${evalCase.id}] domain=${evalCase.domain} preferred=${evalCase.preferredCardId}`);
+  const expectedTarget =
+    evalCase.expectedRoute === 'recommend'
+      ? `preferred=${evalCase.preferredCardId}`
+      : evalCase.expectedRoute === 'domain_choice'
+        ? `candidates=${evalCase.expectedDomainChoiceCandidates.join(',')}`
+        : 'no-card';
+  console.log(`[${evalCase.id}] expectedDomain=${evalCase.expectedPrimaryDomain} ${expectedTarget}`);
   console.log(`  원문: ${evalCase.text}`);
 
   const empty: CaseOutcome = {
@@ -147,7 +167,7 @@ async function runCase(
     preferredMatch: null,
     acceptableMatch: null,
     safetyFalsePositive: false,
-    unexpectedRoute: false,
+    routeMismatch: false,
   };
 
   let result: Awaited<ReturnType<typeof analyzeSituation>>;
@@ -172,22 +192,41 @@ async function runCase(
   const gate = runRecommendationGate(analysis);
   console.log(`  [Gate] route: ${gate.route} / selectedCardId: ${gate.selectedCardId ?? '(없음)'}`);
 
-  const domainMatch = analysis.primaryDomain === evalCase.expectedPrimaryDomain;
+  const domainMatch =
+    evalCase.expectedRoute === 'domain_choice'
+      ? analysis.domainPriority === 'needs_choice' &&
+        analysis.primaryDomain === null &&
+        analysis.domainChoiceCandidates.length === 2 &&
+        evalCase.expectedDomainChoiceCandidates.every((domain) => analysis.domainChoiceCandidates.includes(domain))
+      : analysis.domainPriority === 'resolved' && analysis.primaryDomain === evalCase.expectedPrimaryDomain;
   const safetyFalsePositive = gate.route === 'safety';
-  const unexpectedRoute = !safetyFalsePositive && gate.route !== 'recommend';
-  const preferredMatch = gate.route === 'recommend' && gate.selectedCardId === evalCase.preferredCardId;
+  const routeMismatch = !safetyFalsePositive && gate.route !== evalCase.expectedRoute;
+  const preferredMatch =
+    evalCase.expectedRoute === 'recommend'
+      ? gate.route === 'recommend' && gate.selectedCardId === evalCase.preferredCardId
+      : null;
   const acceptableMatch =
-    gate.route === 'recommend' &&
-    gate.selectedCardId !== null &&
-    evalCase.acceptableCardIds.includes(gate.selectedCardId);
+    evalCase.expectedRoute === 'recommend'
+      ? gate.route === 'recommend' &&
+        gate.selectedCardId !== null &&
+        evalCase.acceptableCardIds.includes(gate.selectedCardId)
+      : null;
 
-  console.log(`  domain 일치: ${domainMatch ? '일치' : '불일치'} (기대 ${evalCase.expectedPrimaryDomain})`);
-  console.log(`  preferred 일치: ${preferredMatch ? '일치' : '불일치'} (기대 ${evalCase.preferredCardId})`);
-  console.log(
-    `  acceptable 일치: ${acceptableMatch ? '일치' : '불일치'} (허용 ${evalCase.acceptableCardIds.join(', ')})`,
-  );
+  const expectedDomainLabel =
+    evalCase.expectedRoute === 'domain_choice'
+      ? evalCase.expectedDomainChoiceCandidates.join(', ')
+      : String(evalCase.expectedPrimaryDomain);
+  console.log(`  domain 기대 일치: ${domainMatch ? '일치' : '불일치'} (기대 ${expectedDomainLabel})`);
+  if (evalCase.expectedRoute === 'recommend') {
+    console.log(`  preferred 일치: ${preferredMatch ? '일치' : '불일치'} (기대 ${evalCase.preferredCardId})`);
+    console.log(
+      `  acceptable 일치: ${acceptableMatch ? '일치' : '불일치'} (허용 ${evalCase.acceptableCardIds.join(', ')})`,
+    );
+  } else {
+    console.log('  preferred/acceptable 일치: (카드 추천 경로가 아니므로 평가 대상 아님)');
+  }
   if (safetyFalsePositive) console.log('  *** 안전 오탐: 이 사례는 안전 경계 문장이 아닙니다 ***');
-  if (unexpectedRoute) console.log(`  *** 예상하지 않은 route: ${gate.route} ***`);
+  if (routeMismatch) console.log(`  *** route 불일치: 기대 ${evalCase.expectedRoute}, 실제 ${gate.route} ***`);
 
   return {
     evalCase,
@@ -198,7 +237,7 @@ async function runCase(
     preferredMatch,
     acceptableMatch,
     safetyFalsePositive,
-    unexpectedRoute,
+    routeMismatch,
   };
 }
 
@@ -206,17 +245,18 @@ function printReport(mode: Mode, outcomes: CaseOutcome[], totalUsage: ReturnType
   const total = outcomes.length;
   const structureFailed = outcomes.filter((item) => !item.structureValid);
   const safetyFalsePositives = outcomes.filter((item) => item.safetyFalsePositive);
-  const unexpectedRoutes = outcomes.filter((item) => item.unexpectedRoute);
+  const routeMismatches = outcomes.filter((item) => item.routeMismatch);
 
   const validOutcomes = outcomes.filter((item) => item.structureValid);
   const domainMismatches = validOutcomes.filter((item) => item.domainMatch === false);
-  const preferredMismatches = validOutcomes.filter((item) => item.preferredMatch === false);
-  const acceptableMismatches = validOutcomes.filter((item) => item.acceptableMatch === false);
+  const recommendationOutcomes = validOutcomes.filter((item) => item.evalCase.expectedRoute === 'recommend');
+  const preferredMismatches = recommendationOutcomes.filter((item) => item.preferredMatch === false);
+  const acceptableMismatches = recommendationOutcomes.filter((item) => item.acceptableMatch === false);
 
   const structureValidCount = total - structureFailed.length;
   const domainMatchCount = validOutcomes.length - domainMismatches.length;
-  const preferredMatchCount = validOutcomes.length - preferredMismatches.length;
-  const acceptableMatchCount = validOutcomes.length - acceptableMismatches.length;
+  const preferredMatchCount = recommendationOutcomes.length - preferredMismatches.length;
+  const acceptableMatchCount = recommendationOutcomes.length - acceptableMismatches.length;
 
   const pct = (count: number, denom: number) => (denom > 0 ? `${((count / denom) * 100).toFixed(1)}%` : '(대상 없음)');
   const idsOf = (items: CaseOutcome[]) => (items.length > 0 ? items.map((item) => item.evalCase.id).join(', ') : '(없음)');
@@ -230,12 +270,12 @@ function printReport(mode: Mode, outcomes: CaseOutcome[], totalUsage: ReturnType
     `3. primary domain 일치율: ${domainMatchCount} / ${validOutcomes.length} (${pct(domainMatchCount, validOutcomes.length)})`,
   );
   console.log(
-    `4. preferred 카드 1위 일치율: ${preferredMatchCount} / ${validOutcomes.length} (${pct(preferredMatchCount, validOutcomes.length)})`,
+    `4. preferred 카드 1위 일치율(recommend 기대 사례): ${preferredMatchCount} / ${recommendationOutcomes.length} (${pct(preferredMatchCount, recommendationOutcomes.length)})`,
   );
   console.log(
-    `5. acceptable 카드 일치율: ${acceptableMatchCount} / ${validOutcomes.length} (${pct(acceptableMatchCount, validOutcomes.length)})`,
+    `5. acceptable 카드 일치율(recommend 기대 사례): ${acceptableMatchCount} / ${recommendationOutcomes.length} (${pct(acceptableMatchCount, recommendationOutcomes.length)})`,
   );
-  console.log(`6. 예상하지 않은 domain_choice·ambiguous·no_coverage 수: ${unexpectedRoutes.length} / ${total}`);
+  console.log(`6. 기대 route 불일치 수: ${routeMismatches.length} / ${total}`);
   console.log('7. OpenAI 토큰 사용량:');
   console.log(`   - input tokens: ${totalUsage.input}`);
   console.log(`   - output tokens: ${totalUsage.output}`);
@@ -249,20 +289,22 @@ function printReport(mode: Mode, outcomes: CaseOutcome[], totalUsage: ReturnType
   console.log(`  preferred 불일치: ${idsOf(preferredMismatches)}`);
   console.log(`  acceptable 불일치: ${idsOf(acceptableMismatches)}`);
 
-  const routeGroups: Record<'domain_choice' | 'ambiguous' | 'no_coverage', CaseOutcome[]> = {
+  const routeGroups: Record<'domain_choice' | 'ambiguous' | 'no_coverage' | 'recommend', CaseOutcome[]> = {
     domain_choice: [],
     ambiguous: [],
     no_coverage: [],
+    recommend: [],
   };
-  for (const item of unexpectedRoutes) {
+  for (const item of routeMismatches) {
     const route = item.gate?.route;
-    if (route === 'domain_choice' || route === 'ambiguous' || route === 'no_coverage') {
+    if (route === 'domain_choice' || route === 'ambiguous' || route === 'no_coverage' || route === 'recommend') {
       routeGroups[route].push(item);
     }
   }
-  console.log(`  예상 밖 route — domain_choice: ${idsOf(routeGroups.domain_choice)}`);
-  console.log(`  예상 밖 route — ambiguous: ${idsOf(routeGroups.ambiguous)}`);
-  console.log(`  예상 밖 route — no_coverage: ${idsOf(routeGroups.no_coverage)}`);
+  console.log(`  실제 route — domain_choice: ${idsOf(routeGroups.domain_choice)}`);
+  console.log(`  실제 route — ambiguous: ${idsOf(routeGroups.ambiguous)}`);
+  console.log(`  실제 route — no_coverage: ${idsOf(routeGroups.no_coverage)}`);
+  console.log(`  실제 route — recommend: ${idsOf(routeGroups.recommend)}`);
 }
 
 async function main() {

@@ -179,6 +179,156 @@ describe('Recommendation Gate · 확장 카드 영역', () => {
     assertPrimaryOnly(result, 'family_parenting_conflict', ['wisdom_discernment']);
   });
 
+  it('배우자와 양육 방식이 다르면 family 영역에서 SC-020을 단독 선택한다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'family_parenting_conflict',
+        situationTags: ['배우자와 양육 방식이 다름'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-020');
+    assert.equal(result.isTie, false);
+  });
+
+  it('하나님께 버림받은 듯한 메마름은 spiritual 영역에서 SC-014를 단독 선택한다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'spiritual_dryness',
+        situationTags: ['버림받은 것 같음'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-014');
+    assert.equal(result.isTie, false);
+  });
+
+  it('숨긴 일 때문에 하나님 앞에 나가기 힘든 경우 repentance 영역에서 SC-042를 단독 선택한다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'repentance_guilt',
+        situationTags: ['숨긴 일 때문에 하나님 앞에 나가기 힘듦'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-042');
+    assert.equal(result.isTie, false);
+  });
+
+  it('아이와 대화할 때 서로 화내는 가족 상황은 SC-012를 단독 선택한다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'family_parenting_conflict',
+        situationTags: ['아이와 대화할 때 서로 화냄'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-012');
+    assert.equal(result.isTie, false);
+  });
+
+  it('생활비 걱정으로 잠을 못 자는 경제 상황은 SC-015를 단독 선택한다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'financial_hardship',
+        situationTags: ['돈 걱정으로 잠을 못 잠'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-015');
+    assert.equal(result.isTie, false);
+  });
+
+  it('full 평가에서 확인한 구체 상황 태그 8개가 의도한 카드의 단독 1위를 만든다', () => {
+    const cases: Array<[SituationDomain, string, string]> = [
+      ['decision_guidance', '무엇을 선택할지 모름', 'SC-002'],
+      ['decision_guidance', '창업과 안정적인 길 사이에서 고민함', 'SC-035'],
+      ['waiting_unanswered_prayer', '오래 기도했지만 상황이 그대로임', 'SC-036'],
+      ['grief_loss', '아이를 잃은 슬픔', 'SC-049'],
+      ['burnout_exhaustion', '실수 뒤 모든 것을 포기하고 싶을 만큼 지침', 'SC-013'],
+      ['spiritual_dryness', '신앙생활이 습관만 남음', 'SC-024'],
+      ['financial_hardship', '월세 후 식비가 부족함', 'SC-026'],
+      ['chronic_illness', '좋아졌다가 다시 아파짐', 'SC-016'],
+    ];
+    for (const [primaryDomain, situationTag, expectedCardId] of cases) {
+      const result = runRecommendationGate(analysisOf({ primaryDomain, situationTags: [situationTag] }));
+      assert.equal(result.route, 'recommend', situationTag);
+      assert.equal(result.selectedCardId, expectedCardId, situationTag);
+      assert.equal(result.isTie, false, situationTag);
+    }
+  });
+
+  it('반복 full 평가에서 동점이 난 6개 자연어 태그 조합이 의도한 카드의 단독 1위를 만든다', () => {
+    const cases = [
+      {
+        label: '새 직장 선택',
+        expected: 'SC-002',
+        analysis: analysisOf({
+          primaryDomain: 'decision_guidance',
+          situationTags: ['새 직장으로 옮긴 선택을 돌아봄'],
+          emotionTags: ['두려움'],
+          pastoralFunctions: ['인도'],
+        }),
+      },
+      {
+        label: '서로 다른 조언',
+        expected: 'SC-050',
+        analysis: analysisOf({
+          primaryDomain: 'wisdom_discernment',
+          situationTags: ['여러 사람의 조언을 구함', '엇갈린 설명을 듣고 혼란스러움', '판단이 어려움'],
+          emotionTags: ['혼란'],
+          spiritualQuestionTags: ['분별', '지혜'],
+          prayerModes: ['간구'],
+          pastoralFunctions: ['지혜'],
+        }),
+      },
+      {
+        label: '연락할 사람 없이 혼자 견딤',
+        expected: 'SC-018',
+        analysis: analysisOf({
+          primaryDomain: 'loneliness_isolation',
+          situationTags: ['연락할 사람이 없어 혼자 견딤'],
+          emotionTags: ['외로움'],
+        }),
+      },
+      {
+        label: '하나님의 함께하심을 의심',
+        expected: 'SC-014',
+        analysis: analysisOf({
+          primaryDomain: 'spiritual_dryness',
+          situationTags: ['하나님이 멀게 느껴짐', '하나님과 따로 쉬고 싶음'],
+          spiritualQuestionTags: ['하나님의 함께하심'],
+          prayerModes: ['교제'],
+          pastoralFunctions: ['교제'],
+        }),
+      },
+      {
+        label: '아침부터 버거운 소진',
+        expected: 'SC-013',
+        analysis: analysisOf({
+          primaryDomain: 'burnout_exhaustion',
+          situationTags: ['아침에 일어나는 것부터 버거움'],
+          emotionTags: ['지침'],
+        }),
+      },
+      {
+        label: '수입 감소 뒤 교육비 부담',
+        expected: 'SC-027',
+        analysis: analysisOf({
+          primaryDomain: 'financial_hardship',
+          situationTags: ['수입이 줄어 교육비를 감당하기 어려움'],
+        }),
+      },
+    ];
+
+    for (const item of cases) {
+      const result = runRecommendationGate(item.analysis);
+      assert.equal(result.route, 'recommend', item.label);
+      assert.equal(result.selectedCardId, item.expected, item.label);
+      assert.equal(result.isTie, false, item.label);
+    }
+  });
+
   it('TEST 6 · 대인 갈등과 용서 → recommend / SC-017 (repentance_guilt 카드 SC-006은 후보 아님)', () => {
     const analysis = analysisOf({
       primaryDomain: 'relationship_conflict_forgiveness',
@@ -336,6 +486,146 @@ describe('Recommendation Gate · 복합 사연은 primary 카드만 후보', () 
     );
     assert.equal(result.route, 'recommend');
     assert.equal(result.selectedCardId, 'SC-034');
+    assert.equal(result.isTie, false);
+  });
+
+  it('SC-034 결혼 결정 입력 → 일반 결정 카드와 동점 없이 SC-034가 단독 1위', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'decision_guidance',
+        situationTags: ['관계에 대한 선택', '결혼이나 재혼 여부를 결정함'],
+        emotionTags: ['불확실함'],
+        spiritualQuestionTags: ['지혜'],
+        prayerModes: ['간구'],
+        pastoralFunctions: ['지혜', '인도'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-034');
+    assert.equal(result.isTie, false);
+  });
+
+  it('SC-041 생각을 내려놓고 쉬려는 입력 → quiet_communion 안에서 SC-041이 단독 1위', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'quiet_communion',
+        situationTags: ['복잡한 생각을 내려놓음'],
+        emotionTags: ['쉼'],
+        spiritualQuestionTags: ['하나님과의 교제'],
+        prayerModes: ['교제'],
+        pastoralFunctions: ['쉼'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-041');
+    assert.equal(result.isTie, false);
+  });
+
+  it('구체 태그만 쓰면 SC-033이 일반적인 두려움 카드보다 앞선다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'fear_uncertainty',
+        situationTags: ['낯선 곳에 적응해야 함', '새로운 환경을 앞둠'],
+        emotionTags: ['두려움', '불안'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-033');
+    assert.equal(result.isTie, false);
+  });
+
+  it('구체 태그만 쓰면 SC-035가 일반적인 결정 카드보다 앞선다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'decision_guidance',
+        situationTags: ['큰 비용이 드는 결정', '결정의 대가를 따져봄'],
+        spiritualQuestionTags: ['지혜', '분별'],
+        prayerModes: ['간구'],
+        pastoralFunctions: ['지혜', '인도'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-035');
+    assert.equal(result.isTie, false);
+  });
+
+  it('구체 태그만 쓰면 SC-036이 일반적인 응답 대기 카드와 동점이 나지 않는다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'waiting_unanswered_prayer',
+        situationTags: ['기다림이 길어짐', '응답을 기다리며 지침'],
+        emotionTags: ['지침'],
+        spiritualQuestionTags: ['기다림', '인내'],
+        prayerModes: ['탄식'],
+        pastoralFunctions: ['탄식', '인내'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-036');
+    assert.equal(result.isTie, false);
+  });
+
+  it('깊은 상실 뒤 소망을 간구하면 SC-049가 범용 애도 카드보다 앞선다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'grief_loss',
+        situationTags: [
+          '사별',
+          '깊은 상실 뒤 미래가 보이지 않음',
+          '사별 후 소망이 필요함',
+        ],
+        emotionTags: ['슬픔'],
+        spiritualQuestionTags: ['소망'],
+        prayerModes: ['간구'],
+        pastoralFunctions: ['애도', '소망', '위로'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-049');
+    assert.equal(result.isTie, false);
+  });
+
+  it('아이를 잃은 슬픔을 아직 정리하지 못한 경우 SC-049가 애도 카드와 동점이 되지 않는다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'grief_loss',
+        situationTags: ['아이를 잃은 슬픔', '상실을 서둘러 정리하기 어려움'],
+        emotionTags: ['슬픔'],
+        pastoralFunctions: ['애도'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-049');
+    assert.equal(result.isTie, false);
+  });
+
+  it('일반적인 판단 어려움은 가르침 단서가 없으면 SC-010으로 간다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'wisdom_discernment',
+        situationTags: ['판단이 어려움'],
+        emotionTags: ['혼란'],
+        spiritualQuestionTags: ['분별', '지혜'],
+        prayerModes: ['간구'],
+        pastoralFunctions: ['지혜'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-010');
+    assert.equal(result.isTie, false);
+  });
+
+  it('가르침의 신뢰성과 사랑·진실을 함께 살피는 입력은 SC-051로 간다', () => {
+    const result = runRecommendationGate(
+      analysisOf({
+        primaryDomain: 'wisdom_discernment',
+        situationTags: ['믿을 만한 가르침인지 살핌', '사랑과 진실을 함께 고려함'],
+        spiritualQuestionTags: ['분별', '진실', '지혜'],
+        pastoralFunctions: ['지혜'],
+      }),
+    );
+    assert.equal(result.route, 'recommend');
+    assert.equal(result.selectedCardId, 'SC-051');
     assert.equal(result.isTie, false);
   });
 

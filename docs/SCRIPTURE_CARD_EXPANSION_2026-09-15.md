@@ -1,8 +1,10 @@
 # Scripture Card Expansion v2 (2026-09-15)
 
-51장 체계로 확장한 Scripture Card 데이터의 근거 문서다. 런타임 변경은
-`supabase/functions/_shared/scripture-cards.ts`에 카드 20장을 추가한 것과
-`analysis-taxonomy.ts`의 카드 수 주석(31→51) 교정뿐이다. SC-001~SC-031은 한 글자도 바꾸지 않았다.
+51장 체계로 확장한 Scripture Card 데이터의 근거 문서다. 최초 확장에서는
+`supabase/functions/_shared/scripture-cards.ts`에 카드 20장을 추가하고
+`analysis-taxonomy.ts`의 카드 수 주석을 31→51로 고쳤다. 이후 실제 자연어 평가에서
+카드 간 경계가 흐린 사례가 확인되어, 본문·해설·기도 방향·오용 방지 문구는 유지한 채
+일부 기존 카드와 신규 카드의 매칭 태그를 보강했다(§7).
 
 ## 1. 목적과 영역별 변화
 
@@ -24,8 +26,11 @@
 | grief_loss | 1 | 2 | 3 |
 | wisdom_discernment | 1 | 2 | 3 |
 
-기존 카드의 역할은 바꾸지 않았다. 새 카드 두 장은 같은 영역 안에서 기존 카드가 다루지 않던
-**서로 다른 구체적 상황**(예: 검사·면접 결과 대기 vs. 낯선 환경으로의 변화)을 맡는다.
+신규 카드 두 장은 같은 영역 안에서 기존 카드가 다루지 않던 **서로 다른 구체적 상황**
+(예: 검사·면접 결과 대기 vs. 낯선 환경으로의 변화)을 맡는다. 최초 확장 시점에는 기존 카드
+객체를 바꾸지 않았지만, 이후 실제 자연어 평가에서 기존 카드가 맡아야 할 표현을 놓치는 사례가
+확인되어 일부 기존 카드의 `situationTags`와 `pastoralFunction`도 좁게 보강했다. 이 보강은
+말씀 본문이나 사용자에게 보여 주는 해설을 바꾸지 않는다.
 
 ## 2. 신규 20장 표
 
@@ -50,7 +55,7 @@
 | SC-048 | grief_loss | 전도서 3:4 | 기일·계절·삶의 변화 속 애도할 시간을 허락 |
 | SC-049 | grief_loss | 요한계시록 21:1–5 | 죽음과 깊은 상실 너머 새 창조의 소망 |
 | SC-050 | wisdom_discernment | 잠언 18:13, 17 | 사람·주장·엇갈린 설명을 충분히 듣고 확인 |
-| SC-051 | wisdom_discernment | 빌립보서 1:9–11 | 가르침과 가치 판단을 사랑·지식·열매로 분별 |
+| SC-051 | wisdom_discernment | 빌립보서 1:9–11 | 가르침과 성경 해석을 사랑·지식·열매로 분별 |
 
 SC-050은 잠언 18장 안에서 서로 떨어진 두 절(13절, 17절)만 읽는 multi-range 카드다.
 `passage`는 `passages[0]`(13:13)과 같고, `passages`는 `[18:13-13, 18:17-17]`이며
@@ -86,7 +91,7 @@ SC-002가, SC-034 고유 상황(조언·상의가 필요한 결정)에서는 SC-
 | comparison_identity | SC-007: `calling_identity`(소명과 비교) | SC-044: `appearance`, `family_comparison`(외모·가족 비교) | SC-045: `social_media`, `career_comparison`(능력·성과 비교) |
 | injustice_mistreatment | SC-008: `bullying`(괴롭힘) | SC-046: `unfair_blame`, `betrayal`(억울함·배신 속 분노) | SC-047: `workplace`, `social_injustice`(불의를 보고 행동) |
 | grief_loss | SC-009: `bereavement`(사별) | SC-048: `anniversary_grief`, `life_transition_loss`(기일·삶의 변화) | SC-049: `pregnancy_loss`, `pet_loss`(깊은 상실과 소망) |
-| wisdom_discernment | SC-010: `timing`(때를 분별) | SC-050: `people_reading`, `competing_advice`(사람·주장을 듣고 확인) | SC-051: `discernment_general`, `life_direction`(가치 판단과 방향) |
+| wisdom_discernment | SC-010: `discernment_general`, `timing`, 일부 `life_direction`(일반 지혜·방향) | SC-050: `people_reading`, `competing_advice`(사람·주장을 듣고 확인) | SC-051: 별도 도달성 사례(가르침·성경 해석의 신뢰성) |
 
 이 매핑은 편집상의 배정이다. Gate·Matcher는 코퍼스 문장이나 cluster 이름을 직접 참조하지 않고
 카드의 `situationTags` 등 표준 태그로만 채점하며, 카드 데이터의 실제 분리 여부는 §5의
@@ -146,8 +151,10 @@ situationTags 분리 무결성 테스트로 확인했다(코퍼스 배정과 Gat
   보는 것이지, 자연어 입력이나 Situation Analyzer의 추출 정확도를 검증하는 것은 아니다
   — `src/lib/scripture-expansion-simulation.test.ts`의
   "Scripture Card Expansion v2 · 신규 카드 20장 situationTags 분리 무결성" 블록.
-- SC-001~SC-031 객체는 직렬화한 뒤 SHA-256으로 수정 전후를 비교해 한 글자도 바뀌지 않았음을
-  확인했다(보고 본문 참고).
+- 최초 20장 확장 검수에서는 SC-001~SC-031 객체가 바뀌지 않았음을 SHA-256으로 확인했다.
+  이후 실제 자연어 평가에서 일부 기존 카드의 매칭 태그를 보강했으므로, 이 지문은 현재 상태의
+  불변 조건으로 사용하지 않는다. 현재 검증은 카드 51장의 본문 위치, 영역, 매칭 결과와 회귀
+  사례를 직접 테스트한다.
 
 ## 6. 참고 자료
 
@@ -176,3 +183,30 @@ situationTags 분리 무결성 테스트로 확인했다(코퍼스 배정과 Gat
 - Psalm 62 trust and refuge: <https://www.workingpreacher.org/commentaries/revised-common-lectionary/third-sunday-after-epiphany-2/commentary-on-psalm-625-12-2>
 
 (이사야 41장은 위 목록에 없어 별도 외부 자료 없이 본문과 `krv1961.json` 대조만으로 확인했다.)
+
+## 7. 실제 자연어 평가 뒤 경계 보강
+
+153개 자연어 평가와 신규 카드 도달성 검사를 실행한 뒤, Analyzer가 실제로 내놓는 태그와 카드
+경계가 어긋나는 사례만 좁게 보강했다. 구절 범위, `contextSummary`, `theologicalInsight`,
+`userExplanation`, `prayerDirection`, `misuseGuards`는 이 단계에서 바꾸지 않았다.
+
+- 결정·분별: SC-002에 선택을 못 정하거나 새 직장 선택을 돌아보는 표현을, SC-034에 결혼·재혼
+  결정을, SC-035에 창업과 안정적인 길 사이의 고민을 추가했다. SC-050에는 여러 사람의 조언을
+  구하는 표현을 추가했고, SC-051에서는 지나치게 넓던 `무엇이 더 나은지 분별함`을 제거했다.
+- 기다림·상실: SC-036에 오래 기도했지만 상황이 그대로인 표현을 추가했다. SC-049에는 아이를
+  잃은 슬픔과 상실을 서둘러 정리하기 어려운 표현을 추가하고, 기도 방식 `간구`와 목회 기능
+  `애도`를 보강했다.
+- 소진·메마름·고립: SC-013에 포기하고 싶을 만큼 지치거나 아침부터 버거운 표현을 추가했다.
+  SC-014에는 버림받은 느낌과 목회 기능 `교제`를, SC-018에는 연락할 사람이 없어 혼자 견디는
+  복합 표현을 추가했다. 이때 SC-011이 맡던 일반적인 “내 이야기를 할 사람이 없음” 경계는
+  유지해 기존 단일 태그 추천이 흐려지지 않게 했다.
+- 가족·경제·질병·회개: SC-012·020에는 서로 화내는 부모·자녀 대화와 배우자 간 양육 방식
+  차이를, SC-015·026·027에는 불면을 동반한 돈 걱정·월세 뒤 식비 부족·수입 감소로 인한
+  교육비 부담을, SC-016에는 호전 뒤 재악화를, SC-042에는 숨긴 일 때문에 하나님 앞에
+  나가기 힘든 표현을 추가했다.
+- 고요한 교제: SC-041의 목회 기능에 `쉼`을 추가해, 말없이 하나님을 바라보는 관계적 쉼이
+  다른 쉼 카드와 불필요한 동점을 만들지 않도록 했다.
+
+이 변경은 한 번의 모델 출력에 맞춘 전면 재조정이 아니다. 반복해서 같은 경계가 어긋난 사례와
+기존 카드의 명백한 표현 공백만 반영했으며, 최종 판단 근거는 평가 계획 문서의 반복 안정성
+기록과 로컬 회귀 테스트에 남겼다.

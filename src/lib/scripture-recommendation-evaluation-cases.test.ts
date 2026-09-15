@@ -11,12 +11,17 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { SCRIPTURE_CARDS } from '../data/scripture-cards.ts';
-import { EXPANSION_SCENARIOS, SAFETY_BOUNDARY_SCENARIOS } from '../../scripts/situation-scenario-corpus.ts';
+import {
+  EXPANSION_SCENARIOS,
+  SAFETY_BOUNDARY_SCENARIOS,
+  type ExpansionDomain,
+} from '../../scripts/situation-scenario-corpus.ts';
 import {
   EVALUATION_CASES,
-  NEW_CARD_SMOKE_CASES,
+  NEW_CARD_REACHABILITY_CASES,
   SMOKE_CASES,
   type EvaluationCase,
+  type RecommendationExpectation,
 } from '../../scripts/scripture-recommendation-evaluation-cases.ts';
 
 const cardById = new Map(SCRIPTURE_CARDS.map((card) => [card.id, card]));
@@ -25,6 +30,10 @@ const ALL_CARD_IDS = Array.from({ length: 51 }, (_, index) => `SC-${String(index
 const NEW_CARD_IDS = Array.from({ length: 20 }, (_, index) => `SC-0${32 + index}`);
 
 const ALL_DOMAINS = Array.from(new Set(EXPANSION_SCENARIOS.map((item) => item.domain)));
+type RecommendationEvaluationCase = Extract<EvaluationCase, { expectedRoute: 'recommend' }>;
+const recommendationCases = EVALUATION_CASES.filter(
+  (item): item is RecommendationEvaluationCase => item.expectedRoute === 'recommend',
+);
 
 describe('scripture-recommendation-evaluation-cases · 개수', () => {
   it('총 153개다', () => {
@@ -36,15 +45,13 @@ describe('scripture-recommendation-evaluation-cases · 개수', () => {
     assert.equal(SCRIPTURE_CARDS.length, 51);
   });
 
-  it('51개 카드가 각각 정확히 preferredCardId로 3번 등장한다', () => {
+  it('자연어 품질 평가의 preferred 분포는 카드별 3회를 강제하지 않는다', () => {
     const counts = new Map<string, number>();
-    for (const item of EVALUATION_CASES) {
+    for (const item of recommendationCases) {
       counts.set(item.preferredCardId, (counts.get(item.preferredCardId) ?? 0) + 1);
     }
-    assert.deepEqual([...counts.keys()].sort(), [...ALL_CARD_IDS].sort());
-    for (const cardId of ALL_CARD_IDS) {
-      assert.equal(counts.get(cardId), 3, `${cardId}는 정확히 3번이어야 합니다.`);
-    }
+    assert.equal([...counts.values()].every((count) => count === 3), false);
+    assert.ok([...counts.keys()].every((cardId) => ALL_CARD_IDS.includes(cardId)));
   });
 });
 
@@ -164,7 +171,7 @@ describe('scripture-recommendation-evaluation-cases · 중복 없음', () => {
 
 describe('scripture-recommendation-evaluation-cases · preferred/acceptable 카드', () => {
   it('preferred 카드가 expectedPrimaryDomain에 속한다', () => {
-    for (const item of EVALUATION_CASES) {
+    for (const item of recommendationCases) {
       const card = cardById.get(item.preferredCardId);
       assert.ok(card, `${item.id}: ${item.preferredCardId} 카드를 찾지 못했습니다.`);
       assert.ok(
@@ -175,7 +182,7 @@ describe('scripture-recommendation-evaluation-cases · preferred/acceptable 카�
   });
 
   it('acceptable 카드도 모두 expectedPrimaryDomain에 속한다', () => {
-    for (const item of EVALUATION_CASES) {
+    for (const item of recommendationCases) {
       for (const cardId of item.acceptableCardIds) {
         const card = cardById.get(cardId);
         assert.ok(card, `${item.id}: acceptable 카드 ${cardId}를 찾지 못했습니다.`);
@@ -188,7 +195,7 @@ describe('scripture-recommendation-evaluation-cases · preferred/acceptable 카�
   });
 
   it('acceptable은 1~2장이고 preferred를 반드시 포함한다', () => {
-    for (const item of EVALUATION_CASES) {
+    for (const item of recommendationCases) {
       assert.ok(
         item.acceptableCardIds.length >= 1 && item.acceptableCardIds.length <= 2,
         `${item.id}: acceptableCardIds 길이가 ${item.acceptableCardIds.length}입니다.`,
@@ -205,9 +212,33 @@ describe('scripture-recommendation-evaluation-cases · preferred/acceptable 카�
     }
   });
 
-  it('expectedRoute는 항상 recommend다 (안전 경계 문장이 아니다)', () => {
-    for (const item of EVALUATION_CASES) {
-      assert.equal(item.expectedRoute, 'recommend');
+  it('recommend 148건·domain_choice 2건·no_coverage 3건을 서로 분리한다', () => {
+    const counts = new Map<string, number>();
+    for (const item of EVALUATION_CASES) counts.set(item.expectedRoute, (counts.get(item.expectedRoute) ?? 0) + 1);
+    assert.deepEqual(Object.fromEntries(counts), { recommend: 148, domain_choice: 2, no_coverage: 3 });
+  });
+
+  it('domain_choice 정답은 카드 정답 없이 서로 다른 두 실제 영역만 가진다', () => {
+    const cases = EVALUATION_CASES.filter((item) => item.expectedRoute === 'domain_choice');
+    assert.deepEqual(cases.map((item) => item.id), ['EVAL-094', 'EVAL-140']);
+    for (const item of cases) {
+      assert.equal(item.expectedPrimaryDomain, null);
+      assert.equal(item.expectedDomainChoiceCandidates.length, 2);
+      assert.equal(new Set(item.expectedDomainChoiceCandidates).size, 2);
+      assert.ok(item.expectedDomainChoiceCandidates.every((domain) => ALL_DOMAINS.includes(domain as ExpansionDomain)));
+      assert.equal('preferredCardId' in item, false);
+      assert.equal('acceptableCardIds' in item, false);
+    }
+  });
+
+  it('no_coverage 정답은 카드 정답 없이 other_uncovered를 기대한다', () => {
+    const cases = EVALUATION_CASES.filter((item) => item.expectedRoute === 'no_coverage');
+    assert.deepEqual(cases.map((item) => item.id), ['EVAL-111', 'EVAL-117', 'EVAL-143']);
+    for (const item of cases) {
+      assert.equal(item.expectedPrimaryDomain, 'other_uncovered');
+      assert.equal('preferredCardId' in item, false);
+      assert.equal('acceptableCardIds' in item, false);
+      assert.equal('expectedDomainChoiceCandidates' in item, false);
     }
   });
 
@@ -218,7 +249,7 @@ describe('scripture-recommendation-evaluation-cases · preferred/acceptable 카�
   });
 });
 
-describe('scripture-recommendation-evaluation-cases · smoke 집합', () => {
+describe('scripture-recommendation-evaluation-cases · smoke와 신규 카드 도달성 집합', () => {
   it('smoke는 정확히 17개다', () => {
     assert.equal(SMOKE_CASES.length, 17);
   });
@@ -229,20 +260,79 @@ describe('scripture-recommendation-evaluation-cases · smoke 집합', () => {
     assert.deepEqual([...domains].sort(), [...ALL_DOMAINS].sort());
   });
 
-  it('new-card smoke는 정확히 20개다', () => {
-    assert.equal(NEW_CARD_SMOKE_CASES.length, 20);
+  it('신규 카드 도달성 사례는 정확히 20개다', () => {
+    assert.equal(NEW_CARD_REACHABILITY_CASES.length, 20);
   });
 
-  it('new-card smoke는 SC-032~SC-051이 각각 정확히 한 번씩 나온다', () => {
-    const cardIds = NEW_CARD_SMOKE_CASES.map((item) => item.preferredCardId);
+  it('신규 카드 도달성 사례는 SC-032~SC-051을 각각 정확히 한 번 겨냥한다', () => {
+    const cardIds = NEW_CARD_REACHABILITY_CASES.map((item) => item.preferredCardId);
     assert.deepEqual([...cardIds].sort(), [...NEW_CARD_IDS].sort());
     assert.equal(new Set(cardIds).size, 20);
   });
 
-  it('new-card smoke는 모두 신규 카드(SC-032~SC-051) 문항이다', () => {
-    for (const item of NEW_CARD_SMOKE_CASES) {
+  it('신규 카드 도달성 사례의 카드·영역·허용값이 서로 일치한다', () => {
+    for (const item of NEW_CARD_REACHABILITY_CASES) {
       assert.ok(NEW_CARD_IDS.includes(item.preferredCardId), `${item.id}는 신규 카드가 아닙니다.`);
+      const card = cardById.get(item.preferredCardId);
+      assert.ok(card, `${item.id}: ${item.preferredCardId} 카드를 찾지 못했습니다.`);
+      assert.ok(card!.domains.includes(item.expectedPrimaryDomain));
+      assert.deepEqual(item.acceptableCardIds, [item.preferredCardId]);
     }
+  });
+
+  it('신규 카드 도달성 사례는 연속 ID이고 문장·ID가 모두 고유하다', () => {
+    const expectedIds = Array.from({ length: 20 }, (_, index) => `REACH-0${32 + index}`);
+    assert.deepEqual(NEW_CARD_REACHABILITY_CASES.map((item) => item.id), expectedIds);
+    assert.equal(new Set(NEW_CARD_REACHABILITY_CASES.map((item) => item.id)).size, 20);
+    assert.equal(new Set(NEW_CARD_REACHABILITY_CASES.map((item) => item.text)).size, 20);
+  });
+
+  it('신규 카드 도달성 문장은 자연어 153건과 분리되어 있다', () => {
+    const naturalTexts = new Set(EVALUATION_CASES.map((item) => item.text));
+    for (const item of NEW_CARD_REACHABILITY_CASES) {
+      assert.equal(naturalTexts.has(item.text), false, `${item.id}가 자연어 평가 문장과 중복됩니다.`);
+    }
+  });
+
+  it('REACH-040은 소진을 호소하지 않고 하나님과 따로 머무는 쉼을 중심으로 묻는다', () => {
+    const item = NEW_CARD_REACHABILITY_CASES.find((candidate) => candidate.id === 'REACH-040');
+    assert.ok(item);
+    assert.equal(item.text, '바쁘게 보낸 하루를 잠시 멈추고, 하나님과 따로 조용히 머물며 쉬고 싶어요.');
+    assert.equal(item.text.includes('쉴 틈이 없'), false);
+    assert.equal(item.expectedPrimaryDomain, 'quiet_communion');
+    assert.equal(item.preferredCardId, 'SC-040');
+    assert.deepEqual(item.acceptableCardIds, ['SC-040']);
+  });
+});
+
+describe('scripture-recommendation-evaluation-cases · 카드 균형보다 문장 의미를 우선한 교정', () => {
+  const byId = new Map(recommendationCases.map((item) => [item.id, item]));
+
+  it('EVAL-088은 인생의 다음 행동을 정하는 decision_guidance / SC-002다', () => {
+    const item = byId.get('EVAL-088')!;
+    assert.ok(item);
+    assert.equal(item.domain, 'wisdom_discernment', '원본 코퍼스의 편집 domain은 보존해야 합니다.');
+    assert.equal(item.expectedPrimaryDomain, 'decision_guidance');
+    assert.equal(item.preferredCardId, 'SC-002');
+    assert.deepEqual(item.acceptableCardIds, ['SC-002']);
+  });
+
+  it('EVAL-089은 앞으로의 방향을 정하는 decision_guidance / SC-002다', () => {
+    const item = byId.get('EVAL-089')!;
+    assert.ok(item);
+    assert.equal(item.domain, 'wisdom_discernment', '원본 코퍼스의 편집 domain은 보존해야 합니다.');
+    assert.equal(item.expectedPrimaryDomain, 'decision_guidance');
+    assert.equal(item.preferredCardId, 'SC-002');
+    assert.deepEqual(item.acceptableCardIds, ['SC-002']);
+  });
+
+  it('EVAL-090은 여러 길 중 선택하는 decision_guidance / SC-002다', () => {
+    const item = byId.get('EVAL-090')!;
+    assert.ok(item);
+    assert.equal(item.domain, 'wisdom_discernment', '원본 코퍼스의 편집 domain은 보존해야 합니다.');
+    assert.equal(item.expectedPrimaryDomain, 'decision_guidance');
+    assert.equal(item.preferredCardId, 'SC-002');
+    assert.deepEqual(item.acceptableCardIds, ['SC-002']);
   });
 });
 
@@ -251,7 +341,7 @@ describe('scripture-recommendation-evaluation-cases · 2026-09-16 검수 수정 
    * 이 다섯 사례만 acceptableCardIds가 바뀐 검수 수정이다(preferredCardId·text·domain·rank·cluster는
    * 전부 그대로다). 오라클 값을 직접 단언해 실수로 되돌아가지 않도록 고정한다.
    */
-  const byId = new Map(EVALUATION_CASES.map((item) => [item.id, item]));
+  const byId = new Map(recommendationCases.map((item) => [item.id, item]));
 
   it('EVAL-019: SC-003 preferred, acceptable [SC-003, SC-036]', () => {
     const item = byId.get('EVAL-019')!;
@@ -332,7 +422,7 @@ describe('scripture-recommendation-evaluation-cases · 2026-09-16 검수 수정 
    * [SC-009, SC-048]로 바꿨다(계약상 최대 2장이라 SC-049는 뺐다). text·domain·rank·cluster·
    * preferredCardId는 이전과 같다.
    */
-  const byId = new Map(EVALUATION_CASES.map((item) => [item.id, item]));
+  const byId = new Map(recommendationCases.map((item) => [item.id, item]));
 
   it('EVAL-073: SC-009 preferred, acceptable [SC-009, SC-048] (SC-049 제외)', () => {
     const item = byId.get('EVAL-073')!;
@@ -352,13 +442,59 @@ describe('scripture-recommendation-evaluation-cases · 2026-09-16 검수 수정 
   });
 });
 
+describe('scripture-recommendation-evaluation-cases · 실제 의미 검수 (EVAL-144)', () => {
+  it('치료와 오늘을 견딜 은혜를 구하는 사례는 SC-016만 허용한다', () => {
+    const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-144')!;
+    assert.ok(item, 'EVAL-144를 찾지 못했습니다.');
+    assert.equal(item.text, '오늘 하루를 견딜 은혜와 필요한 치료를 함께 구하고 싶어요.');
+    assert.equal(item.expectedPrimaryDomain, 'chronic_illness');
+    assert.equal(item.preferredCardId, 'SC-016');
+    assert.deepEqual(item.acceptableCardIds, ['SC-016']);
+  });
+});
+
+describe('scripture-recommendation-evaluation-cases · 존재 가치 비교 의미 검수 (EVAL-057)', () => {
+  it('다른 사람의 기준으로 존재 가치를 판단하는 사례는 SC-044만 허용한다', () => {
+    const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-057')!;
+    assert.ok(item, 'EVAL-057을 찾지 못했습니다.');
+    assert.equal(item.text, '내 존재 가치를 다른 사람의 기준으로 판단하게 돼요.');
+    assert.equal(item.expectedPrimaryDomain, 'comparison_identity');
+    assert.equal(item.preferredCardId, 'SC-044');
+    assert.deepEqual(item.acceptableCardIds, ['SC-044']);
+  });
+});
+
+describe('scripture-recommendation-evaluation-cases · full 평가 뒤 의미 재검수 6건', () => {
+  const byId = new Map(recommendationCases.map((item) => [item.id, item]));
+  const expected = [
+    ['EVAL-012', 'wisdom_discernment', 'SC-010', ['SC-010']],
+    ['EVAL-025', 'waiting_unanswered_prayer', 'SC-036', ['SC-036', 'SC-003']],
+    ['EVAL-026', 'waiting_unanswered_prayer', 'SC-036', ['SC-036', 'SC-003']],
+    ['EVAL-044', 'quiet_communion', 'SC-005', ['SC-005', 'SC-041']],
+    ['EVAL-084', 'decision_guidance', 'SC-002', ['SC-002']],
+    ['EVAL-128', 'financial_hardship', 'SC-026', ['SC-026', 'SC-015']],
+  ] as const;
+
+  it('각 사례의 영역·preferred·acceptable을 문장 의미에 맞게 고정한다', () => {
+    for (const [id, domain, preferred, acceptable] of expected) {
+      const item = byId.get(id);
+      assert.ok(item, `${id}를 찾지 못했습니다.`);
+      assert.equal(item.expectedPrimaryDomain, domain, id);
+      assert.equal(item.preferredCardId, preferred, id);
+      assert.deepEqual(item.acceptableCardIds, acceptable, id);
+    }
+  });
+});
+
 describe('scripture-recommendation-evaluation-cases · 이 테스트가 증명하지 않는 것', () => {
   it('이 파일은 정적 데이터 정합성만 본다 — 자연어 의미나 Analyzer 정확도를 증명하지 않는다', () => {
     // 이 테스트는 EVALUATION_CASES의 구조(개수·중복·도메인 소속·smoke 집합)만 검증한다.
     // "이 문장을 Situation Analyzer에 넣으면 실제로 이 카드가 나온다"는 것은
     // OpenAI를 실제로 호출해야 확인할 수 있고, 그 책임은 이 파일이 아니라
     // scripts/test-openai-recommendation-e2e.ts(--mode=smoke|new-cards|full)에 있다.
-    const typeCheck: EvaluationCase | undefined = EVALUATION_CASES[0];
-    assert.ok(typeCheck);
+    const naturalTypeCheck: EvaluationCase | undefined = EVALUATION_CASES[0];
+    const runnableTypeCheck: RecommendationExpectation | undefined = NEW_CARD_REACHABILITY_CASES[0];
+    assert.ok(naturalTypeCheck);
+    assert.ok(runnableTypeCheck);
   });
 });
