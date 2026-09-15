@@ -325,6 +325,33 @@ describe('scripture-recommendation-evaluation-cases · 2026-09-16 검수 수정 
   });
 });
 
+describe('scripture-recommendation-evaluation-cases · 2026-09-16 검수 수정 (EVAL-073) 회귀 고정', () => {
+  /**
+   * 실제 OpenAI 재현(EVAL-073)에서 이 문장에 SC-048의 태그가 붙어 SC-048이 선택되는 것을
+   * 확인했다. preferredCardId는 SC-009로 그대로 두고, acceptableCardIds만 [SC-009, SC-049]에서
+   * [SC-009, SC-048]로 바꿨다(계약상 최대 2장이라 SC-049는 뺐다). text·domain·rank·cluster·
+   * preferredCardId는 이전과 같다.
+   */
+  const byId = new Map(EVALUATION_CASES.map((item) => [item.id, item]));
+
+  it('EVAL-073: SC-009 preferred, acceptable [SC-009, SC-048] (SC-049 제외)', () => {
+    const item = byId.get('EVAL-073')!;
+    assert.ok(item, 'EVAL-073을 찾지 못했습니다.');
+    assert.equal(item.text, '부모님을 떠나보내고 나서 마음을 추스르기가 힘들어요.');
+    assert.equal(item.domain, 'grief_loss');
+    assert.equal(item.rank, 1);
+    assert.equal(item.cluster, 'bereavement');
+    assert.equal(item.preferredCardId, 'SC-009');
+    assert.deepEqual([...item.acceptableCardIds].sort(), ['SC-009', 'SC-048']);
+  });
+
+  it('EVAL-073의 acceptableCardIds가 수정 전 값([SC-009, SC-049])과 다르다', () => {
+    const item = byId.get('EVAL-073')!;
+    const current = [...item.acceptableCardIds].sort();
+    assert.notDeepEqual(current, ['SC-009', 'SC-049'].sort(), 'EVAL-073은 수정 전 값과 그대로입니다.');
+  });
+});
+
 describe('scripture-recommendation-evaluation-cases · 이 테스트가 증명하지 않는 것', () => {
   it('이 파일은 정적 데이터 정합성만 본다 — 자연어 의미나 Analyzer 정확도를 증명하지 않는다', () => {
     // 이 테스트는 EVALUATION_CASES의 구조(개수·중복·도메인 소속·smoke 집합)만 검증한다.

@@ -158,6 +158,10 @@ describe('analyze-situation · OpenAI 호출', () => {
     assert.equal(payload.instructions, INSTRUCTIONS);
     assert.equal(payload.input, '어머니가 돌아가셨어요.');
     assert.equal('max_output_tokens' in payload, false, 'max_output_tokens를 넣지 않습니다.');
+    // 이 모델(gpt-5.6-luna)은 temperature를 지원하지 않는다 — 실제로 넣으면
+    // "400 Unsupported parameter: 'temperature' is not supported with this model."이 난다.
+    assert.equal('temperature' in payload, false, 'temperature를 넣지 않습니다.');
+    assert.equal('top_p' in payload, false, 'top_p를 넣지 않습니다.');
 
     const format = (payload.text as { format: Record<string, unknown> }).format;
     assert.equal(format.type, 'json_schema');

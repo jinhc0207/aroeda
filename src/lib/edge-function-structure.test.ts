@@ -148,9 +148,11 @@ describe('Analyzer 규칙 동일성', () => {
 
   it('지시문이 검증된 상태 그대로다', () => {
     // Scripture Card Expansion v2(2026-09-15)로 situationTags가 103→163개로 늘며
-    // 지시문에 그대로 나열되는 태그 목록이 길어졌다. 지시문 템플릿 자체는 바뀌지 않았다.
-    // 실제 INSTRUCTIONS.length를 계산해 갱신한 값이다.
-    assert.equal(INSTRUCTIONS.length, 8656, '지시문 길이가 달라졌습니다.');
+    // 지시문에 그대로 나열되는 태그 목록이 길어졌다. Analyzer Tag Stability
+    // Correction v2(2026-09-16)로 [Minimum Sufficient Tagging]에 "관계에 대한 선택"과
+    // "오래 기다린 좋은 결과를 받음"의 의미 경계 규칙 두 개가 추가됐다. 지시문 템플릿
+    // 자체 구조는 바뀌지 않았다. 실제 INSTRUCTIONS.length를 계산해 갱신한 값이다.
+    assert.equal(INSTRUCTIONS.length, 9042, '지시문 길이가 달라졌습니다.');
     for (const marker of [
       '[level]',
       '[자살 / 자해]',
@@ -165,6 +167,10 @@ describe('Analyzer 규칙 동일성', () => {
       '하나님의 직접 메시지인지 아닌지 단정하지 않습니다',
       '[Minimum Sufficient Tagging]',
       'routing signal',
+      '"관계에 대한 선택"은 사람 사이의 관계를 시작·유지·끝낼지 고민하는 경우에만 사용합니다.',
+      '두 회사 중 어디로 이직할지 결정을 못 내리겠어요.',
+      '"오래 기다린 좋은 결과를 받음"은 사용자가 기다림이 길었다는 사실이나 기간을 직접',
+      '드디어 합격 소식을 들어서 너무 감사해요.',
     ]) {
       assert.ok(INSTRUCTIONS.includes(marker), `지시문에서 ${marker}가 사라졌습니다.`);
     }

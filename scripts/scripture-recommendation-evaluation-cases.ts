@@ -1164,9 +1164,9 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     expectedPrimaryDomain: 'grief_loss',
     expectedRoute: 'recommend',
     preferredCardId: 'SC-009',
-    acceptableCardIds: ['SC-009', 'SC-049'],
+    acceptableCardIds: ['SC-009', 'SC-048'],
     rationale:
-      'SC-009는 이 영역이 카드 1장뿐이던 확장 이전부터 이 문장 유형을 대표해 왔다. 문장에 다른 두 카드의 더 좁은 단서가 없어 SC-009가 여전히 preferred다. SC-049도 같은 영역 안에서 이 문장에 목회적으로 자연스럽게 겹쳐 acceptable로 함께 두었다(사람이 판단한 가설이다).',
+      '부모 사별 자체는 SC-009와 직접 일치하므로 preferred를 유지한다(2026-09-16 검수 수정 — 실제 OpenAI 재현에서 이 문장에 SC-048의 태그가 붙어 SC-048이 선택되는 것을 확인했다). "마음을 추스르기 힘들다"는 SC-048의 situationTags(애도할 시간이 필요함·상실을 서둘러 정리하기 어려움)와 자연스럽게 겹치므로 acceptable에 포함한다. 미래 소망을 직접 구하는 표현이 이 문장에 없으므로 SC-049는 제외한다(acceptable은 계약상 최대 2장이다).',
     smoke: true,
     isNewCardSmoke: false,
   },
