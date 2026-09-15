@@ -1,7 +1,7 @@
 /**
  * 스트레스 테스트 사례 모음 (로컬 테스트 전용)
  *
- * 현재 Scripture Card는 17개다.
+ * 현재 Scripture Card는 51개다(17개 영역 × 최소 3장, Scripture Card Expansion v2, 2026-09-15).
  * 대표 카드가 있는 영역과 아직 더 깊은 자료가 필요한 영역을 나누어,
  * 네 종류를 구분해서 관찰한다.
  *
@@ -74,8 +74,13 @@ export const STRESS_CASES: StressCase[] = [
     id: 'A4',
     group: 'A',
     text: '동료들은 계속 승진하는데 저만 제자리인 것 같아 자꾸 비교하게 돼요.',
-    expectationType: 'exact_card',
-    expectedCards: ['SC-007'],
+    expectationType: 'candidate_set',
+    expectedCards: ['SC-007', 'SC-045'],
+    note:
+      'Scripture Card Expansion v2(2026-09-15)로 comparison_identity에 SC-044·SC-045가 추가됐다. ' +
+      '이 문장의 "동료"·"승진"은 SC-045의 situationTags(능력을 다른 사람과 비교함·다른 사람의 성과에 위축됨)와 ' +
+      '직접 겹치는 직장·능력 비교 단서라서, SC-007(일반 비교) 단독 exact_card로 유지할 근거가 부족하다고 보고 ' +
+      'candidate_set으로 낮췄다.',
   },
   {
     id: 'A5',
@@ -110,7 +115,11 @@ export const STRESS_CASES: StressCase[] = [
     group: 'A',
     text: '검사 결과가 어떻게 나올지 몰라 너무 두렵습니다.',
     expectationType: 'exact_card',
-    expectedCards: ['SC-001'],
+    expectedCards: ['SC-032'],
+    note:
+      'Scripture Card Expansion v2(2026-09-15) 이전에는 SC-001(일반 두려움)이 유일한 후보였다. ' +
+      '지금은 SC-032의 situationTags에 "검사 결과를 기다림"이 그대로 있어 이 문장과 더 직접 겹치므로 ' +
+      'SC-001에서 SC-032로 기대값을 바꿨다.',
   },
   {
     id: 'A10',
@@ -155,7 +164,10 @@ export const STRESS_CASES: StressCase[] = [
     group: 'B',
     text: '아이의 검사 결과를 기다리고 있는데 너무 두렵고 기도해도 마음이 가라앉지 않습니다.',
     expectationType: 'candidate_set',
-    expectedCards: ['SC-001', 'SC-003'],
+    expectedCards: ['SC-032', 'SC-001', 'SC-003'],
+    note:
+      'Scripture Card Expansion v2(2026-09-15)로 "검사 결과를 기다림"과 직접 겹치는 SC-032가 생겨' +
+      ' 후보에 추가했다. 기도해도 가라앉지 않는 마음은 여전히 SC-003(waiting_unanswered_prayer)과도 겹친다.',
   },
   {
     id: 'B6',
