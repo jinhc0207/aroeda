@@ -31,6 +31,7 @@ import {
   computeFrozenAnalysisArtifactHash,
   computeSourceCorpusArtifactHash,
   validateAnalysisSnapshot,
+  validateAnalysisSnapshotCase,
 } from '../../supabase/functions/_shared/automatic-scripture-catalog-analysis-snapshot-contract.ts';
 import type { SituationAnalysis } from '../../supabase/functions/_shared/situation-analysis.ts';
 
@@ -649,5 +650,45 @@ describe('automatic-scripture-catalog-analysis-snapshot-contract', () => {
     const frozenForward = await computeFrozenAnalysisArtifactHash(cases);
     const frozenReversed = await computeFrozenAnalysisArtifactHash([...cases].reverse());
     assert.notEqual(frozenForward, frozenReversed);
+  });
+
+  describe('validateAnalysisSnapshotCase — 사례 하나만 독립적으로 검증 (재개 가능한 실행기 등이 재사용)', () => {
+    it('유효한 사례는 통과한다', () => {
+      const result = validateAnalysisSnapshotCase(CORP_RECOMMEND_CASE, 'case');
+      assert.deepEqual(result, { valid: true, errors: [] });
+    });
+
+    it('validateAnalysisSnapshot이 같은 사례에 내는 오류와 정확히 같은 규칙을 쓴다(analysis 여분 필드)', async () => {
+      const polluted = { ...CORP_RECOMMEND_CASE, analysis: { ...CORP_RECOMMEND_CASE.analysis, rawResponse: 'x' } as unknown as SituationAnalysis };
+      const direct = validateAnalysisSnapshotCase(polluted, 'snapshot.cases[0]');
+      assert.equal(direct.valid, false);
+      assert.deepEqual(direct.errors, ['snapshot.cases[0].analysis: 계약에 없는 항목입니다: rawResponse']);
+
+      // 스냅샷 전체를 통해 같은 사례를 검증했을 때와 동일한 오류가 나오는지 대조한다(로직 복제가 아님을 보장).
+      const snapshot = await sealWithCases(
+        { contractVersion: ANALYSIS_SNAPSHOT_CONTRACT_VERSION, environment: await buildEnvironment() },
+        [polluted, SAFE_CASE],
+      );
+      const viaSnapshot = await validateAnalysisSnapshot(snapshot);
+      assert.deepEqual(viaSnapshot.errors, direct.errors);
+    });
+
+    it('expected와 모순된 analysis(교차 일관성 위반)는 거절한다', () => {
+      const contradicting = { ...SAFE_CASE, analysis: { ...SAFE_CASE.analysis, safety: { level: 'normal' as const, categories: [] } } };
+      const result = validateAnalysisSnapshotCase(contradicting, 'case');
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some((message) => message.includes('safety')));
+    });
+
+    it('kind가 candidate_generation이면 명시적으로 거절한다', () => {
+      const result = validateAnalysisSnapshotCase({ ...CORP_RECOMMEND_CASE, kind: 'candidate_generation' }, 'case');
+      assert.equal(result.valid, false);
+      assert.ok(result.errors.some((message) => message.includes('candidate_generation')));
+    });
+
+    it('객체가 아니면 거절한다', () => {
+      assert.equal(validateAnalysisSnapshotCase(null).valid, false);
+      assert.equal(validateAnalysisSnapshotCase('x').valid, false);
+    });
   });
 });

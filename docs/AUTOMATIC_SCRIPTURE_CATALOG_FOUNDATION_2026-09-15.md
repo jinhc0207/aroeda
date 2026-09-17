@@ -1023,6 +1023,175 @@ Edge Function·네트워크를 전혀 부르지 않는다(소스 스캔 테스�
 현재 환경 결속 테스트 17개, 자동 Scripture Catalog 전체 테스트(912/912)가 모두
 통과한다. OpenAI·Supabase·DB 호출, 커밋·푸시·배포는 없었다.
 
+## 9-12. 재개 가능한 분석 실행기 핵심 v1 — 실제 호출 없음 (2026-09-18, 후속)
+
+### 무엇을 메우려 했는가
+
+§9-11의 builder는 156개 결정적 계획을 만들고, 외부에서 이미 얻은 156개 분석 결과를
+**한 번에** 스냅샷으로 조립하는 순수 함수만 가지고 있었다. "그 156개 결과를 실제로
+어떻게, 몇 번에 나눠, 중단됐다 이어서 얻을 것인가"는 없었다. 이번 작업이 그
+실행기 핵심(runner core)이다. **이번에도 실제 OpenAI 호출·파일 저장·DB·네트워크는
+전혀 하지 않는다** — 분석 함수와 체크포인트 읽기·쓰기는 전부 테스트가 주입한
+가짜 함수다.
+
+### 새 파일 / 수정 파일
+
+- `scripts/automatic-scripture-catalog-analysis-snapshot-runner.ts` (신규, 이후 Codex
+  재현 결함 3건 수정 포함 — 아래 "4) 실패 계약" 참고)
+- `src/lib/automatic-scripture-catalog-analysis-snapshot-runner.test.ts` (신규, 36건 —
+  최초 28건 + 결함 재현·회귀 테스트 8건)
+- `supabase/functions/_shared/automatic-scripture-catalog-analysis-snapshot-contract.ts`
+  (수정 — `validateAnalysisSnapshotCase` 신규 공개 함수만 추가, 기존 로직 불변)
+- `src/lib/automatic-scripture-catalog-analysis-snapshot-contract.test.ts`
+  (수정 — 위 신규 함수 대응 테스트 5건 추가, 65건)
+
+### 1) 단일 사례 검증 재사용 — `validateAnalysisSnapshotCase`
+
+기존 `validateAnalysisSnapshot`이 스냅샷 전체를 볼 때 내부적으로만 쓰던 `validateCase`를
+로직 복제 없이 그대로 공개했다. `{caseId, kind, text, expected, analysis}` 사례
+하나를 받아 exact-fields·caseId 형식·금지 패턴·`analysis`와 `analysis.safety`의
+exact-fields·공용 `validateSituationAnalysis`·`analysis`와 `expected`의 교차
+일관성까지 스냅샷 전체 검증과 정확히 같은 규칙으로 확인한다. 실행기가 매 분석
+결과를 체크포인트에 넣기 전에 이 함수 하나로 검증한다.
+
+### 2) 체크포인트 계약
+
+`AnalysisRunnerCheckpoint`는 `contractVersion`·`planFingerprint`(지금 156개 계획의
+지문, `computeAnalysisPlanFingerprint`로 계산 — 기존 `computeArtifactHash`·
+`canonicalJson` 재사용)·`environment`(`buildCurrentAnalysisSnapshotEnvironment`로 만든
+지금 저장소의 실제 분석 환경)·`results`(계획 맨 앞에서부터 이어지는 연속 prefix)만
+담는다. 각 결과는 정확히 `{caseId, text, analysis}`뿐이다 — raw response·provider
+오류 원문·token usage·API key·사용자/세션 식별자·시각·사람 승인·서명 필드가 들어갈
+자리가 계약 어디에도 없다.
+
+`validateAnalysisRunnerCheckpoint`가 exact-fields·`contractVersion`·계획 지문·
+environment를 확인한 뒤, `results`가 연속 prefix인지 **위치 i의 결과가 `plan[i]`의
+caseId·text와 정확히 같아야 한다**는 단일 규칙으로 검사한다. 이 규칙 하나가 순서
+뒤바뀜·중간 누락·중복·계획 밖 사례·text 변경을 전부 동시에 잡는다. 각 결과의
+`analysis`는 `validateAnalysisSnapshotCase`로 다시 검증한다.
+
+### 3) 재개 가능한 순차 실행기 — `runAnalysisSnapshotRunner`
+
+실행 순서: 156개 계획 생성 → 지금 environment·계획 지문 계산 → 기존 체크포인트가
+있으면 완전 검증 → 체크포인트 다음 사례부터 한 건씩(`maxCases`까지) 순차 분석 →
+`validateAnalysisSnapshotCase`로 검증 → 성공한 결과를 더한 새 체크포인트 저장 →
+저장이 성공한 뒤에만 다음 사례로 진행 → 156개가 모두 모이면 기존
+`buildFrozenAnalysisSnapshot`으로 최종 스냅샷 조립 → 그 최종 검증이 완전히 성공한
+경우에만 `completed`를 돌려준다. 모든 analyze 호출은 `for` 루프 안에서 순서대로
+`await`하며, 병렬 호출은 하지 않는다.
+
+`analyze` 함수는 `{caseId, text}`만 받는다 — **`expected`를 절대 넘기지 않는다.**
+분석이 정답을 미리 알면 뒤이은 교차 일관성 검사가 아무 의미가 없어지기 때문이다.
+
+### 4) 실패 계약
+
+analyze가 예외를 던지거나 결과가 계약(exact-fields·`validateSituationAnalysis`·
+교차 일관성)을 어기면: 그 결과를 저장하지 않고, 이전까지 저장된 정상 prefix는
+그대로 두고, 실패한 caseId와 안전한 내부 오류 코드(`analyze_failed`/
+`analysis_invalid`)만 돌려주며, provider 오류 원문은 어디에도 담지 않고, 다음
+사례로 넘어가지 않는다.
+
+체크포인트 저장이 실패하면(`checkpoint_save_failed`): 다음 analyze를 부르지 않고,
+저장됐다고 가정하지 않는다(실행기 내부 상태도 그 결과를 다음 사례 진행에 반영하지
+않는다).
+
+체크포인트 **읽기**가 예외를 던지면(`checkpoint_load_failed`, 2026-09-18 Codex
+재현·수정): analyze도 저장도 한 번도 부르지 않고 즉시 실패로 수렴한다. `loadCheckpoint`
+호출을 try/catch로 감싸, 디스크 경로·내부 스택 같은 원문을 절대 담지 않고
+`{ status: 'failed', reason: 'checkpoint_load_failed' }`만 돌려준다. 마찬가지로
+체크포인트의 `environment` 필드 자체가 없거나(undefined) 문자열·배열 등으로
+망가진 경우, 내부적으로 `canonicalJson`이 예외를 던질 수 있는데 이 예외도 밖으로
+새지 않고 "environment가 다르다"는 검증 실패로만 수렴한다 — `validateAnalysisRunnerCheckpoint`는
+어떤 unknown 입력에도 절대 throw하지 않고 항상 `{ok:false, errors}`를 돌려준다.
+
+**공개 결과에는 상세 오류를 담지 않는다** (2026-09-18 Codex 재현·수정). 실행기의
+공개 타입 `AnalysisRunnerResult`는 `errors` 필드를 갖지 않는다 — `checkpoint_invalid`는
+`reason`만, `analysis_invalid`는 `reason`과 사례 단위 실패를 가리키는 `caseId`만,
+`final_snapshot_invalid`는 `reason`만 돌려준다. `validateAnalysisRunnerCheckpoint`·
+`validateAnalysisSnapshotCase` 내부의 상세 `errors: string[]`는 모델이 만든 값
+(예: 표준 사전에 없는 태그 이름 자체)이나 구현 세부사항을 그대로 담고 있을 수
+있어, 그 배열을 실행기의 공개 결과로 그대로 옮기면 그 값이 호출자 로그로 새어
+나간다. 그 상세 오류를 실제로 봐야 하면(개발용) 이 실행기를 거치지 않고
+`validateAnalysisRunnerCheckpoint`·`validateAnalysisSnapshotCase` 같은 순수
+validator를 직접 호출해야 한다 — 이 실행기는 그 함수들을 감싸기만 할 뿐, 반환값의
+`errors`를 절대 옮기지 않는다.
+
+**"정확히 한 번"을 주장하지 않는다.** analyze 호출과 체크포인트 저장은 원자적일
+수 없다. analyze가 성공적으로 값을 돌려준 **직후**, 저장이 끝나기 **전**에
+프로세스가 죽으면 그 결과는 어디에도 남지 않는다. 다음 실행은 저장된 체크포인트만
+보고 이어가므로, 그 사례는 **다시 analyze가 호출된다** — 장애 시 최대 한 건(직전에
+저장되지 않은 사례)이 다시 호출될 수 있다.
+
+### 5) 처리량 제한 — `maxCases`
+
+`0`이면 analyze 호출 0회(완성 여부만 확인), `1`이면 다음 미완료 사례 1개만,
+남은 수보다 크면 남은 사례까지만 처리한다. 음수·정수가 아닌 값(`-1`, `1.5`, `NaN`
+등)은 analyze·저장을 부르지 않고 즉시 `invalid_max_cases`로 거절한다.
+`baselineCatalogVersionHash`의 형식도 시작하자마자 확인해, 잘못된 값이면 analyze·
+체크포인트 읽기 전에 `invalid_baseline_hash`로 거절한다(비용 낭비 없이 빠르게
+막는다).
+
+### 순수성·격리
+
+OpenAI SDK·`fetch`·환경변수·파일 시스템·시계·난수·`console`·Supabase client·DB/RPC·
+Edge Function·네트워크를 전혀 부르지 않는다(소스 스캔 테스트로 고정). `analyze`·
+`loadCheckpoint`·`saveCheckpoint` 세 함수는 전부 테스트가 만든 인메모리 가짜
+함수다.
+
+### 테스트와 mutation 검증
+
+36개 테스트 전부 통과한다(최초 28건 + 기존 스냅샷 계약 테스트에
+`validateAnalysisSnapshotCase` 대응 5건 추가 — 이 5건은 계약 테스트 파일 65건
+쪽 카운트). 핵심 검사 세 곳을 임시로 무력화해 mutation 검증했다 — (1) 저장
+실패를 무시하고 계속 진행하게 하자 관련 테스트 2개("저장 전 다음 분석 안 부름",
+"저장 실패 뒤 추가 호출 없음")만 실패, (2) 체크포인트의 위치별 대조를 caseId
+존재 여부만 보는 검사로 바꾸자 순서·누락·중복·text 변경 거절 테스트 4개만 실패
+(계획 밖 사례 거절 테스트는 존재 여부 검사만으로도 여전히 걸려 그대로 통과 —
+다른 성격의 검사임을 확인), (3) analyze 결과의 검증 게이트를 제거하자 계약 위반·
+교차 일관성 위반 저장 거부 테스트 2개만 실패했다. 세 번 모두 검증 후 소스를
+diff로 바이트 단위 복원 확인하고 전체 테스트를 다시 통과시켰다.
+
+**2026-09-18 후속 결함 수정 시 추가 mutation 검증** (Codex 재현 3건 대응, 새
+회귀 테스트 8건 포함해 28→36건으로 증가): (4) `environment` 비교의 try/catch를
+제거하자 environment 안전성 테스트 2개("environment 필드 누락", "environment가
+undefined·문자열·배열")만 실패 — 실제로 `Error: 지문을 만들 수 없는 값입니다.`가
+테스트 밖으로 그대로 튀어나오는 것을 확인, (5) `loadCheckpoint` 호출의
+try/catch를 제거하자 `loadCheckpoint` 예외 재현 테스트 1개만 실패 — unhandled
+rejection으로 원문(`disk secret detail...`)이 그대로 노출되는 것을 확인,
+(6) `AnalysisRunnerResult` 타입과 세 호출부에 `errors` 필드를 다시 붙이자 테스트
+5개(계약 위반 저장 거부 2건, `PRIVATE_MODEL_VALUE_123` 재현 테스트, checkpoint_invalid
+무누출 테스트, final_snapshot_invalid 소스 패턴 테스트)만 실패했고, 실패 출력에
+`PRIVATE_MODEL_VALUE_123` 문자열이 실제로 섞여 나오는 것을 직접 확인해 원래
+결함과 수정된 테스트의 실효성을 함께 검증했다. 세 라운드 모두 검증 후 `cp`로
+백업한 원본으로 복원하고 `diff`로 바이트 단위 동일함을 확인한 뒤 `tsc --noEmit`과
+전체 테스트를 다시 통과시켰다.
+
+### 아직 연결하지 않은 경계
+
+- runner core만 구현했다. 실제 OpenAI transport와 실제 파일(또는 DB) 체크포인트
+  저장소 구현은 아직 없다 — `analyze`·`loadCheckpoint`·`saveCheckpoint`는 이번에도
+  테스트의 인메모리 가짜 함수뿐이다.
+- 실제 156회 호출과 실제 frozen snapshot artifact 생성은 아직 하지 않았다.
+- 순차 실행과 체크포인트 저장 계약만 정했다 — 실제 실행에서 "장애 시 마지막
+  미저장 1건이 재호출될 수 있다"는 성질은 위 "4) 실패 계약"에 그대로 문서화했다.
+- executor·validation-context·DB·activation 어디에도 연결하지 않았다.
+- `new_domain_with_cards`는 여전히 fail-closed다 — 동적 domain manifest가 없다.
+- 사람의 사전 승인 필드는 이번에도 추가하지 않았다(체크포인트·결과 계약 어디에도
+  없다).
+- `baselineCatalogVersionHash`는 이번에도 호출자 인자로만 받는다(§9-10 수정 6·
+  §9-11과 같은 신뢰 경계 — 후속 executor 연결에서는 validation-context RPC의 활성
+  기준 버전에서 가져와야 한다).
+
+### 검증
+
+`npm run test:logic`(4276/4276), `npm run test:ui`(113/113), `npx tsc --noEmit`
+(오류 0) 모두 통과했다. runner 테스트 36개(2026-09-18 결함 재현·회귀 8건 포함),
+builder 테스트 36개, 스냅샷 계약·현재 환경 결속 테스트 82개(계약 65 + 환경 17),
+자동 Scripture Catalog 전체 테스트(953/953)가 모두 통과한다. `git diff --check`
+공백 오류 없음, `package.json`·`package-lock.json` 변경 없음, 변경된 5개 파일
+외 다른 파일 변경 없음(`git status --short` 확인)도 함께 검증했다. OpenAI·
+Supabase·DB 호출, 커밋·푸시·배포는 없었다.
+
 ## 10. 아직 연결되지 않은 런타임 범위
 
 - `analyze-situation`, `recommend-scripture`, `generate-prayer-guidance`와 앱은 여전히 정적 `scripture-cards.ts`·`situation-domains.ts`를 읽는다.
@@ -1076,18 +1245,22 @@ Edge Function·네트워크를 전혀 부르지 않는다(소스 스캔 테스�
   카탈로그·대상 수요만 읽는지, 기간·키 검증과 service_role 전용 권한·private 표 격리를 고정.
 - `automatic-scripture-catalog-validator-profile-migration.test.ts` — 코드 registry와 SQL 등록 manifest·profile 지문이
   정확히 같고, profile 네 건 외 스키마·함수·권한을 바꾸지 않는지 확인.
-- `automatic-scripture-catalog-analysis-snapshot-contract.test.ts` (§9-9·§9-10, 60건) — safety_boundary·
-  corpus_regression 사례를 담은 스냅샷의 exact-fields·caseId 오름차순·candidate_generation 거절·동결
-  분석의 실제 `validateSituationAnalysis` 재검사를 고정한다. `analysis`와 `analysis.safety`에도
-  exact-fields를 적용해 `rawResponse`·`userId`·`analysis.safety.sessionId` 같은 여분의 필드가
-  모든 해시를 올바르게 재계산해도 거절되는지 고정한다. `sourceCorpusArtifactHash`·
-  `frozenAnalysisArtifactHash`가 cases에서 직접 재계산한 값과 대조된다는 것(형식만 맞는 임의의 해시로
-  top-level fingerprint만 다시 맞춰도 거절됨을 "[재현]" 테스트로 먼저 고정), 두 종류가 각각 최소 1개
-  있어야 한다는 것, frozen analysis와 expected의 교차 일관성(urgent 분석+normal expectedSafety,
-  recommend route인데 다른 domain, domain_choice 후보 순서 등)을 각각 단일 오류로 고정한다. 사례
-  text·분석 태그·expected·environment의 모델·스키마·태그 사전·domain manifest·Gate·Matcher·기준
-  카탈로그 결속·두 하위 해시·저장된 fingerprint 중 무엇 하나만 바뀌어도 정확히 그 하나의 오류만
-  나는지(다른 검사가 우연히 가려 잡지 않는지) 대조한다.
+- `automatic-scripture-catalog-analysis-snapshot-contract.test.ts` (§9-9·§9-10·§9-12, 65건) —
+  safety_boundary·corpus_regression 사례를 담은 스냅샷의 exact-fields·caseId 오름차순·
+  candidate_generation 거절·동결 분석의 실제 `validateSituationAnalysis` 재검사를 고정한다.
+  `analysis`와 `analysis.safety`에도 exact-fields를 적용해 `rawResponse`·`userId`·
+  `analysis.safety.sessionId` 같은 여분의 필드가 모든 해시를 올바르게 재계산해도 거절되는지
+  고정한다. `sourceCorpusArtifactHash`·`frozenAnalysisArtifactHash`가 cases에서 직접 재계산한
+  값과 대조된다는 것(형식만 맞는 임의의 해시로 top-level fingerprint만 다시 맞춰도 거절됨을
+  "[재현]" 테스트로 먼저 고정), 두 종류가 각각 최소 1개 있어야 한다는 것, frozen analysis와
+  expected의 교차 일관성(urgent 분석+normal expectedSafety, recommend route인데 다른 domain,
+  domain_choice 후보 순서 등)을 각각 단일 오류로 고정한다. 사례 text·분석 태그·expected·
+  environment의 모델·스키마·태그 사전·domain manifest·Gate·Matcher·기준 카탈로그 결속·두 하위
+  해시·저장된 fingerprint 중 무엇 하나만 바뀌어도 정확히 그 하나의 오류만 나는지(다른 검사가
+  우연히 가려 잡지 않는지) 대조한다. §9-12에서 추가한 `validateAnalysisSnapshotCase`(사례
+  하나만 독립적으로 검증)가 `validateAnalysisSnapshot`이 스냅샷 전체를 볼 때와 정확히 같은
+  오류를 내는지(로직 복제가 아님을 직접 대조), 교차 일관성 위반과 candidate_generation을
+  거절하는지를 고정한다.
 - `automatic-scripture-catalog-analysis-environment.test.ts` (§9-10 수정 6, 17건) —
   `buildCurrentAnalysisSnapshotEnvironment`가 결정적이고 baselineCatalogVersionHash 인자를
   그대로 돌려주는지, 소스에 네트워크·환경변수·파일 시스템·시계 접근이 없는지 고정한다.
@@ -1113,6 +1286,21 @@ Edge Function·네트워크를 전혀 부르지 않는다(소스 스캔 테스�
   계약 밖 필드·유효하지 않은 분석·잘못된 baseline hash 중 무엇이든 어긋나면 부분 스냅샷
   없이 구체적 필드 경로가 담긴 오류만 돌려주는지, 성공한 스냅샷의 environment·두 하위
   해시·fingerprint가 기존 계산 함수 결과와 정확히 같은지를 고정한다.
+- `automatic-scripture-catalog-analysis-snapshot-runner.test.ts` (§9-12, 28건) —
+  빈 체크포인트(`null`)에서 EVAL-001부터 시작하는지, 유효한 prefix 뒤 정확한 다음
+  사례부터 재개하는지, 완성 체크포인트(156/156)면 analyze 호출이 0회인지,
+  `maxCases` 0·1·여러 건과 음수·비정수 거절을 고정한다. 각 성공 결과 뒤 정확히
+  한 번씩 저장을 호출하는지, 저장이 끝나기 전에는 다음 analyze를 부르지 않는지(저장
+  실패 시나리오로 확인), analyze 예외·계약 위반 분석(analysis 여분 필드)·교차
+  일관성 위반 분석이 각각 그 시점까지의 정상 prefix만 남기고 저장되지 않는지,
+  저장 실패 뒤 추가 analyze 호출이 없는지, 잘못된 baseline hash가 analyze·저장
+  없이 즉시 거절되는지를 고정한다. `validateAnalysisRunnerCheckpoint`가 중간 누락·
+  순서 뒤집힘·중복·계획 밖 사례·text 변경·다른 계획 지문·다른 environment·계약 밖
+  wrapper 필드·raw response/token usage/사용자 식별자 필드를 각각 거절하는지 고정한다.
+  156건을 전부 처리한 completed 스냅샷이 기존 builder를 직접 호출해 만든 스냅샷과
+  `deepEqual`로 동일한지, 소스에 OpenAI·fetch·환경변수·파일 시스템·console·Supabase
+  접근이 없는지, analyzer·store가 이 테스트가 만든 인메모리 가짜 함수임을 호출
+  횟수·인자로 직접 확인한다.
 
 규칙을 일부러 깨뜨려 테스트가 실제로 잡는지 확인했다(mutation testing). TypeScript 12개 + SQL 6개 + 순환 검증 위험 7개,
 모두 25개 변형을 넣어 보았다.

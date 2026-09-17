@@ -522,6 +522,22 @@ function validateCase(value: unknown, label: string): string[] {
   return errors;
 }
 
+/**
+ * 사례 하나(`{caseId, kind, text, analysis, expected}`)만 독립적으로 검증하고 싶은
+ * 호출자를 위해 내부 `validateCase`를 그대로(로직을 복제하지 않고) 공개한다 — exact-fields,
+ * caseId 형식, 금지 패턴, `analysis`·`analysis.safety`의 exact-fields, 공용
+ * `validateSituationAnalysis`, 그리고 `analysis`와 `expected`의 교차 일관성까지 전부
+ * `validateAnalysisSnapshot`이 스냅샷 전체를 볼 때와 정확히 같은 규칙으로 확인한다.
+ *
+ * 예: 재개 가능한 실행기(automatic-scripture-catalog-analysis-snapshot-runner.ts)가 모델
+ * 분석 결과 하나를 체크포인트에 넣기 전에, 스냅샷 전체를 만들지 않고도 이 함수로 미리
+ * 검증한다.
+ */
+export function validateAnalysisSnapshotCase(value: unknown, label = 'case'): AnalysisSnapshotValidationResult {
+  const errors = validateCase(value, label);
+  return { valid: errors.length === 0, errors };
+}
+
 /* ------------------------------------------------------------------ */
 /* 지문                                                                 */
 /* ------------------------------------------------------------------ */
