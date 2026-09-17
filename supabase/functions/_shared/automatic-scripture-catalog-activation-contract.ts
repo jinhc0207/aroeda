@@ -61,7 +61,10 @@ import {
 /* 이름 · 권한 · SQL 사본 대상 상수                                       */
 /* ------------------------------------------------------------------ */
 
-export const VALIDATION_CONTRACT_VERSION = 'automatic-scripture-catalog-validation/v2';
+// v3: contextTheologyReview.payload.evaluations[].cardVerdicts(카드 최종 verdict 하나)를
+// cardEvaluations(카드마다 rubric criterion 아홉 개 개별 판정)로 바꾼 호환 불가능한 변경.
+// SQL 쪽은 20260916141221_upgrade_automatic_scripture_catalog_validation_v3.sql이 맞춘다.
+export const VALIDATION_CONTRACT_VERSION = 'automatic-scripture-catalog-validation/v3';
 export const DEMAND_EVIDENCE_CONTRACT_VERSION = 'scripture-demand-evidence/v1';
 export const VALIDATOR_PROFILE_CONTRACT_VERSION = 'scripture-catalog-validator-profile/v1';
 export const VALIDATOR_REGISTRY_CONTRACT_VERSION = 'scripture-catalog-validator-registry/v1';
@@ -117,6 +120,27 @@ export const CHECK_VALIDATOR_KIND: Readonly<Record<RequiredValidationCheck, Vali
   corpusRegression: 'deterministic',
   candidateGenerationEvaluation: 'deterministic',
 };
+
+/**
+ * 신학 검수 rubric이 요구하는 criterion id 아홉 개, 정확한 순서.
+ *
+ * rubric의 실제 문구·버전·지문(THEOLOGY_REVIEW_RUBRIC)은 validator registry에 있다.
+ * 이 계약은 registry를 참조하지 않는다(순환 참조가 생긴다) — registry가 이 계약을 참조하는 방향이다.
+ * 그래서 이 파일은 "카드마다 이 아홉 개를 정확한 순서로 담아야 한다"는 모양만 여기 고정해 둔다.
+ * 값이 registry의 rubric.criteria 순서와 실제로 같은지는 registry 쪽 테스트가 대조해 고정한다.
+ */
+export const THEOLOGY_CRITERION_IDS = [
+  'context-fidelity',
+  'no-unpromised-outcome',
+  'no-divine-intent-claim',
+  'domain-tag-support',
+  'crisis-guidance-precedence',
+  'no-coerced-reconciliation',
+  'krv-citation-integrity',
+  'new-domain-distinctness',
+  'uncertainty-defaults-to-fail',
+] as const;
+export type TheologyCriterionId = (typeof THEOLOGY_CRITERION_IDS)[number];
 
 export const MIN_INDEPENDENT_EVALUATIONS = 2;
 export const MIN_DEMAND_OCCURRENCES = 30;
@@ -438,8 +462,15 @@ export type KrvTextMatchPayload = {
   bibleSourceSha256: string;
   passageTextHashes: { cardId: string; passageIndex: number; textHash: string }[];
 };
+/** 카드 하나, criterion 하나의 판정. 모델은 이 판정만 낸다 — 카드 최종 verdict는 여기 없다. */
+export type CriterionVerdict = { criterionId: TheologyCriterionId; verdict: Verdict };
+/** 카드 하나에 대한 rubric 아홉 개 전부의 판정, THEOLOGY_CRITERION_IDS 순서 그대로. */
+export type CardCriterionEvaluation = { cardId: string; criteria: CriterionVerdict[] };
+export const CRITERION_VERDICT_FIELDS = ['criterionId', 'verdict'] as const;
+export const CARD_CRITERION_EVALUATION_FIELDS = ['cardId', 'criteria'] as const;
+
 export type ContextTheologyReviewPayload = {
-  evaluations: { profileHash: string; cardVerdicts: { cardId: string; verdict: Verdict }[] }[];
+  evaluations: { profileHash: string; cardEvaluations: CardCriterionEvaluation[] }[];
 };
 export type SafetyBoundaryPayload = {
   rulesVersion: string;
@@ -714,7 +745,7 @@ export async function validateAutomaticValidationRecord(
         for (let index = 0; index < passages.length; index += 1) {
           let verses: readonly { verse: number; text: string }[] | null = null;
           try {
-            verses = context.resolvePassageText(passages[index].passage);
+            verses = context.resolvePassageText(structuredClone(passages[index].passage));
           } catch {
             verses = null;
           }
@@ -722,6 +753,12 @@ export async function validateAutomaticValidationRecord(
           if (
             !verses ||
             verses.length !== expectedCount ||
+            verses.some(
+              (verse, verseIndex) =>
+                verse.verse !== passages[index].passage.startVerse + verseIndex ||
+                typeof verse.text !== 'string' ||
+                verse.text.length === 0,
+            ) ||
             payload.passageTextHashes[index].textHash !== (await computePassageTextHash(passages[index].passage, verses))
           ) {
             pass = false;
@@ -741,7 +778,7 @@ export async function validateAutomaticValidationRecord(
         let allPass = true;
         payload.evaluations.forEach((evaluation: unknown, index: number) => {
           const label = `contextTheologyReview.payload.evaluations[${index}]`;
-          if (!isPlainObject(evaluation) || exactFields(evaluation, ['profileHash', 'cardVerdicts'], label).length > 0) {
+          if (!isPlainObject(evaluation) || exactFields(evaluation, ['profileHash', 'cardEvaluations'], label).length > 0) {
             shapeErrors.push(`${label}: 모양이 맞지 않습니다.`);
             return;
           }
@@ -753,20 +790,42 @@ export async function validateAutomaticValidationRecord(
           groups.push(profile.independenceGroup);
           models.push(profile.modelId!);
           if (
-            !Array.isArray(evaluation.cardVerdicts) ||
-            canonicalJson(evaluation.cardVerdicts.map((item: unknown) => (isPlainObject(item) ? item.cardId : null))) !==
-              canonicalJson(cardIds) ||
-            evaluation.cardVerdicts.some(
-              (item: unknown) =>
-                !isPlainObject(item) ||
-                exactFields(item, ['cardId', 'verdict'], 'v').length > 0 ||
-                !(VERDICTS as readonly unknown[]).includes(item.verdict),
-            )
+            !Array.isArray(evaluation.cardEvaluations) ||
+            canonicalJson(evaluation.cardEvaluations.map((item: unknown) => (isPlainObject(item) ? item.cardId : null))) !==
+              canonicalJson(cardIds)
           ) {
-            shapeErrors.push(`${label}.cardVerdicts: 후보 카드마다 한 번씩, 순서대로 판정해야 합니다.`);
+            shapeErrors.push(`${label}.cardEvaluations: 후보 카드마다 한 번씩, 순서대로 있어야 합니다.`);
             return;
           }
-          if (evaluation.cardVerdicts.some((item: { verdict: Verdict }) => item.verdict !== 'pass')) allPass = false;
+          let cardsOk = true;
+          const cardFinalVerdicts: Verdict[] = [];
+          (evaluation.cardEvaluations as unknown[]).forEach((cardEvaluation: unknown, cardIndex: number) => {
+            const cardLabel = `${label}.cardEvaluations[${cardIndex}]`;
+            if (!isPlainObject(cardEvaluation) || exactFields(cardEvaluation, CARD_CRITERION_EVALUATION_FIELDS, cardLabel).length > 0) {
+              shapeErrors.push(`${cardLabel}: 모양이 맞지 않습니다.`);
+              cardsOk = false;
+              return;
+            }
+            if (
+              !Array.isArray(cardEvaluation.criteria) ||
+              canonicalJson(cardEvaluation.criteria.map((item: unknown) => (isPlainObject(item) ? item.criterionId : null))) !==
+                canonicalJson(THEOLOGY_CRITERION_IDS) ||
+              cardEvaluation.criteria.some(
+                (item: unknown) =>
+                  !isPlainObject(item) ||
+                  exactFields(item, CRITERION_VERDICT_FIELDS, 'c').length > 0 ||
+                  !(VERDICTS as readonly unknown[]).includes(item.verdict),
+              )
+            ) {
+              shapeErrors.push(`${cardLabel}.criteria: rubric의 criterion 9개를 정확한 순서로, 빠짐없이 담아야 합니다.`);
+              cardsOk = false;
+              return;
+            }
+            const cardPass = (cardEvaluation.criteria as CriterionVerdict[]).every((item) => item.verdict === 'pass');
+            cardFinalVerdicts.push(cardPass ? 'pass' : 'fail');
+          });
+          if (!cardsOk) return;
+          if (cardFinalVerdicts.some((verdict) => verdict !== 'pass')) allPass = false;
         });
         if (shapeErrors.length > 0) return { errors: shapeErrors, pass: false };
         const profileHashes = (payload.evaluations as { profileHash: string }[]).map((item) => item.profileHash);

@@ -31,9 +31,11 @@ import {
   ATTESTATION_CONTRACT_VERSION,
   AUTOMATED_VALIDATION_AUTHORITY,
   type AutomaticValidationRecord,
+  type CardCriterionEvaluation,
   type DemandCell,
   type PassageTextResolver,
   REQUIRED_VALIDATION_CHECKS,
+  THEOLOGY_CRITERION_IDS,
   VALIDATION_CONTRACT_VERSION,
   VALIDATOR_PROFILE_CONTRACT_VERSION,
   VALIDATOR_REGISTRY_CONTRACT_VERSION,
@@ -257,6 +259,21 @@ export async function resealRecord(record: AutomaticValidationRecord): Promise<A
   return record;
 }
 
+/**
+ * 카드마다 rubric criterion 아홉 개(THEOLOGY_CRITERION_IDS) 전부를 담은 평가를 만든다.
+ * 기본은 전부 pass. verdictFor로 특정 카드·criterion만 fail로 만들 수 있다.
+ * 모델은 criterion 판정만 낸다 — 카드 최종 verdict는 여기 없다(코드가 계산한다).
+ */
+export function makeCardCriterionEvaluations(
+  candidate: ScriptureCatalogCandidate,
+  verdictFor: (cardId: string, criterionId: string) => 'pass' | 'fail' = () => 'pass',
+): CardCriterionEvaluation[] {
+  return candidate.cards.map((card) => ({
+    cardId: card.id,
+    criteria: THEOLOGY_CRITERION_IDS.map((criterionId) => ({ criterionId, verdict: verdictFor(card.id, criterionId) })),
+  }));
+}
+
 /** 모든 필수 항목이 payload에서 다시 계산해도 통과하는 검증 기록을 만든다. */
 export async function makePassingValidationRecord(
   candidate: ScriptureCatalogCandidate,
@@ -275,7 +292,7 @@ export async function makePassingValidationRecord(
       });
     }
   }
-  const cardVerdicts = candidate.cards.map((card) => ({ cardId: card.id, verdict: 'pass' as const }));
+  const cardEvaluations = makeCardCriterionEvaluations(candidate);
   const record = {
     contractVersion: VALIDATION_CONTRACT_VERSION,
     validationAuthority: AUTOMATED_VALIDATION_AUTHORITY,
@@ -299,8 +316,8 @@ export async function makePassingValidationRecord(
         status: 'pass',
         payload: {
           evaluations: [
-            { profileHash: profileHashById('fixture-theology-evaluator-a', registry), cardVerdicts },
-            { profileHash: profileHashById('fixture-theology-evaluator-b', registry), cardVerdicts: structuredClone(cardVerdicts) },
+            { profileHash: profileHashById('fixture-theology-evaluator-a', registry), cardEvaluations },
+            { profileHash: profileHashById('fixture-theology-evaluator-b', registry), cardEvaluations: structuredClone(cardEvaluations) },
           ],
         },
         artifactHash: '',

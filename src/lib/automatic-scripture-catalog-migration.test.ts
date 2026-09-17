@@ -52,6 +52,7 @@ import {
   STORE_SCRIPTURE_CATALOG_CANDIDATE_RPC,
   STORE_SCRIPTURE_CATALOG_VALIDATION_RPC,
   ATTESTATION_HASH_FORMAT,
+  THEOLOGY_CRITERION_IDS,
   VALIDATION_CONTRACT_VERSION,
   VALIDATION_HASH_FORMAT,
   VALIDATOR_PROFILE_HASH_FORMAT,
@@ -62,21 +63,40 @@ import { SOURCE_SHA256 } from '../../supabase/functions/_shared/bible-reference-
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const MIGRATION_DIR = path.join(projectRoot, 'supabase/migrations');
 const MIGRATION_NAME = '20260915120000_create_automatic_scripture_catalog.sql';
+const PROFILE_MIGRATION_NAME = '20260916011019_register_automatic_scripture_catalog_validator_profiles.sql';
+const V3_MIGRATION_NAME = '20260916141221_upgrade_automatic_scripture_catalog_validation_v3.sql';
+const VALIDATION_CONTEXT_MIGRATION_NAME = '20260917090000_add_scripture_catalog_validation_context_rpc.sql';
 const SQL = readFileSync(path.join(MIGRATION_DIR, MIGRATION_NAME), 'utf8');
+const V3_SQL = readFileSync(path.join(MIGRATION_DIR, V3_MIGRATION_NAME), 'utf8');
 
 /** 설명 주석에는 예시 낱말이 있다. 동작을 볼 때는 한 줄 주석을 뺀 것만 본다. */
-const CODE = SQL.split('\n')
-  .filter((line) => !/^\s*--/.test(line))
-  .join('\n');
+const stripComments = (sql: string) => sql.split('\n').filter((line) => !/^\s*--/.test(line)).join('\n');
+const CODE = stripComments(SQL);
+const V3_CODE = stripComments(V3_SQL);
 
-/** 함수 하나의 본문(as $$ ... $$;)만 잘라 온다. */
-function functionBody(schemaAndName: string): string {
-  const start = CODE.indexOf(`create function ${schemaAndName}(`);
+/** 함수 하나의 본문(as $$ ... $$;)만 code에서 잘라 온다. create나 create or replace 둘 다 찾는다. */
+function functionBodyIn(code: string, schemaAndName: string): string {
+  const start = (() => {
+    const created = code.indexOf(`create function ${schemaAndName}(`);
+    const replaced = code.indexOf(`create or replace function ${schemaAndName}(`);
+    if (created === -1 && replaced === -1) return -1;
+    return replaced === -1 ? created : replaced;
+  })();
   assert.notEqual(start, -1, `${schemaAndName}를 찾지 못했습니다.`);
-  const open = CODE.indexOf('as $$', start);
-  const close = CODE.indexOf('$$;', open + 5);
+  const open = code.indexOf('as $$', start);
+  const close = code.indexOf('$$;', open + 5);
   assert.ok(open > start && close > open, `${schemaAndName} 본문을 자르지 못했습니다.`);
-  return CODE.slice(start, close + 3);
+  return code.slice(start, close + 3);
+}
+
+/** 기준 migration에서 함수 본문을 자른다. */
+function functionBody(schemaAndName: string): string {
+  return functionBodyIn(CODE, schemaAndName);
+}
+
+/** v3 업그레이드 migration에서 함수 본문을 자른다(create or replace로 다시 만든 것). */
+function v3FunctionBody(schemaAndName: string): string {
+  return functionBodyIn(V3_CODE, schemaAndName);
 }
 
 function readSqlTextArray(body: string, name: string): string[] {
@@ -178,7 +198,10 @@ describe('자동 카탈로그 migration · A. SQL 사본이 계약과 같은가'
   });
 
   it('계약 버전과 authority 문자열이 같다', () => {
-    for (const value of [CATALOG_CONTRACT_VERSION, CANDIDATE_CONTRACT_VERSION, VALIDATION_CONTRACT_VERSION]) {
+    // VALIDATION_CONTRACT_VERSION(v3)은 기준 migration이 아니라 v3 업그레이드 migration에 있다(§E).
+    // 기준 migration은 손대지 않았으므로 여전히 옛 v2 문자열을 담고 있다 — 그것은 죽은 역사 기록이고
+    // 실제로 강제되는 값은 v3 migration의 ALTER 제약·CREATE OR REPLACE 함수다.
+    for (const value of [CATALOG_CONTRACT_VERSION, CANDIDATE_CONTRACT_VERSION]) {
       assert.ok(CODE.includes(`'${value}'`), value);
     }
     assert.ok(CODE.includes(`validation ->> 'validationAuthority' = '${AUTOMATED_VALIDATION_AUTHORITY}'`));
@@ -540,9 +563,9 @@ describe('자동 카탈로그 migration · D. 경계와 개인정보', () => {
     }
   });
 
-  it('다른 migration이 자동 카탈로그 함수·표를 다시 만들거나 권한을 주지 않는다', () => {
+  it('검토된 profile·v3·읽기 context migration 외 다른 migration이 자동 카탈로그 함수·표를 다시 만들거나 권한을 주지 않는다', () => {
     const others = readdirSync(MIGRATION_DIR)
-      .filter((name) => name.endsWith('.sql') && name !== MIGRATION_NAME)
+      .filter((name) => name.endsWith('.sql') && name !== MIGRATION_NAME && name !== PROFILE_MIGRATION_NAME && name !== V3_MIGRATION_NAME && name !== VALIDATION_CONTEXT_MIGRATION_NAME)
       .map((name) => readFileSync(path.join(MIGRATION_DIR, name), 'utf8'));
     for (const sql of others) {
       assert.equal(sql.includes('scripture_catalog'), false);
@@ -570,5 +593,109 @@ describe('자동 카탈로그 migration · D. 경계와 개인정보', () => {
       const keys = [...notice.matchAll(/'([A-Za-z]+)',/g)].map((item) => item[1]);
       assert.deepEqual(keys.sort(), ['candidateHash', 'fromVersionHash', 'kind', 'pointerRevision', 'reasonCode', 'toVersionHash']);
     }
+  });
+});
+
+/* ================================================================== */
+/* E. v2 → v3 업그레이드 (criterion 단위 신학 attestation)                */
+/* ================================================================== */
+
+describe('자동 카탈로그 migration · E. v2 → v3 업그레이드', () => {
+  const v3Store = v3FunctionBody(`public.${STORE_SCRIPTURE_CATALOG_VALIDATION_RPC}`);
+  const v3Activation = v3FunctionBody(`public.${ACTIVATE_SCRIPTURE_CATALOG_CANDIDATE_RPC}`);
+
+  it('기준 migration·profile 등록 migration은 한 글자도 바뀌지 않았다', () => {
+    const pinned: Record<string, string> = {
+      [MIGRATION_NAME]: 'bbc8a8752d23cd0590c790f038a76ad7a9056a89e0bedd1586c87cd3e3ebcf53',
+      [PROFILE_MIGRATION_NAME]: '2aecf108e0b96b48d2b624caefb3a7ab6fa0a25839b856288c10dd770541721b',
+    };
+    for (const [name, hash] of Object.entries(pinned)) {
+      const actual = createHash('sha256').update(readFileSync(path.join(MIGRATION_DIR, name))).digest('hex');
+      assert.equal(actual, hash, `${name}이 바뀌었습니다.`);
+    }
+  });
+
+  it('profile 등록 migration은 여전히 profile 등록만 한다(함수·표를 새로 만들거나 다시 정의하지 않는다)', () => {
+    const profileSql = readFileSync(path.join(MIGRATION_DIR, PROFILE_MIGRATION_NAME), 'utf8');
+    assert.ok(profileSql.includes('insert into private.scripture_catalog_validator_profile'));
+    for (const banned of ['create function', 'create or replace function', 'create table', 'alter table', 'grant ', 'revoke ']) {
+      assert.equal(profileSql.toLowerCase().includes(banned), false, `profile 등록 migration에 ${banned}가 있습니다.`);
+    }
+  });
+
+  it('VALIDATION_CONTRACT_VERSION(v3) 문자열이 TS와 정확히 같고, v3 migration에도 있다', () => {
+    assert.equal(VALIDATION_CONTRACT_VERSION, 'automatic-scripture-catalog-validation/v3');
+    assert.ok(V3_CODE.includes(`'${VALIDATION_CONTRACT_VERSION}'`));
+    // 옛 v2 문자열을 v3 migration 안에서 실행 코드로 쓰지 않는다(주석 설명은 예외).
+    assert.equal(V3_CODE.includes('automatic-scripture-catalog-validation/v2'), false);
+  });
+
+  it('v3 migration은 검증 표의 계약 버전 제약을 드롭하고 v3 제약으로 다시 만든다', () => {
+    assert.ok(V3_CODE.includes('drop constraint scripture_catalog_validation_matches_candidate'));
+    assert.match(
+      V3_CODE,
+      /add constraint scripture_catalog_validation_matches_candidate\s+check \(\s*jsonb_exists\(validation, 'contractVersion'\)\s*and validation ->> 'contractVersion' = 'automatic-scripture-catalog-validation\/v3'/,
+    );
+  });
+
+  it('v3 migration은 검증 저장·활성화 두 함수만 create or replace로 다시 만든다(다른 함수·표는 없다)', () => {
+    const createdOrReplaced = [...V3_CODE.matchAll(/^create (?:or replace )?function public\.([a-z_]+)\(/gm)].map((item) => item[1]);
+    assert.deepEqual(createdOrReplaced.sort(), [ACTIVATE_SCRIPTURE_CATALOG_CANDIDATE_RPC, STORE_SCRIPTURE_CATALOG_VALIDATION_RPC].sort());
+    assert.equal(/^create table/m.test(V3_CODE), false, 'v3 migration이 표를 새로 만들면 안 됩니다.');
+    assert.equal(/^create function private\./m.test(V3_CODE), false, 'v3 migration이 private 도구 함수를 새로 만들면 안 됩니다.');
+  });
+
+  it('v3 검증 저장 RPC는 v3 계약 버전만 받고, 그 밖의 검사는 기준과 같다', () => {
+    assert.ok(v3Store.includes("p_validation ->> 'contractVersion' is distinct from 'automatic-scripture-catalog-validation/v3'"));
+    assert.equal(v3Store.includes('automatic-scripture-catalog-validation/v2'), false);
+    // 필수 항목 목록은 기준과 같은 값을 그대로 옮겼다.
+    assert.deepEqual(readSqlTextArray(v3Store, 'v_required_checks'), [...REQUIRED_VALIDATION_CHECKS]);
+    assert.ok(v3Store.includes('security definer'));
+    assert.ok(v3Store.includes('set search_path = private, pg_catalog'));
+  });
+
+  it('v3 활성화 RPC는 v3 계약 버전을 확인하고 criterion 아홉 개를 TS 계약과 같은 순서로 고정한다', () => {
+    assert.ok(v3Activation.includes("v_validation ->> 'contractVersion' is distinct from 'automatic-scripture-catalog-validation/v3'"));
+    assert.deepEqual(readSqlTextArray(v3Activation, 'v_required_criteria'), [...THEOLOGY_CRITERION_IDS]);
+    assert.deepEqual(readSqlTextArray(v3Activation, 'v_required_checks'), [...REQUIRED_VALIDATION_CHECKS]);
+    assert.ok(v3Activation.includes('security definer'));
+    assert.ok(v3Activation.includes('set search_path = private, pg_catalog'));
+  });
+
+  it('신학 활성화 경로의 SQL 원문에 옛 cardVerdicts가 실행 코드로 남아 있지 않다(주석 제외)', () => {
+    assert.equal(v3Activation.includes('cardVerdicts'), false);
+    assert.equal(v3Store.includes('cardVerdicts'), false);
+    // 파일 원문(주석 포함)에는 옛 계약을 설명하는 역사적 언급만 있고, 실행 코드에는 전혀 없다.
+    assert.equal(V3_CODE.includes('cardVerdicts'), false);
+  });
+
+  it('v3 활성화 RPC는 evaluation·카드·criterion 세 층 모두에서 정확한 필드만 허용한다(exact-fields)', () => {
+    assert.ok(v3Activation.includes("array['cardEvaluations', 'profileHash']"), 'evaluation 필드가 정확히 profileHash·cardEvaluations인지 확인하지 않습니다.');
+    assert.ok(v3Activation.includes("array['cardId', 'criteria']"), '카드 필드가 정확히 cardId·criteria인지 확인하지 않습니다.');
+    assert.ok(v3Activation.includes("array['criterionId', 'verdict']"), 'criterion 필드가 정확히 criterionId·verdict인지 확인하지 않습니다.');
+  });
+
+  it('v3 활성화 RPC는 카드 차례·criterion 차례를 후보·rubric과 정확히 대조한다', () => {
+    assert.ok(v3Activation.includes('v_expected_card_ids'), '카드 차례를 후보에서 다시 만들지 않습니다.');
+    assert.ok(v3Activation.includes("card ->> 'cardId' order by ord"), '카드 차례를 순서대로 뽑지 않습니다.');
+    assert.ok(v3Activation.includes("entry ->> 'criterionId' is distinct from v_required_criteria[ord]"), 'criterion 차례를 자리별로 대조하지 않습니다.');
+  });
+
+  it('v3 함수 권한은 기준과 같다(회수 후 service_role에만 실행)', () => {
+    for (const rpc of [STORE_SCRIPTURE_CATALOG_VALIDATION_RPC, ACTIVATE_SCRIPTURE_CATALOG_CANDIDATE_RPC]) {
+      const qualified = rpc === STORE_SCRIPTURE_CATALOG_VALIDATION_RPC
+        ? `public.${rpc}(text, text, jsonb, jsonb)`
+        : `public.${rpc}(text, text, text, text)`;
+      assert.ok(V3_CODE.includes(`revoke all on function ${qualified} from public;`), `${rpc}: public 회수`);
+      assert.match(V3_CODE, new RegExp(`revoke all on function ${qualified.replace(/[().]/g, '\\$&')}\\s+from anon, authenticated, service_role;`), `${rpc}: 역할 회수`);
+      assert.ok(V3_CODE.includes(`grant execute on function ${qualified} to service_role;`), `${rpc}: service_role 허용`);
+    }
+    const grants = [...V3_CODE.matchAll(/grant execute on function [^;]+ to ([a-z_, ]+);/g)].map((item) => item[1].trim());
+    assert.deepEqual(grants, grants.map(() => 'service_role'), 'service_role 말고 다른 역할에 열린 함수가 있습니다.');
+  });
+
+  it('v3 migration도 예외를 삼키지 않고 동적 SQL을 쓰지 않는다', () => {
+    assert.equal(/\bexception\s+when\b/i.test(V3_CODE), false);
+    assert.equal(/\bexecute\s+(format|'|\$|v_)/i.test(V3_CODE), false);
   });
 });

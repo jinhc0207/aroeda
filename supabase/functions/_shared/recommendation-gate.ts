@@ -28,6 +28,17 @@ import { matchScriptureCards, type CardScore } from './scripture-matcher.ts';
 import type { DomainPriorityStatus, SafetyAssessment, SituationAnalysis } from './situation-analysis.ts';
 import { resolveAnalysisForChosenDomain } from './domain-choice-resolution.ts';
 
+/**
+ * 이 Gate가 후보를 고르는 규칙의 명시적 버전. 자동 스냅샷 environment 결속
+ * (automatic-scripture-catalog-analysis-environment.ts)이 "이 스냅샷을 만들 때와 지금
+ * 저장소의 Gate가 같은 규칙을 쓰는가"를 대조할 때 이 상수를 그대로 결속값으로 쓴다.
+ *
+ * 선택 결과(어느 route로 가는지, 어느 카드가 뽑히는지)에 영향을 주는 규칙이 하나라도
+ * 바뀌면 반드시 이 버전을 올린다. 주석·서식만 바꾸는 것으로는 올리지 않는다.
+ * 이번 작업(환경 결속 계층 추가)은 이 파일의 동작을 바꾸지 않았으므로 v1을 유지한다.
+ */
+export const RECOMMENDATION_GATE_CONTRACT_VERSION = 'recommendation-gate/v1';
+
 export type GateRoute = 'safety' | 'domain_choice' | 'no_coverage' | 'recommend' | 'ambiguous';
 
 /** 내부 개발 확인용 코드. 사용자에게 보여줄 문장은 아직 만들지 않는다. */

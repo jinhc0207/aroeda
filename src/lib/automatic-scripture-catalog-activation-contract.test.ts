@@ -208,7 +208,7 @@ describe('자동 검증 기록 · fail-closed', () => {
       ['acceptable 하락', (record) => { record.checks.corpusRegression.payload.cases[1].candidate.acceptableMatch = false; }],
       ['생성 평가 부족', (record) => { record.checks.candidateGenerationEvaluation.payload.cases = record.checks.candidateGenerationEvaluation.payload.cases.slice(0, 2); }],
       ['생성 평가 실패', (record) => { record.checks.candidateGenerationEvaluation.payload.cases[0].passed = false; }],
-      ['독립 평가 반대', (record) => { record.checks.contextTheologyReview.payload.evaluations[1].cardVerdicts[0].verdict = 'fail'; }],
+      ['독립 평가 반대', (record) => { record.checks.contextTheologyReview.payload.evaluations[1].cardEvaluations[0].criteria[0].verdict = 'fail'; }],
       ['같은 평가자', (record) => { record.checks.contextTheologyReview.payload.evaluations[1].profileHash = record.checks.contextTheologyReview.payload.evaluations[0].profileHash; }],
       ['본문 수 불일치', (record) => { record.checks.passageExistence.payload.passages = []; }],
     ];
@@ -229,7 +229,7 @@ describe('자동 검증 기록 · fail-closed', () => {
       }],
       ['안전 위반', (record) => { record.checks.safetyBoundary.payload.cases[0].observedRoute = 'recommend'; record.checks.safetyBoundary.status = 'fail'; }],
       ['독립 평가 반대', (record) => {
-        record.checks.contextTheologyReview.payload.evaluations[1].cardVerdicts[0].verdict = 'fail';
+        record.checks.contextTheologyReview.payload.evaluations[1].cardEvaluations[0].criteria[0].verdict = 'fail';
         record.checks.contextTheologyReview.status = 'fail';
       }],
       ['평가자 하나뿐', (record) => {
@@ -413,6 +413,52 @@ describe('자동 검증 기록 · 겹침에 가려지지 않는 단일 규칙', 
     );
   });
 
+  it('해시가 스스로와는 맞아도, 절 번호가 밀린 본문을 pass로 적으면 무효다(같은 resolver를 build·검증 양쪽에 써도)', async () => {
+    // 해시 비교만으로는 못 잡는 경우를 만든다: 기록을 지을 때도, 다시 검증할 때도
+    // 똑같이 "한 절씩 밀려 있는" resolver를 쓴다. 그러면 지문은 자기 자신과 맞아떨어진다.
+    // 그런데도 실제로 돌아온 절 번호가 청구한 위치(startVerse부터 이어지는 번호)와 다르면
+    // krvTextMatch를 pass로 적은 것은 사실과 다른 기록이어야 한다.
+    const shiftedResolver = ((passage: { startVerse: number; endVerse: number }) => {
+      const verses = resolveKrvPassage(passage as never);
+      return verses ? verses.map((verse) => ({ ...verse, verse: verse.verse + 1 })) : null;
+    }) as typeof resolveKrvPassage;
+
+    const fixture = await existingFixture();
+    const passage = fixture.candidate.cards[0].passages[0];
+    const shiftedVerses = shiftedResolver(passage)!;
+    const forged = clone(fixture.record);
+    forged.checks.krvTextMatch.payload.passageTextHashes[0].textHash = await computePassageTextHash(passage, shiftedVerses);
+    await resealRecord(forged);
+
+    const result = await check({ ...fixture, record: forged }, forged, shiftedResolver);
+    assert.equal(result.valid, false);
+    assert.ok(
+      result.errors.some((error) => error === 'krvTextMatch: payload로는 실패인데 통과로 기록됐습니다.'),
+      result.errors.join(' / '),
+    );
+  });
+
+  it('본문이 없다고 나온 절을 pass로 적으면 무효다(절 수는 맞아도 글자가 비어 있다)', async () => {
+    const emptyTextResolver = ((passage: { startVerse: number; endVerse: number }) => {
+      const verses = resolveKrvPassage(passage as never);
+      return verses ? verses.map((verse) => ({ ...verse, text: '' })) : null;
+    }) as typeof resolveKrvPassage;
+
+    const fixture = await existingFixture();
+    const passage = fixture.candidate.cards[0].passages[0];
+    const emptyVerses = emptyTextResolver(passage)!;
+    const forged = clone(fixture.record);
+    forged.checks.krvTextMatch.payload.passageTextHashes[0].textHash = await computePassageTextHash(passage, emptyVerses);
+    await resealRecord(forged);
+
+    const result = await check({ ...fixture, record: forged }, forged, emptyTextResolver);
+    assert.equal(result.valid, false);
+    assert.ok(
+      result.errors.some((error) => error === 'krvTextMatch: payload로는 실패인데 통과로 기록됐습니다.'),
+      result.errors.join(' / '),
+    );
+  });
+
   it('산출물 지문에는 항목 이름이 함께 들어간다(payload를 항목끼리 바꿔 끼우지 못한다)', async () => {
     const payload = { rulesVersion: 'x/v1', cases: [] };
     assert.notEqual(
@@ -432,6 +478,50 @@ describe('자동 검증 기록 · 겹침에 가려지지 않는 단일 규칙', 
     assert.equal(result.valid, false);
     assert.ok(
       result.errors.some((error) => error === 'demandSignal.payload.subjectKey: 후보의 영역·주제 지문과 다릅니다.'),
+      result.errors.join(' / '),
+    );
+  });
+
+  // 아래 세 건은 artifactHash를 다시 봉인해(resealRecord) hash-불일치 검사에 가려지지 않게 한다.
+  // 그래야 criterion 순서·모양·카드 id 대조 하나하나가 실제로 잡는지 볼 수 있다.
+  it('criterion 순서가 뒤바뀌면(같은 criterion 집합이어도) 무효다', async () => {
+    const fixture = await existingFixture();
+    const tampered = clone(fixture.record);
+    tampered.checks.contextTheologyReview.payload.evaluations[1].cardEvaluations[0].criteria.reverse();
+    await resealRecord(tampered);
+
+    const result = await validateAutomaticValidationRecord(tampered, validationContextFor({ ...fixture, record: tampered }));
+    assert.equal(result.valid, false);
+    assert.ok(
+      result.errors.some((error) => error.includes('criteria: rubric의 criterion') && error.includes('정확한 순서')),
+      result.errors.join(' / '),
+    );
+  });
+
+  it('카드 평가에 여분 필드가 있으면 무효다', async () => {
+    const fixture = await existingFixture();
+    const tampered = clone(fixture.record);
+    (tampered.checks.contextTheologyReview.payload.evaluations[1].cardEvaluations[0] as unknown as Record<string, unknown>).extra = true;
+    await resealRecord(tampered);
+
+    const result = await validateAutomaticValidationRecord(tampered, validationContextFor({ ...fixture, record: tampered }));
+    assert.equal(result.valid, false);
+    assert.ok(
+      result.errors.some((error) => error.includes('cardEvaluations[0]: 모양이 맞지 않습니다.')),
+      result.errors.join(' / '),
+    );
+  });
+
+  it('카드 평가의 cardId가 후보 카드와 다르면 무효다', async () => {
+    const fixture = await existingFixture();
+    const tampered = clone(fixture.record);
+    tampered.checks.contextTheologyReview.payload.evaluations[1].cardEvaluations[0].cardId = 'SC-999';
+    await resealRecord(tampered);
+
+    const result = await validateAutomaticValidationRecord(tampered, validationContextFor({ ...fixture, record: tampered }));
+    assert.equal(result.valid, false);
+    assert.ok(
+      result.errors.some((error) => error.includes('cardEvaluations: 후보 카드마다 한 번씩, 순서대로')),
       result.errors.join(' / '),
     );
   });
@@ -654,7 +744,7 @@ describe('참조 의미 · 활성화 (원자성·멱등성·fail-closed)', () =>
   it('독립 평가가 합의하지 않으면 활성화하지 않는다', async () => {
     const prepared = await prepare((fixture) =>
       truthfullyFail(fixture.record, (record) => {
-        record.checks.contextTheologyReview.payload.evaluations[0].cardVerdicts[0].verdict = 'fail';
+        record.checks.contextTheologyReview.payload.evaluations[0].cardEvaluations[0].criteria[0].verdict = 'fail';
         record.checks.contextTheologyReview.status = 'fail';
       }),
     );

@@ -11,6 +11,17 @@
 // 별도 도구 없이 `npm test`로도 실행할 수 있도록 상대 경로와 확장자를 그대로 적는다.
 import { SCRIPTURE_CARDS, type ScriptureCard } from './scripture-cards.ts';
 
+/**
+ * 이 Matcher가 점수를 매기는 규칙의 명시적 버전. 자동 스냅샷 environment 결속
+ * (automatic-scripture-catalog-analysis-environment.ts)이 "이 스냅샷을 만들 때와 지금
+ * 저장소의 Matcher가 같은 규칙을 쓰는가"를 대조할 때 이 상수를 그대로 결속값으로 쓴다.
+ *
+ * 배점·계산 방식 등 선택 결과(카드 점수·순위)에 영향을 주는 규칙이 하나라도 바뀌면
+ * 반드시 이 버전을 올린다. 주석·서식만 바꾸는 것으로는 올리지 않는다. 이번 작업(환경
+ * 결속 계층 추가)은 이 파일의 동작을 바꾸지 않았으므로 v1을 유지한다.
+ */
+export const SCRIPTURE_MATCHER_CONTRACT_VERSION = 'scripture-matcher/v1';
+
 /** 이미 구조화되었다고 가정하는 입력. 모든 항목은 없어도 된다. */
 export type MatchInput = {
   situationTags?: string[];
