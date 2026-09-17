@@ -877,6 +877,152 @@ activation SQL·migration은 이번에도 건드리지 않았다.
 `recommendation-gate.test.ts`·`scripture-matcher.test.ts`도 그대로 통과한다. OpenAI·
 Supabase·DB 호출, 커밋·푸시·배포는 없었다.
 
+## 9-11. 고정 분석 스냅샷 빌더 v1 (2026-09-17, 후속)
+
+### 무엇을 메우려 했는가
+
+§9-9·§9-10에서 고정 분석 스냅샷의 계약·해시·현재 환경 대조는 갖췄지만, 실제 평가
+코퍼스를 빠짐없이 "분석 계획"으로 만들고 외부(장차 별도 실행기)가 만든 분석 결과를
+안전하게 스냅샷으로 조립하는 빌더가 없었다. 이번 작업이 그 빌더다. **실제 156회
+OpenAI 분석 실행은 다음 단계로 미룬다** — 이 파일은 OpenAI·DB·Supabase·네트워크를
+전혀 부르지 않는 순수 로컬 코드다.
+
+### 새 파일
+
+- `scripts/automatic-scripture-catalog-analysis-snapshot-builder.ts` (신규, 후속 결함 수정 포함)
+- `src/lib/automatic-scripture-catalog-analysis-snapshot-builder.test.ts` (신규, 36건)
+
+### 1) 결정적 156개 분석 계획
+
+`buildDeterministicAnalysisPlan()`이 두 원본에서 caseId·kind·text·expected만 뽑은
+156개 계획을 만든다. 런타임 분석 결과·사용량·원본 응답·오류 메시지·사용자 식별자·
+시각은 애초에 이 계획에 들어갈 자리가 없다.
+
+- **corpus_regression 153개**: `EVALUATION_CASES`의 기존 `EVAL-001`~`EVAL-153` ID를
+  그대로 쓴다. `rationale`·`domain`·`rank`·`cluster`·`smoke`·`isNewCardSmoke`는 계획에
+  옮기지 않는다. `RecommendationExpectation`/`DomainChoiceExpectation`/
+  `NoCoverageExpectation`을 `CorpusRegressionCaseExpectation`과 정확히 같은 모양으로
+  투영하고, `acceptableCardIds`·`expectedDomainChoiceCandidates`는 원본과 참조를
+  공유하지 않게 새로 만든다.
+- **safety_boundary 3개**: 배열 인덱스가 아니라 (source, domain, rank)로 원본을
+  찾는다. **`SafeCaseSpec`은 (source, domain, rank)만이 아니라 검토 시점의 실제
+  `text`와 `expectedSafety`(level·categories) 전체까지 함께 고정한다** — 아래
+  "후속 결함 수정" 참고. `findSafetyBoundaryScenario`가 먼저 (source, domain, rank)로
+  정확히 하나로 대응하는 원본을 찾고(0개거나 2개 이상이면 예외), 그 원본의 `text`·
+  `expected`를 spec에 고정해 둔 값과 다시 대조해 하나라도 다르면 어떤 항목이
+  다른지(`text`, `expectedSafety.level`, `expectedSafety.categories`) 밝히며 예외를
+  던진다. `note`는 고정하지 않는다 — 판정 근거 설명일 뿐 사례 정체성의 일부가 아니다.
+  원본 배열의 순서만 바뀌고 내용이 같으면 같은 계획을 만든다(매칭이 인덱스가 아니라
+  조건절이기 때문).
+
+| caseId | source | domain | rank | 고정된 text | 고정된 expectedSafety |
+|---|---|---|---|---|---|
+| `SAFE-001` | single | relationship_conflict_forgiveness | 12 | "상대가 폭언을 반복해..." | `{level:'caution', categories:['abuse']}` |
+| `SAFE-002` | single | relationship_conflict_forgiveness | 18 | "폭력을 당한 뒤에도..." | `{level:'caution', categories:['abuse']}` |
+| `SAFE-003` | single | injustice_mistreatment | 5 | "직장에서 은근히 따돌림..." | `{level:'caution', categories:['abuse']}` |
+
+### 후속 결함 수정 — Codex가 재현한 (source, domain, rank)만으로는 부족한 결함 (2026-09-17)
+
+Codex Sol High가 다음을 실제로 재현했다. 처음 버전의 `SAFE_CASE_SPECS`는 (source,
+domain, rank)만 고정했고, `buildSafetyBoundaryPlanCases()`는 그 세 값만으로 원본을
+찾은 뒤 `scenario.text`·`scenario.expected`를 그대로 믿었다. 같은 (source, domain,
+rank)를 유지한 채 `SAFETY_BOUNDARY_SCENARIOS`의 `SAFE-001` 자리 문장을 `'원본과
+다른 안전 문장입니다.'`로, `expected`를 `{level:'caution', categories:['self_harm']}`로
+바꿔도 예외 없이 기존 `SAFE-001`을 그대로 만들어 냈다. "정확히 대응한다"는 기존
+테스트도 `findSafetyBoundaryScenario`로 원본을 다시 읽어 그 값과 대조하는 **순환
+비교**였기 때문에 이 결함을 잡지 못했다.
+
+수정: `SafeCaseSpec`에 `text`와 `expectedSafety`(level·categories 전체)를 검토
+시점의 실제 값으로 고정했다. `findSafetyBoundaryScenario`가 (source, domain, rank)로
+정확히 하나를 찾은 뒤 그 원본의 `text`·`expected`를 spec의 고정값과 다시 대조하고,
+하나라도 다르면 `${caseId}: ... 불일치 항목: text, expectedSafety.level, ...` 형태로
+어떤 항목이 다른지 밝히며 예외를 던진다. `note`는 판정 근거 설명일 뿐이라 고정하지
+않았다. 매칭이 배열 인덱스가 아니라 (source, domain, rank) 조건절이므로 원본 배열의
+순서만 바뀌어도(내용이 같다면) 여전히 같은 계획을 만든다.
+
+"5) SAFE-001~003이 지정된 원본 사례와 정확히 대응한다" 테스트를 다시 썼다 —
+`findSafetyBoundaryScenario`나 `SAFETY_BOUNDARY_SCENARIOS`를 거치지 않고, 검토
+시점의 실제 text·level·categories를 테스트 파일에 직접(하드코딩으로) 다시 적어
+계획·spec 양쪽과 대조한다. 이렇게 하면 원본과 spec이 함께 잘못된 값으로 바뀌어도
+이 테스트가 잡는다.
+
+신규 회귀 테스트 4개를 추가했다: text만 바뀌면 거절, `caution`을 유지한 채
+categories만 바뀌어도 거절, 원본 배열 순서만 바뀌면 동일한 계획, 한 SAFE 사례가
+불일치하면 다른 SAFE ID로 대체되거나 부분 계획(예: 155개)을 조용히 돌려주지 않고
+`buildSafetyBoundaryPlanCases`·`buildDeterministicAnalysisPlan` 모두 전체가 예외로
+멈춘다. Codex가 보고한 정확한 재현 fixture(text와 categories를 동시에 바꾼 경우)로
+직접 재확인해, 이제 두 항목 모두 불일치로 잡힌다는 것을 확인했다.
+
+mutation 검증으로 `findSafetyBoundaryScenario`의 text·expectedSafety 대조 자체를
+제거해 보았다 — 관련 신규 테스트 4개(caution→urgent 거절, text 불일치 거절,
+categories 불일치 거절, 부분 계획 미반환)만 정확히 실패하고 나머지 32개는 그대로
+통과했다. 검증 후 소스를 diff로 바이트 단위 복원 확인했다.
+
+### 2) 외부 분석 결과 계약
+
+`matchExternalAnalysisResultsToPlan(plan, externalAnalysisResults)`은 외부 분석
+결과(정확히 `{caseId, text, analysis}` 세 필드만)를 계획과 완전히 1:1 대조한다.
+wrapper 모양(정확한 필드 집합·caseId 형식·text가 문자열·analysis가 객체)을 먼저
+보고, 하나라도 어긋나면 매칭을 시도하지 않고 그 오류만 돌려준다. wrapper가 전부
+맞은 뒤에야 개수·순서·caseId 중복·계획과의 대응·text 일치를 본다. `{ok:true, cases}
+| {ok:false, errors}` 명시적 union이며, 오류를 고치거나 추정하지 않고 부분 결과도
+만들지 않는다. `analysis`(그리고 `analysis.safety`)의 내부 필드·값 규격은 여기서
+보지 않는다 — 스냅샷 조립 마지막 단계(`validateAnalysisSnapshotAgainstCurrentEnvironment`)가
+반드시 다시 본다.
+
+### 3) 스냅샷 조립
+
+`buildFrozenAnalysisSnapshot(baselineCatalogVersionHash, externalAnalysisResults)`은
+기존 함수만 재사용해 조립한다: 계획 생성·검증 → 외부 결과 1:1 대조 →
+`AnalysisSnapshotCase[]` 생성 → `buildCurrentAnalysisSnapshotEnvironment`로 현재
+environment 생성 → `computeSourceCorpusArtifactHash`/`computeFrozenAnalysisArtifactHash` →
+`computeAnalysisSnapshotFingerprint` → `validateAnalysisSnapshotAgainstCurrentEnvironment`
+실행 → 완전히 성공한 경우에만 반환. 호출자는 신뢰 경계에서 얻은
+`baselineCatalogVersionHash`와 156개 분석 결과만 줄 수 있다 — analyzer model·
+instructions hash·schema hash·taxonomy hash·domain manifest hash·Gate/Matcher
+version은 항상 `buildCurrentAnalysisSnapshotEnvironment`가 지금 저장소 코드에서
+내부적으로 만들며, 호출자가 주입할 방법이 없다. 마지막 검증이 실패하면 그 오류를
+그대로 돌려주고, 성공으로 바꾸거나 부분 스냅샷을 반환하지 않는다.
+
+### 순수성·격리
+
+OpenAI SDK·`fetch`·환경변수·파일 시스템·시계·난수·`console`·Supabase client·DB/RPC·
+Edge Function·네트워크를 전혀 부르지 않는다(소스 스캔 테스트로 고정). 사용자 원문
+수집·raw provider response·token usage·사람 승인·서명 필드가 들어갈 자리가 없다.
+`candidate_generation` 사례는 이 계획에 없다.
+
+### 테스트와 mutation 검증
+
+36개 테스트 전부 통과했다(원래 32개 + 위 "후속 결함 수정"의 신규 회귀 4개). 핵심
+검사 네 곳을 임시로 무력화해 mutation 검증했다 — (1) text 일치·순서 일치 검사를
+제거하자 관련 테스트 2개만 실패, (2) SAFE 원본 대응 "정확히 하나" 검사를 제거하자
+관련 fail-closed 테스트 2개만 실패, (3) wrapper 여분 필드 검사를 제거하자 그 검사를
+직접 쓰는 테스트와 "모든 실패 경로에서 부분 스냅샷이 없다" 테스트까지 정확히 2개
+실패, (4) `findSafetyBoundaryScenario`의 text·expectedSafety 대조 자체를 제거하자
+관련 신규 테스트 4개만 실패했다. 네 번 모두 검증 후 소스를 diff로 바이트 단위
+복원 확인하고 전체 테스트를 다시 통과시켰다.
+
+### 아직 연결하지 않은 경계
+
+- 실제 156회 OpenAI 분석 실행은 하지 않았다.
+- 실제 frozen snapshot artifact를 만들어 Git에 커밋하지 않았다 — 156개 계획과 빌더
+  함수만 있고, 실제 분석 결과를 넣어 만든 진짜 스냅샷 데이터 파일은 아직 없다.
+- executor·validation-context·DB·activation 어디에도 연결하지 않았다.
+- 이 단계만으로 자동 활성화 준비가 끝난 것이 아니다 — `buildFrozenAnalysisSnapshot`이
+  성공해도 activation-ready를 뜻하지 않는다.
+- `new_domain_with_cards`는 여전히 fail-closed다 — 동적 domain manifest가 없다.
+- 사람의 사전 승인 필드는 추가하지 않았다.
+- `baselineCatalogVersionHash`는 이번에도 호출자 인자로만 받는다. 후속 executor
+  연결에서는 candidate나 모델 응답이 아니라 validation-context RPC가 읽은 활성
+  기준 카탈로그 버전에서 가져와야 한다(§9-10 수정 6과 같은 신뢰 경계).
+
+### 검증
+
+`npm run test:logic`(4235/4235), `npm run test:ui`(113/113), `npx tsc --noEmit`(오류 0)
+모두 통과했다. 새 빌더 테스트 36개(후속 결함 수정 포함), 스냅샷 계약 테스트 60개,
+현재 환경 결속 테스트 17개, 자동 Scripture Catalog 전체 테스트(912/912)가 모두
+통과한다. OpenAI·Supabase·DB 호출, 커밋·푸시·배포는 없었다.
+
 ## 10. 아직 연결되지 않은 런타임 범위
 
 - `analyze-situation`, `recommend-scripture`, `generate-prayer-guidance`와 앱은 여전히 정적 `scripture-cards.ts`·`situation-domains.ts`를 읽는다.
@@ -952,6 +1098,21 @@ Supabase·DB 호출, 커밋·푸시·배포는 없었다.
   catalog) 중 하나만 바뀌고 나머지 해시를 모두 올바르게 재계산해도 정확히 그 필드 하나의
   오류만 나는지, 잘못된 baseline hash 인자와 스냅샷 구조 오류가 각각 올바른 순서로(구조
   오류가 먼저) 보고되는지를 고정한다.
+- `automatic-scripture-catalog-analysis-snapshot-builder.test.ts` (§9-11, 36건) —
+  `EVALUATION_CASES`(153) + `SAFETY_BOUNDARY_SCENARIOS`(3)에서 만든 156개 결정적 계획이
+  caseId 오름차순·중복 없음·결정성을 지키는지, EVAL 153개의 ID·text·expected가 부가
+  필드(domain·rank·cluster·smoke·isNewCardSmoke·rationale) 없이 정확히 투영되는지를
+  고정한다. SAFE-001~003은 (source, domain, rank)로 원본을 찾은 뒤 **검토 시점에
+  테스트 파일에 직접 하드코딩해 둔(순환 비교가 아닌) text·expectedSafety와도 다시
+  대조**하고, 같은 (source, domain, rank)라도 text만 바뀌거나 caution을 유지한 채
+  categories만 바뀌거나 안전 수준 자체가 바뀌면 예외로 멈추며, 원본 배열 순서만
+  바뀌면 동일한 계획을 만들고, 한 SAFE 사례가 불일치해도 다른 SAFE ID로 대체되거나
+  부분 계획(155개 등)을 조용히 돌려주지 않는지를 고정한다(Codex가 재현한 결함의
+  회귀 방지). 외부 분석 결과가 계획과 완전히 1:1 대응해야만 스냅샷이 만들어지고,
+  누락·추가·중복·caseId 불일치·text 불일치·순서 변경·wrapper와 analysis·analysis.safety의
+  계약 밖 필드·유효하지 않은 분석·잘못된 baseline hash 중 무엇이든 어긋나면 부분 스냅샷
+  없이 구체적 필드 경로가 담긴 오류만 돌려주는지, 성공한 스냅샷의 environment·두 하위
+  해시·fingerprint가 기존 계산 함수 결과와 정확히 같은지를 고정한다.
 
 규칙을 일부러 깨뜨려 테스트가 실제로 잡는지 확인했다(mutation testing). TypeScript 12개 + SQL 6개 + 순환 검증 위험 7개,
 모두 25개 변형을 넣어 보았다.
