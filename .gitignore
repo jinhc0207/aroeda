@@ -58,3 +58,9 @@ example
 /research-prioritizer-deploy-manifest.txt
 /domain-output.txt
 /stress-output.txt
+
+# 자동 Scripture Catalog 분석 실행기(scripts/automatic-scripture-catalog-analysis-runner-cli.ts)의
+# 로컬 체크포인트·최종 스냅샷 산출물. 실제 경로는 --checkpoint/--snapshot 인자로 호출자가
+# 정하지만, 로컬에서 직접 --execute를 돌려볼 때는 이 이름의 디렉터리를 쓰는 관례를 둔다.
+# *.json을 통째로 무시하지 않는다 — 이 디렉터리 이름만 좁게 뺀다.
+/automatic-scripture-catalog-analysis-runner.local/

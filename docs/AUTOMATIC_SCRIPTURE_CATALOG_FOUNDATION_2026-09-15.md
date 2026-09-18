@@ -1192,6 +1192,273 @@ builder 테스트 36개, 스냅샷 계약·현재 환경 결속 테스트 82개(
 외 다른 파일 변경 없음(`git status --short` 확인)도 함께 검증했다. OpenAI·
 Supabase·DB 호출, 커밋·푸시·배포는 없었다.
 
+## 9-13. 분석 실행기 파일 저장소·안전 CLI v1 — 실제 호출 없음 (2026-09-18, 후속)
+
+### 무엇을 메우려 했는가
+
+§9-12까지는 재개 가능한 실행기 핵심(`runAnalysisSnapshotRunner`)이 있었지만
+`analyze`·`loadCheckpoint`·`saveCheckpoint`는 전부 테스트가 주입한 인메모리
+가짜 함수였다 — 실제로 어디에, 어떻게 저장할지, 그리고 사람이 실수로
+`--execute`를 잘못 눌러 비용을 쓰는 일을 어떻게 막을지는 없었다. 이번 작업이
+그 두 경계, **로컬 파일 저장소**와 **안전한 CLI**를 채운다. 이번에도 실제
+OpenAI 호출은 하지 않는다 — 모든 실행 검증은 fake analyzer 또는 `--dry-run`으로
+했다.
+
+### 새 파일
+
+- `scripts/automatic-scripture-catalog-analysis-runner-file-store.ts` (신규,
+  이후 Codex 독립 검수 결함 수정 포함 — 아래 "1)" 끝부분과 "4)" 참고) —
+  체크포인트·최종 스냅샷을 구분하지 않는 범용 원자적 JSON 파일 저장소.
+- `src/lib/automatic-scripture-catalog-analysis-runner-file-store.test.ts`
+  (신규, 27건 — 최초 16건 + 결함 재현·회귀 11건)
+- `scripts/automatic-scripture-catalog-analysis-runner-cli.ts` (신규, 이후
+  Codex 독립 검수 결함 수정 포함) — `--dry-run`/`--execute` 안전 CLI. 실행기
+  핵심과 파일 저장소를 실제로 잇는다.
+- `src/lib/automatic-scripture-catalog-analysis-runner-cli.test.ts` (신규,
+  29건 — 최초 20건 + 결함 재현·회귀 9건)
+- `.gitignore` (수정) — 이 CLI의 로컬 산출물 디렉터리 이름 하나만 좁게 추가.
+
+### 1) 파일 저장소 — 체크포인트인지 스냅샷인지 모른다
+
+`readJsonFile(path)`와 `writeJsonFileAtomic(path, value)`는 `unknown` JSON
+값 하나만 다룬다. 체크포인트 계약이나 스냅샷 계약을 전혀 검증하지 않는다 —
+그건 runner의 순수 validator(`validateAnalysisRunnerCheckpoint`)와
+`buildFrozenAnalysisSnapshot`이 각자 이미 하고 있다.
+
+**읽기**: 파일이 없으면 `null`. 있으면 파싱한 `unknown`. 그 밖의 모든 경우 —
+JSON 손상, 대상이 디렉터리, symlink, 크기 상한(기본 20MiB) 초과, 그 밖의 읽기
+오류 — 는 `FileStoreError`를 던진다. 그 오류의 `message`는 항상 `code`에서만
+나오는 고정 문구다(`file_store_error:invalid_json`처럼) — 실제 경로나 OS가 준
+원본 오류 문구를 절대 담지 않는다. symlink는 `open()`에 `O_NOFOLLOW`를 써서
+막는다 — "먼저 확인하고 나중에 연다" 방식의 경쟁 조건이 없다. `stat()`으로
+확인한 크기와 실제로 읽은 바이트 수(`buffer.length`)를 **둘 다** 상한과
+비교한다 — `stat()`과 `readFile()` 사이에 파일이 커지는 경쟁 상황(TOCTOU)까지
+막기 위한 방어적 이중 확인이다(2026-09-18 보강 — 이 두 번째 확인이 실제로
+필요한 순간은 결정적으로 재현할 수 없어, 이 파일의 다른 소스 패턴 테스트와
+같은 방식으로 존재 자체를 소스에서 직접 확인한다).
+
+**원자적 쓰기**: 값을 먼저 저장 형식(`stablePrettyJson`)으로 직렬화한다 —
+BigInt·순환 참조처럼 `JSON.stringify`가 원본 `TypeError`를 던지는 값이나,
+top-level `undefined`처럼 예외 없이 `undefined`(문자열이 아님)를 돌려주는
+값은 원본 값이나 원본 예외 문구를 밖으로 내지 않고 `FileStoreError
+('write_failed')`로 수렴한다(2026-09-18 Codex 재현·수정 — 이전에는 이
+직렬화 호출이 어떤 try/catch로도 감싸여 있지 않아 raw `TypeError: Do not
+know how to serialize a BigInt`가 그대로 밖으로 샜다). 이 단계에서 실패하면
+아직 어떤 파일도 만들지 않는다. 직렬화에 성공하면, 대상과 같은 디렉터리에
+`O_EXCL`·`O_NOFOLLOW`·권한 `0600`으로 임시 파일을 만들고, 전체 JSON을 한
+번에 쓴 뒤 `fsync`하고, 같은 디렉터리 안에서 `rename`한다. rename은 대상이
+이미 있어도 원자적으로 통째로 교체하며(부분 덮어쓰기가 없다), 대상이
+symlink여도 그 symlink 자체를 교체할 뿐 따라가지 않는다 — 그래서 쓰기
+경로에는 symlink를 통해 다른 곳에 쓰는 위험이 구조적으로 없다(별도의
+symlink 거절 검사를 쓰기 쪽에 추가하지 않아도 된다). 디렉터리 자체도
+가능하면 `fsync`한다(best-effort). 대상 디렉터리는 명시적으로 이미 있어야
+한다 — 이 함수가 임의로 만들지 않는다. 실패하면(디렉터리 없음, 직렬화 실패,
+임시 파일 생성/쓰기/rename 실패) 대상 경로는 rename 전까지 전혀 건드리지
+않으므로 기존 정상 파일이 그대로 남고, 만들어졌던 임시 파일은 best-effort로
+지운다.
+
+저장 형식은 `stablePrettyJson` — key를 재귀적으로 알파벳 순 정렬하고(배열
+순서는 그대로 둔다) 2칸 들여쓰기로 낸다. 지문 계산에 쓰는 `canonicalJson`(공백
+없는 압축 형식)과는 다른, 사람이 다시 읽기 위한 저장 전용 형식이다. 같은 값을
+key 순서만 다르게 여러 번 저장해도 파일 내용은 글자 그대로 같다(테스트로
+확인).
+
+**쓰기 전 미리보기 — `preflightJsonFileTarget`**(2026-09-18 Codex 재현·수정):
+대상 파일에는 아무 것도 쓰지 않고, 같은 디렉터리에 빈 probe 파일을 잠깐
+생성·삭제해 "이 경로에 나중에 `writeJsonFileAtomic`이 성공할 수 있는가"만 확인한다 — 부모 디렉터리가 실제 디렉터리인지, 대상 자체가 이미
+디렉터리는 아닌지, 같은 디렉터리에 0600 probe 파일을 `O_EXCL|O_NOFOLLOW`로
+만들 수 있는지(만들면 `fsync`·close 후 곧바로 best-effort로 지운다). 기존
+대상 파일은 열거나 바꾸지 않는다 — 전혀 건드리지 않는다. 실패하면 다른
+함수와 같은 규칙으로 `FileStoreError`를 던진다(경로·OS 원문 없음). 아래
+"2) 안전한 CLI"에서 이 함수를 유료 analyze 호출보다 먼저 부르는 이유를
+설명한다.
+
+### 2) 안전한 CLI — `--dry-run` / `--execute`
+
+`scripts/automatic-scripture-catalog-analysis-runner-cli.ts`는 `runCli(args,
+deps)`로 실제 실행 로직을 뽑아 두고, 파일 맨 아래에서 "이 파일이 직접
+실행됐을 때만"(`import.meta.url`이 실행 진입점과 같을 때만) 실제 의존성
+(OpenAI client·실제 파일 I/O·`console.log`)을 연결한다 — 그래서 이 파일을
+`import`만 해도(테스트가 하듯) 아무 것도 실행되지 않는다.
+
+`--dry-run`과 `--execute` 중 정확히 하나가 있어야 한다. 없거나 둘 다 있으면
+사용법만 출력하고 끝난다 — OpenAI client 생성 0회. **같은 flag가 중복되면
+(값이 같아도) 마지막 값이 조용히 이기게 두지 않고 똑같이 거절한다**
+(2026-09-18 Codex 재현·수정 — 이전에는 인자를 담는 자료구조가 `Map`이라
+`--max-cases=1 --max-cases=156`처럼 같은 key가 두 번 오면 마지막 값이 조용히
+이겨서, 비용 상한 1건을 지정한 것처럼 보이는 명령이 실제로는 156건 전체를
+처리했다). `--dry-run`·`--execute` 자체가 반복되는 경우도 같은 규칙으로
+거절한다.
+
+**dry-run**: OpenAI client·analyze·체크포인트/스냅샷 쓰기를 전혀 하지 않는다.
+`--checkpoint`를 주면 그 파일을 읽기만 해서(쓰지 않는다) 156개 계획 수,
+체크포인트 존재 여부, 완료 수, 다음 caseId, 이번 처리 예정 수만 출력한다.
+이 완료 수는 `results` 배열 길이만 세는 **대략적인 미리보기**다 —
+`validateAnalysisRunnerCheckpoint`의 exact-fields·순서·environment 전체
+검증은 하지 않는다(그러려면 baseline hash가 필요한데, dry-run은 그런 입력
+없이도 항상 안전하게 돌아가야 한다). 정확한 재개 지점은 `--execute`가 전체
+검증을 통해 확정한다. 사례 문장·분석 내용·API key는 절대 출력하지 않는다 —
+caseId 같은 식별자만 낸다.
+
+**execute**: `--checkpoint`·`--snapshot`·`--baseline-catalog-version-hash`·
+`--max-cases` 네 인자가 모두 명시적으로 있어야 한다. `--max-cases`는 생략할
+수 없고 **0도 거절한다**(양수만 허용 — 한 번의 실행이 얼마나 비용을 쓸지
+항상 명시하게 한다). checkpoint와 snapshot 경로가 같으면(정규화해서 비교)
+거절한다. 이 네 검사는 전부 OpenAI client를 만들기 전에 끝난다.
+
+**출력 경로 preflight**(2026-09-18 Codex 재현·수정 — blocking): 위 네 인자
+검사를 통과하면, `runAnalysisSnapshotRunner`를 시작하기 전에(따라서 client를
+만들기 전에) checkpoint·snapshot 두 경로 각각에 대해
+`preflightWritableTarget`(파일 저장소의 `preflightJsonFileTarget`을 실제로
+연결)을 부른다. 이전에는 이 확인이 전혀 없어서, 잘못된 checkpoint 경로(예:
+없는 디렉터리)를 줘도 실행기가 곧바로 시작돼 **첫 유료 analyze 호출과 client
+생성이 각각 1회 일어난 뒤**에야 체크포인트를 저장하려는 순간 실패했다 —
+snapshot 경로가 잘못된 경우는 더 심해서 156건 전부를 분석한 뒤 최종 저장
+순간에야 드러났다. 이제는 어느 한쪽 경로든 preflight가 실패하면 client·
+analyze·checkpoint 저장·snapshot 저장이 전부 0회이고, 실패 사유
+(`checkpoint_target_unwritable`/`snapshot_target_unwritable`)만 돌려준다 —
+preflight 자체가 던지는 원본 오류 문구는 CLI 출력 어디에도 나타나지 않는다.
+
+OpenAI client는 **지연 생성**한다 — client 생성 코드를 `analyze` 클로저 안에
+두고 첫 호출에서만 실제로 만든다. `runAnalysisSnapshotRunner`는 항상 "인자
+검증 → 기존 체크포인트 완전 검증 → (그 다음에야) 첫 analyze 호출"의 순서로
+진행하므로, client 생성을 "실제로 analyze가 처음 필요한 순간"으로 미루기만
+해도 그 생성이 자동으로 "인자와 기존 체크포인트가 둘 다 검증된 뒤"에만
+일어난다 — 검증 로직을 CLI 쪽에서 다시 베끼지 않고도 순서를 보장하는
+방법이다(mutation 검증으로 확인 — 아래 참고).
+
+`analyzeSituation`(기존 `scripts/analyzer-prompt.ts`)을 연결하되, 빈 응답·
+JSON 파싱 실패·규격 위반·API 오류를 전부 하나의 generic `analyze_failed`
+예외로 뭉갠다 — 원본 응답이나 provider 오류 문구는 절대 CLI 밖으로 나가지
+않는다(그 값을 담지 않는 예외를 던지므로, `runAnalysisSnapshotRunner`가 이미
+그 예외의 `message`조차 읽지 않고 버리는 기존 계약과 이중으로 안전하다).
+
+**완료 처리**: `runAnalysisSnapshotRunner`가 156건 전부 검증된 `completed`를
+돌려줄 때만 CLI가 `writeJsonFileAtomic`으로 최종 스냅샷을 저장한다.
+`in_progress`나 `failed`일 때는 스냅샷 파일을 만들거나 건드리지 않는다 —
+기존 스냅샷이 있어도 이번 실행이 완료되기 전에는 그대로 둔다.
+
+### 3) 경로 안전성
+
+checkpoint와 snapshot 경로가 같으면 CLI가 즉시 거절한다(위 참고). 임시 파일
+이름은 대상 파일명 + 난수 접미사로 만들어지므로, 서로 다른 대상(checkpoint·
+snapshot)의 임시 파일은 같은 디렉터리에 있어도 이름이 겹치지 않는다. 저장
+대상 디렉터리는 파일 저장소가 명시적으로 존재를 확인만 하고 만들지 않는다
+(`writeJsonFileAtomic`도, preflight도 마찬가지다 — preflight가 확인만 하고
+아무 것도 만들지 않는 이유도 이 규칙을 지키기 위해서다). CLI의 모든 출력에는
+실제 파일 경로나 홈 경로 문자열을 절대 넣지 않는다 —
+`--checkpoint`/`--snapshot`에 무엇을 넘겼든 출력에는 boolean·개수·caseId 같은
+값만 나온다. `.gitignore`에는 이 CLI의 로컬 산출물 관례 디렉터리
+(`/automatic-scripture-catalog-analysis-runner.local/`) 하나만 좁게
+추가했다 — 기존 `*.json` 전체를 무시하는 규칙은 없고, 이번에도 만들지
+않았다.
+
+### 4) Codex 독립 검수 결함 수정 요약 (2026-09-18)
+
+이 절의 최초 구현을 Codex가 독립적으로 검수해 결함 3건을 재현했다. 세 건
+모두 위 1)·2)에 이미 반영했고, 여기서는 수정 전 실제 재현값과 수정 후 값만
+나란히 정리한다.
+
+| 결함 | 재현 방법 | 수정 전 | 수정 후 |
+| --- | --- | --- | --- |
+| 1. 출력 경로 preflight 누락(blocking) | 없는 디렉터리를 `--checkpoint`로 준 채 `--execute` | client 1회, analyze 1회, `status:'failed', reason:'analyze_failed'`(fake analyze가 던진 예외로 우연히 멈춤 — 진짜 provider였다면 비용이 이미 발생) | client 0회, analyze 0회, `status:'failed', reason:'checkpoint_target_unwritable'` |
+| 2. 직렬화 오류 원문 노출(blocking) | `writeJsonFileAtomic(path, {bad: 1n})` | raw `TypeError: Do not know how to serialize a BigInt`가 그대로 던져짐 | `FileStoreError`(`code:'write_failed'`)만 던져짐, 원문 없음 |
+| 3. 중복 CLI 인자 묵인(비용 제어 결함) | `--max-cases=1 --max-cases=156`으로 `--execute` | 156으로 조용히 진행(analyze가 실제로 시작됨) | 종료 코드 2, client 0회, analyze 0회 |
+
+### 테스트와 mutation 검증
+
+파일 저장소 27개(최초 16 + 결함 재현·회귀 11), CLI 29개(최초 20 + 결함
+재현·회귀 9), 총 56개 테스트가 통과한다. 파일 시스템을 직접 쓰는 테스트는
+각자 `mkdtemp`로 고유한 임시 디렉터리를 만들고 끝나면 지운다(권한을 바꾼
+테스트는 지우기 전에 되돌린다). CLI 테스트 대부분은 인메모리 가짜
+checkpoint/snapshot 저장소·가짜 preflight만 쓰고, 몇 개는 실제 파일
+저장소(`readJsonFile`/`writeJsonFileAtomic`/`preflightJsonFileTarget`)를
+임시 디렉터리에 대고 돌려 모듈이 실제로 맞물리는지 확인한다. 실제 OpenAI·
+네트워크 호출은 전부에서 0회다(`analyzeCaseText`는 항상 fake).
+
+**최초 구현(§9-13 처음 작성 시) mutation 검증 — 3라운드**:
+
+1. **지연 client 생성을 즉시 생성으로 바꿈** — "기존 체크포인트가 무효면
+   client를 만들지 않는다" 테스트 1개만 실패(`1 !== 0`).
+2. **`--max-cases=0` 거절 정규식을 느슨하게 바꿈**(`[1-9][0-9]*`→`[0-9]+`) —
+   "0이거나 정수가 아니면 거절한다" 테스트 2개만 실패(`0 !== 2`).
+3. **원자적 쓰기의 `rename` 단계를 통째로 건너뜀** — 쓰기 실패 보존·임시
+   파일 정리·key 순서 무관 동일성 테스트 3개만 실패.
+
+**Codex 독립 검수 결함 수정(2026-09-18, 이번 수정) mutation 검증 — 5라운드**,
+모두 수정 전 결함을 실제로 재현한 뒤 수정하고 검증했다:
+
+4. **`runExecute`에서 preflight 호출 두 줄을 통째로 제거** — "checkpoint
+   경로가 preflight에 실패하면 0회다"·"snapshot 경로가 preflight에 실패하면
+   0회다"·"두 경로 모두 client 생성보다 먼저 preflight된다"(CLI 29개 중)와
+   "checkpoint 부모 디렉터리가 실제로 없으면 즉시 실패한다"(실제 파일 시스템
+   통합 테스트) 4개만 실패했다. 이 mutation을 적용한 채로 결함 1의 재현
+   스크립트(잘못된 checkpoint 경로로 `--execute`)를 다시 실행해, client
+   생성·analyze가 각각 1회씩 다시 발생함을 직접 확인했다 — 수정 전 실제
+   증상과 정확히 같았다.
+5. **`parseFlags`에서 중복 key 거절·`--dry-run`/`--execute` 반복 거절 로직을
+   모두 제거**(원래의 "마지막 값이 이긴다" 동작으로 되돌림) — "`--dry-run`이
+   두 번 나와도 거절"·"`--execute`가 두 번 나와도 거절"(모드 게이트)과
+   "`--max-cases`가 두 번 나오면 거절"·"중복된 checkpoint/snapshot/baseline
+   hash도 거절"(execute 인자 검증) 4개만 실패했다. 이 mutation을 적용한 채로
+   결함 3의 재현 스크립트(`--max-cases=1 --max-cases=156`)를 다시 실행해,
+   analyze가 실제로 시작됨(1회 이상 호출)을 직접 확인했다 — 수정 전 실제
+   증상과 정확히 같았다.
+6. **`writeJsonFileAtomic`의 직렬화 try/catch를 제거**(`stablePrettyJson`
+   호출을 감싸지 않게 되돌림) — "BigInt는 원본 TypeError 없이 수렴한다"·
+   "순환 참조는 수렴한다"·"직렬화 실패 시 임시 파일을 만들지 않는다"·
+   "직렬화 실패는 기존 정상 파일을 건드리지 않는다" 4개만 실패했다(단,
+   "top-level undefined는 수렴한다" 테스트는 실패하지 않았다 — `writeFile`
+   호출 자체가 `undefined` 인자에 별도로 실패해 뒤쪽의 쓰기 실패 catch가
+   우연히 같은 결과로 수렴시켰기 때문이다. 이 사실을 통해 BigInt·순환
+   참조 두 테스트가 이 직렬화 경계의 실제 방어를 검사하는 결정적 테스트임을
+   확인했다). 이 mutation을 적용한 채로 결함 2의 재현 스크립트
+   (`writeJsonFileAtomic(path, {bad: 1n})`)를 다시 실행해, raw `TypeError:
+   Do not know how to serialize a BigInt`가 그대로 다시 새는 것을 직접
+   확인했다 — 수정 전 실제 증상과 정확히 같았다.
+7. **`readJsonFile`의 읽은 뒤 크기 재확인 줄을 제거** — 이 줄을 검사하는
+   소스 패턴 테스트 1개만 실패했고, 기존 "크기 상한을 넘으면 거절한다"
+   블랙박스 테스트는 실패하지 않았다 — `stat()` 시점 확인만으로도 정적
+   파일(테스트가 만드는 파일은 두 확인 사이에 커지지 않는다) 시나리오는
+   이미 잡히기 때문이다. 이로써 이 줄이 블랙박스로 결정적으로 재현할 수
+   없는 TOCTOU 경쟁 상황만을 위한, 독립적으로 필요한 방어선임을 확인했다.
+
+일곱 라운드 모두 검증 후 `cp`로 백업한 원본으로 복원하고 `diff`로 바이트
+단위 동일함을 확인한 뒤 `tsc --noEmit`과 전체 관련 테스트를 다시 통과시켰다.
+
+### 아직 연결하지 않은 경계
+
+- 실제로 `--execute`를 실행하지 않았다. 실제 OpenAI client를 만들지 않았고
+  실제 API key를 쓰지 않았다. Supabase·DB·Edge Function·배포는 이번에도
+  연결하지 않았다.
+- `baseline-catalog-version-hash`는 이번에도 CLI 인자로만 받는 명시적 신뢰
+  입력이다(§9-10 수정 6·§9-11·§9-12와 같은 신뢰 경계) — 후속 실제 운영
+  executor 연결 단계에서는 이 값을 candidate payload가 아니라
+  validation-context RPC가 읽어 온 활성 기준 카탈로그 버전에서 가져와야
+  한다.
+- 장애 시 "직전에 저장되지 않은 최대 1건이 다시 analyze될 수 있다"는 §9-12의
+  성질은 이 CLI에도 그대로 적용된다 — 파일 저장소가 원자적이어도 "analyze
+  성공 직후, saveCheckpoint 완료 전"에 프로세스가 죽으면 그 결과는 사라진다.
+- 최종 스냅샷은 156건이 모두 검증된 뒤에만 한 번 만들어진다 — 이 CLI는
+  스냅샷을 활성 카탈로그나 DB에 반영하는 어떤 executor에도 연결돼 있지
+  않다.
+- 로컬 산출물 디렉터리 관례(`/automatic-scripture-catalog-analysis-runner.local/`)를
+  `.gitignore`에 추가했을 뿐, 실제로 그 디렉터리를 만들거나 그 안에 실행
+  결과를 쓴 적은 없다(이번 작업에서 `--execute`를 실행하지 않았으므로).
+
+### 검증
+
+파일 저장소 테스트 27/27, CLI 테스트 29/29, runner 테스트 36/36, builder
+테스트 36/36, 스냅샷 계약·현재 환경 결속 테스트 82/82(계약 65 + 환경 17),
+자동 Scripture Catalog 전체 테스트 1009/1009, `npm run test:logic`
+4332/4332, `npm run test:ui` 113/113, `npx tsc --noEmit` 오류 0이 모두
+통과했다. `git diff --check` 공백 오류 없음, `package.json`·
+`package-lock.json` 변경 없음도 확인했다. 새·수정 파일(`file-store.ts`·그
+테스트·`cli.ts`·그 테스트·`.gitignore`·이 문서)에 API key·비밀번호·토큰
+패턴이 없는지 직접 스캔해 확인했다. OpenAI·Supabase·DB 호출, 커밋·푸시·
+배포는 없었다(결함 재현·수정 확인은 fake dependency를 주입한 독립 스크립트로만
+했다).
+
 ## 10. 아직 연결되지 않은 런타임 범위
 
 - `analyze-situation`, `recommend-scripture`, `generate-prayer-guidance`와 앱은 여전히 정적 `scripture-cards.ts`·`situation-domains.ts`를 읽는다.
