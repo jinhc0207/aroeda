@@ -442,6 +442,20 @@ describe('scripture-recommendation-evaluation-cases · 2026-09-16 검수 수정 
   });
 });
 
+describe('scripture-recommendation-evaluation-cases · betrayal 영역 일관성 검수 (EVAL-068)', () => {
+  it('원본 코퍼스와 실제 Analyzer에 맞춰 injustice_mistreatment·SC-046을 고정한다', () => {
+    const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-068')!;
+    assert.ok(item, 'EVAL-068을 찾지 못했습니다.');
+    assert.equal(item.text, '신뢰했던 사람이 뒤통수를 쳐서 배신감이 커요.');
+    assert.equal(item.domain, 'injustice_mistreatment');
+    assert.equal(item.rank, 18);
+    assert.equal(item.cluster, 'betrayal');
+    assert.equal(item.expectedPrimaryDomain, 'injustice_mistreatment');
+    assert.equal(item.preferredCardId, 'SC-046');
+    assert.deepEqual(item.acceptableCardIds, ['SC-046', 'SC-008']);
+  });
+});
+
 describe('scripture-recommendation-evaluation-cases · 실제 의미 검수 (EVAL-144)', () => {
   it('치료와 오늘을 견딜 은혜를 구하는 사례는 SC-016만 허용한다', () => {
     const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-144')!;

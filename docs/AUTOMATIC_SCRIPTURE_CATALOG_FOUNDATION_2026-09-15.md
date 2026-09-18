@@ -1459,6 +1459,51 @@ checkpoint/snapshot 저장소·가짜 preflight만 쓰고, 몇 개는 실제 파
 배포는 없었다(결함 재현·수정 확인은 fake dependency를 주입한 독립 스크립트로만
 했다).
 
+
+## 9-14. 실제 156건 고정 분석 스냅샷 생성 (2026-09-18, 후속)
+
+§9-13의 안전 CLI를 실제로 실행해 `EVALUATION_CASES` 153건과
+`SAFETY_BOUNDARY_SCENARIOS` 3건, 총 156건의 분석을 순차 생성했다. 호출은 한 건씩
+`await`했고 각 성공 직후 체크포인트를 원자적으로 저장했다. API key는 셸 변수로만
+전달하고 매 실행 뒤 지웠으며, raw response·provider 오류 원문·token usage는
+체크포인트나 스냅샷에 저장하지 않았다. 이 계약 때문에 이번 실행의 정확한 총 토큰과
+비용은 산출물에서 다시 계산할 수 없으며 문서에 추정값을 사실처럼 기록하지 않는다.
+
+실행 중 두 가지 중단을 확인했다.
+
+1. EVAL-057 첫 호출에서 `analyze_failed`가 두 번 발생했다. 새로 입력한 API key를
+   다시 입력한 뒤 같은 사례가 즉시 성공해, 체크포인트 손상 없이 56건 prefix에서
+   재개되는 것을 실제로 확인했다.
+2. EVAL-068은 유효한 분석이 `injustice_mistreatment`를 선택했지만 평가 오라클만
+   `relationship_conflict_forgiveness`를 기대해 `analysis_invalid`로 멈췄다. 이 문장은
+   원본 코퍼스에서도 `injustice_mistreatment` / `betrayal`이고, 인접 EVAL-067·069,
+   카드 확장표, 최초 평가 오라클도 같은 영역이었다. 과거 단일 Luna 결과를 반영해 만든
+   예외를 제거하고 `expectedPrimaryDomain: injustice_mistreatment`, preferred SC-046,
+   acceptable `[SC-046, SC-008]`로 교정했다. 회귀 테스트로 text·domain·rank·cluster와
+   이 세 값을 직접 고정했다. 교정 시 이미 저장된 67개 결과를 새 156개 계획과 전부 다시
+   검증한 뒤에만 체크포인트의 `planFingerprint` 한 필드를 원자적으로 재결속했으며,
+   EVAL-068을 다시 실행해 68번째 결과로 정상 저장되는 것을 확인했다.
+
+최종 로컬 산출물은 Git에서 제외된
+`automatic-scripture-catalog-analysis-runner.local/checkpoint.json`과
+`snapshot.json`이다. 두 파일 모두 권한 0600이다. 최종 검증 결과는 다음과 같다.
+
+- 체크포인트 156/156, 다음 사례 없음, 추가 계획 0건.
+- 스냅샷 156건(`corpus_regression` 153 + `safety_boundary` 3).
+- `validateAnalysisSnapshotAgainstCurrentEnvironment`: valid, 오류 0건.
+- 체크포인트 156건에서 다시 조립한 스냅샷과 저장된 스냅샷이 canonical JSON으로 동일.
+- plan/source corpus fingerprint:
+  `sart_747941fe33c21d7f765464a69cfe6bb3045f7aa5b215e2cd9923d02c9b4711f4`.
+- frozen analysis artifact hash:
+  `sart_30fd74c9376bb3a1bf798d05376ee02320a3a37a26606c099aa9b2905dca1183`.
+- 최종 snapshot fingerprint:
+  `sart_2ef11743f6cbb60390b1b083114f15e1dcbfeb88ef2fcd94da7f2bfd7ed869c4`.
+
+이 로컬 파일 생성은 activation-ready를 뜻하지 않는다. 스냅샷은 아직 Git에 넣거나 DB에
+기록하지 않았고, deterministic adapter·executor·validation record·운영 Supabase와도
+연결하지 않았다. 앱 런타임·운영 카탈로그·배포 상태에는 변화가 없다.
+
+
 ## 10. 아직 연결되지 않은 런타임 범위
 
 - `analyze-situation`, `recommend-scripture`, `generate-prayer-guidance`와 앱은 여전히 정적 `scripture-cards.ts`·`situation-domains.ts`를 읽는다.
@@ -1466,18 +1511,14 @@ checkpoint/snapshot 저장소·가짜 preflight만 쓰고, 몇 개는 실제 파
   기준 카탈로그·validator profile도 등록되지 않았다.
 - 후보를 자동으로 만드는 생성기와 실행기의 DB 오케스트레이션·Edge Function 연결부가 없다.
   Sol·Astra 신학 평가 fetch transport(§9-7)는 구현됐지만, 아직 실행기를 감싸는 운영 진입점에 연결되지 않았다.
-- **결정적 검사(deterministic) adapter 셋이 아직 없다.** `safetyBoundary`(경계 사례), `corpusRegression`
-  (153개 코퍼스), `candidateGenerationEvaluation`(카드별 생성 사례)을 실제로 돌릴 독립 검증된 고정 분석
-  스냅샷이 저장소에 없다. 세 adapter는 지금 실행기에 함수로 주입받는 자리만 있고, 그 안을 채울 판단
-  근거(무엇을 안전 경계로 볼지, 153개 코퍼스의 정답, 카드별 생성 사례의 채점 기준)가 아직 정해지지
-  않았다. **이 공백을 임의 구현으로 메우지 않는다** — 빈 결과나 지어낸 사례로 이 검사들을 통과시키면,
-  fail-closed 전제 전체가 무의미해진다(무엇을 검사했는지 아무도 보증하지 못하는 채로 "통과"만 남는다).
-  독립 검증된 고정 분석 스냅샷이 마련된 뒤에 별도 작업으로 구현해야 한다.
-  §9-9에서 `safety_boundary`·`corpus_regression` 두 종류의 스냅샷 **계약(순수 타입과 검증 함수)**은
-  만들었지만, 실제 스냅샷 데이터·adapter 구현·executor 연결·`validateAutomaticValidationRecord`
-  강화는 아직 없다 — 계약이 있다는 사실이 activation-ready를 뜻하지 않는다.
-  `candidateGenerationEvaluation`은 이 계약에도 아직 없다(§9-9의 "candidate_generation은 왜
-  없는가" 참고 — 후보 생성 모델과 사례 저작 모델의 독립성 결속이 오늘 아예 없다).
+- **결정적 검사(deterministic) adapter 셋이 아직 없다.** §9-14에서 `safety_boundary` 3건과
+  `corpus_regression` 153건의 독립 검증된 고정 분석 스냅샷을 로컬에 생성했지만, 이 산출물은 아직
+  Git이나 DB에 보관되지 않았고 실행기에 주입되는 adapter·executor·validation record에도 연결되지
+  않았다. `candidateGenerationEvaluation`(카드별 생성 사례)의 독립 판단 근거도 여전히 없다.
+  **남은 공백을 빈 결과나 지어낸 사례로 메우지 않는다** — 스냅샷의 안전한 버전 관리 방식과 두 결정적
+  adapter, 후보 생성 모델과 사례 저작 모델의 독립성 결속을 별도 작업으로 구현해야 한다.
+  `candidateGenerationEvaluation`은 현재 스냅샷 계약에도 아직 없다(§9-9의 "candidate_generation은 왜
+  없는가" 참고). 로컬 스냅샷이 존재한다는 사실만으로 activation-ready가 되지는 않는다.
 - 공지 outbox를 읽어 보내는 발송기와 발송 결과 기록이 없다.
 - validator용 활성 카탈로그·수요 읽기 RPC(§9-8)는 생겼다. 앱 런타임이 활성 카탈로그를 읽는 별도 경로와
   캐시·폴백 정책은 아직 없다.
