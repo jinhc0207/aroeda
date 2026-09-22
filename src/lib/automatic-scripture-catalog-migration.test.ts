@@ -66,6 +66,8 @@ const MIGRATION_NAME = '20260915120000_create_automatic_scripture_catalog.sql';
 const PROFILE_MIGRATION_NAME = '20260916011019_register_automatic_scripture_catalog_validator_profiles.sql';
 const V3_MIGRATION_NAME = '20260916141221_upgrade_automatic_scripture_catalog_validation_v3.sql';
 const VALIDATION_CONTEXT_MIGRATION_NAME = '20260917090000_add_scripture_catalog_validation_context_rpc.sql';
+const GENERATION_EVIDENCE_MIGRATION_NAME =
+  '20260922144425_create_scripture_catalog_candidate_generation_evidence_store.sql';
 const SQL = readFileSync(path.join(MIGRATION_DIR, MIGRATION_NAME), 'utf8');
 const V3_SQL = readFileSync(path.join(MIGRATION_DIR, V3_MIGRATION_NAME), 'utf8');
 
@@ -563,9 +565,11 @@ describe('자동 카탈로그 migration · D. 경계와 개인정보', () => {
     }
   });
 
-  it('검토된 profile·v3·읽기 context migration 외 다른 migration이 자동 카탈로그 함수·표를 다시 만들거나 권한을 주지 않는다', () => {
+  it('검토된 profile·v3·읽기 context·생성 증거 migration 외 다른 migration이 자동 카탈로그 함수·표를 다시 만들거나 권한을 주지 않는다', () => {
     const others = readdirSync(MIGRATION_DIR)
-      .filter((name) => name.endsWith('.sql') && name !== MIGRATION_NAME && name !== PROFILE_MIGRATION_NAME && name !== V3_MIGRATION_NAME && name !== VALIDATION_CONTEXT_MIGRATION_NAME)
+      .filter((name) => name.endsWith('.sql')
+        && name !== MIGRATION_NAME && name !== PROFILE_MIGRATION_NAME && name !== V3_MIGRATION_NAME
+        && name !== VALIDATION_CONTEXT_MIGRATION_NAME && name !== GENERATION_EVIDENCE_MIGRATION_NAME)
       .map((name) => readFileSync(path.join(MIGRATION_DIR, name), 'utf8'));
     for (const sql of others) {
       assert.equal(sql.includes('scripture_catalog'), false);

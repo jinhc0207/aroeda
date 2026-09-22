@@ -2081,3 +2081,92 @@ hash로 묶어 `evidence.analysisRequest.requestHash`에 담고, 최상위 `arti
 
 운영 `analyze-situation`의 payload, 공용 `environment` 계약, 기존 156건 frozen snapshot은
 바꾸지 않았다. 증거 DB 표·RPC, 활성화 SQL, 새 영역 manifest는 이번에도 범위가 아니다.
+
+## 9-24. 후보 생성 증거의 append-only DB 보관과 저장 RPC (2026-09-22, 후속)
+
+9-18~9-23이 만든 `CandidateGenerationEvidence`를 이제 DB에 불변으로 적을 수 있다. 표 하나와
+저장 RPC 하나를 더했고, 기존 표·함수·활성화 구조는 손대지 않았다.
+
+### 이 보관소가 보장하는 것
+
+1. **불변.** 적힌 증거는 고칠 수도 지울 수도 없다. 기존 append-only 방아쇠를 그대로 재사용해
+   `UPDATE`·`DELETE`·`TRUNCATE`를 모두 막는다. DB 소유자 권한으로도 막힌다.
+2. **후보 연결.** 증거는 DB에 실제로 있는 후보에만 붙는다(외래 키, `on delete restrict`).
+   후보가 없으면 저장되지 않는다.
+3. **열과 JSON의 일치.** 표 제약이 JSON 안의 `contractVersion`·`candidateHash`·`artifactHash`가
+   열 값과 같을 것을 강제한다. 어긋난 행은 어떤 경로로도 들어올 수 없다.
+4. **버전·연구 연결.** 저장 RPC가 증거의 `baseVersionHash`·`proposedVersionHash`·
+   `sourceResearchResultHash`를 그 후보의 기록과 대조한다.
+5. **멱등성과 충돌 거절.** 같은 `artifactHash`로 동일한 JSONB 값을 다시 보내면 멱등이고(공백·객체
+   키 순서 같은 원문 바이트 차이는 jsonb 비교가 구분하지 않는다),
+   같은 지문에 다른 후보나 다른 JSON을 붙이면 거절한다.
+6. **부분 행 없음.** 실패한 호출은 행을 하나도 남기지 않는다.
+7. **권한.** `anon`·`authenticated`는 표도 RPC도 건드릴 수 없다. `service_role`도 표를 직접
+   읽거나 쓰지 못하고 허용된 저장 RPC만 실행할 수 있다.
+
+### 이 보관소가 보장하지 **않는** 것
+
+- **"저장됨"은 "실제 모델 호출이 증명됨"이 아니다.** DB는 불변 보관과 후보 연결만 본다.
+  증거가 실제 Astra·Analyzer 호출에서 나왔는지는 확인하지 않으며 확인할 수도 없다.
+- **TypeScript validator 통과는 전자서명이 아니다.** DB는 `validateCandidateGenerationEvidence`를
+  부르지 않고, 통과했다는 사실을 기록하지도 않는다. 증거를 쓸 수 있는 주체는 계약을 만족하는
+  내용을 지어낼 수 있다(9-18의 한계가 그대로다).
+- **`artifactHash`가 내용에서 실제로 나온 값인지 DB는 모른다.** 아래를 보라.
+
+### 지문 재계산의 한계 (명시)
+
+JavaScript `canonicalJson`이 만드는 바이트열은 PostgreSQL의 `jsonb::text`와 같지 않다. `jsonb`는
+키를 (길이, 바이트) 순으로 다시 늘어놓고 중복 키를 버리며 수·유니코드 표기를 정규화한다.
+게다가 이 프로젝트는 `pgcrypto`를 쓰지 않아 SQL 안에 SHA-256 자체가 없다(migration 전체를
+확인했다 — `digest`·`hmac` 등을 쓰는 곳이 없다).
+
+그래서 **DB는 `artifactHash`를 다시 계산하지 않으며, 계산한 척도 하지 않는다.** `jsonb::text`의
+해시를 같은 지문이라고 가장하는 코드는 넣지 않았다. 대신 형식·필드 연결·충돌·멱등성을 엄격히
+본다. 내용에서 지문이 실제로 나왔는지는 TypeScript 쪽 `validateCandidateGenerationEvidence`가
+보며, **그 사실 자체는 DB에 기록되지 않는다.**
+
+### cardinality: 후보 1 : 증거 N (명시적 검토)
+
+사례 저작 모델은 결정적이지 않다. 같은 후보를 다시 돌리면 다른 문장이 나오고 따라서 다른
+`artifactHash`가 나온다. 그 시도들은 모두 남아야 한다 — 하나만 남기려면 고치거나 지워야 하는데
+그것이 바로 이 표가 막는 일이다.
+
+그래서 기본 키는 `artifact_hash`이고 `candidate_hash`에는 unique를 걸지 **않는다**. 실제로 같은
+후보로 두 번 봉인한 증거 두 건이 모두 저장되는 것을 컨테이너에서 확인했다(2행 / 후보 1개).
+
+이 선택에는 검토 측면의 뜻도 있다. 시도가 전부 남으므로 **"통과할 때까지 다시 돌린" 흔적이
+나중에 보인다.** 후보당 하나만 남겼다면 그 신호가 사라진다.
+
+어느 증거가 검증·활성화에 쓰였는지는 이번 단계에서 정하지 않는다. 다음 단계가 정확한
+`artifactHash`로 결속할 수 있도록 `(artifact_hash, candidate_hash)` 복합 unique만 미리 뒀다.
+기존 validation 표가 attestation을 위해 쓰는 것과 같은 방식이다.
+
+### `SECURITY DEFINER`를 쓴 이유
+
+`service_role`에는 `private` 표에 대한 권한이 하나도 없다. 그것이 이 설계의 핵심이다 — 열쇠를
+가진 쪽도 표를 직접 만지지 못하고, 정해진 검사를 지나는 함수로만 적을 수 있다. 그래서 함수
+소유자 권한으로 실행해야 한다. `search_path`를 `private, pg_catalog`로 고정하고 모든 객체를
+스키마로 한정해 호출자가 만든 동명 객체가 끼어들 수 없게 했다. `PUBLIC`·`anon`·`authenticated`
+실행 권한은 명시적으로 회수했다.
+
+### 실제 DB에서 확인한 것
+
+깨끗한 PostgreSQL 17.6 컨테이너에 모든 migration 18개를 순서대로 적용하고, 실제 TypeScript
+계약이 봉인한 증거로 확인했다. 정상 저장·멱등 재전송·같은 후보의 두 번째 시도가 통과하고,
+없는 후보·잘못된 두 해시 형식·인자와 JSON 불일치 두 가지·같은 지문 다른 payload·
+`contractVersion` 위조·후보와 버전 연결 불일치·객체 아님 아홉 가지가 각각 제 사유로 거절되며
+행 수가 변하지 않았다. `UPDATE`·`DELETE`·`TRUNCATE`가 소유자 권한으로도 막히고,
+`anon`·`authenticated`·`service_role`의 직접 표 접근이 모두 막혔다.
+
+신규 migration을 뺀 컨테이너와 넣은 컨테이너의 스키마를 덤프해 비교했다. **기존 객체에서
+사라지거나 바뀐 줄이 하나도 없고**, 추가된 것은 신규 표·색인·방아쇠 둘·제약·외래 키·함수
+하나뿐이다. `service_role`이 실행할 수 있는 public RPC는 20개에서 21개가 됐다. 기존
+baseline·candidate·validation·activation·rollback·validation_context RPC에 같은 입력을 넣어
+두 컨테이너의 결과와 오류 메시지가 완전히 같은 것도 확인했다.
+
+### 아직 아닌 것
+
+**활성화 SQL은 이 증거를 아직 다시 확인하지 않는다.** 저장됐다는 사실만으로 활성화가 열리지
+않으며, 자동 활성화는 계속 fail-closed다. 활성화가 정확한 `artifactHash`로 증거를 결속하고
+재검증하는 것, 새 영역(`new_domain_with_cards`)용 동적 Analyzer manifest, 운영 배포는 다음
+단계다. 사람 사전 승인 단계는 이번에도 넣지 않았다.
