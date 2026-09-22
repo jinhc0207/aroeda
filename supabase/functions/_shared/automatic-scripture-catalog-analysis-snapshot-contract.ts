@@ -391,7 +391,7 @@ function validateCaseExpectation(kind: AnalysisSnapshotCaseKind, value: unknown,
  * analysis 자리에 얹어도 그 함수 혼자서는 잡지 못한다(§9-10 수정 5). 이 계약은 공용 파일을 고치지
  * 않고 이 안에서만 그 여분의 필드를 막는다.
  */
-function validateAnalysisShape(value: unknown, label: string): string[] {
+export function validateFrozenSituationAnalysisShape(value: unknown, label: string): string[] {
   if (!isPlainObject(value)) return [`${label}: 객체가 아닙니다.`];
   const errors = exactFields(value, SITUATION_ANALYSIS_FIELDS, label);
   if (isPlainObject(value.safety)) {
@@ -492,7 +492,7 @@ function validateCase(value: unknown, label: string): string[] {
   }
 
   // 1~3단계: analysis(그리고 analysis.safety)에 여분의 필드가 없는지 먼저 본다.
-  const analysisShapeErrors = validateAnalysisShape(value.analysis, `${label}.analysis`);
+  const analysisShapeErrors = validateFrozenSituationAnalysisShape(value.analysis, `${label}.analysis`);
   errors.push(...analysisShapeErrors);
 
   // 4단계: 알려진 필드들의 값 자체가 규격을 지키는지는 공용 validateSituationAnalysis에 맡긴다.

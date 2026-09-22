@@ -1499,10 +1499,190 @@ checkpoint/snapshot 저장소·가짜 preflight만 쓰고, 몇 개는 실제 파
 - 최종 snapshot fingerprint:
   `sart_2ef11743f6cbb60390b1b083114f15e1dcbfeb88ef2fcd94da7f2bfd7ed869c4`.
 
-이 로컬 파일 생성은 activation-ready를 뜻하지 않는다. 스냅샷은 아직 Git에 넣거나 DB에
-기록하지 않았고, deterministic adapter·executor·validation record·운영 Supabase와도
-연결하지 않았다. 앱 런타임·운영 카탈로그·배포 상태에는 변화가 없다.
+이 로컬 파일 생성 당시에는 activation-ready가 아니었다. 스냅샷은 Git이나 DB에 없었고,
+deterministic adapter·executor·validation record·운영 Supabase와도 연결되지 않았다.
+이후 Git 고정과 `safetyBoundary`·`corpusRegression` adapter 연결은 §9-15에서 수행했다.
+앱 런타임·운영 카탈로그·배포 상태에는 여전히 변화가 없다.
 
+
+## 9-15. 고정 분석 스냅샷 v1 Git 보관과 결정적 adapter 연결 (2026-09-18, 후속)
+
+### Git에 고정한 산출물
+
+§9-14의 로컬 `snapshot.json`을
+`supabase/functions/_shared/automatic-scripture-catalog-analysis-snapshot-v1.ts`로 생성해
+Git이 추적할 수 있는 타입스크립트 데이터 모듈로 옮겼다. Node와 Edge가 JSON import 옵션이나
+파일 시스템 없이 같은 값을 읽게 하려는 선택이다. 156건(`corpus_regression` 153 +
+`safety_boundary` 3), 기준 catalog 지문, source/frozen/top-level 세 지문은 §9-14의 값과
+글자 하나까지 같다. 알려진 최상위 지문을 테스트에 직접 고정했으므로 cases를 바꾸고 내부
+해시만 함께 다시 계산하는 변조도 통과하지 못한다.
+
+산출물에는 합성 평가 문장과 구조화된 분석만 있다. raw response·reasoning·token usage·API key·
+사용자·세션 식별 필드는 없다. 계약의 exact-fields·금지 내용 검사, 하위 해시 재계산,
+`validateAnalysisSnapshotAgainstCurrentEnvironment`를 다시 통과해야만 adapter가 만들어진다.
+기준 catalog도 전달받은 내용을 검증하고 실제 지문을 다시 계산한다. 하나라도 다르면 부분
+adapter를 돌려주지 않는다.
+
+### 두 결정적 adapter
+
+`automatic-scripture-catalog-frozen-analysis-adapter.ts`를 추가했다. 파일·네트워크·DB·환경변수·
+시계에 접근하지 않는 순수 adapter이며, 버전 진입점은 임의 snapshot 인자를 받지 않고 Git의
+`FROZEN_ANALYSIS_SNAPSHOT_V1`만 선택한다.
+
+- `CatalogCard`를 Gate의 `ScriptureCard`로 투영할 때 모든 본문 범위·태그·설명·오용 방지 문장을
+  복사한다. 후보는 기존 `validateCatalogCandidate`를 다시 통과해야 하고, 검증기가 돌려준
+  proposed catalog만 Gate에 넣는다.
+- `safetyBoundary`는 3건을 proposed catalog로 실제 Gate에 넣어 `expectedRoute`와
+  `observedRoute`를 만든다. Gate가 카드보다 safety를 먼저 보는 후보-무관 전역 가드라는 의미는
+  그대로다.
+- `corpusRegression`은 같은 고정 분석 153건을 기준 catalog와 proposed catalog에 각각 넣어
+  `baseline`·`candidate`를 계산한다. recommend는 primary domain과 선택 카드가 기존
+  `acceptableCardIds` 안에 있는지, domain_choice는 route와 두 후보 domain의 순서까지,
+  no_coverage는 route를 확인한다. corpus 사례가 safety로 잘못 빠지면
+  `safetyFalsePositive=true`다.
+- `evaluationCorpusVersion`·`rulesVersion`은 전체 snapshot fingerprint를 쓴다. 따라서 코퍼스,
+  고정 분석, Analyzer/Gate/Matcher 환경 중 하나라도 바뀐 산출물을 같은 버전처럼 기록할 수 없다.
+- 반환 payload는 매 실행 새 객체다. 검증 직후 snapshot·baseCatalog·candidate를 복제해
+  결속하므로, 호출자가 원본이나 반환 배열·결과를 바꿔도 다음 실행과 Git 산출물은 바뀌지 않는다.
+
+현재 기준 catalog를 실제 재생한 결과는 domain match 153/153, acceptable match 143/153,
+safety false positive 0/153이다. baseline에서 이미 acceptable이 아니었던 10건을 새 후보가
+고쳐야 통과하는 계약은 아니다. 기존 성공 143건 중 하나라도 candidate에서 실패로 내려가면
+회귀다. SC-002와 의미 점수를 같게 만든 결함 후보 fixture는 기존 허용 결과 9건을
+ambiguous/비허용으로 바꾸며 adapter가 그 9개 ID를 정확히 드러냈다. 기존 영역과 겹치지 않는
+새 영역 fixture는 153건의 baseline/candidate 결과가 모두 같았다. 이것은 새 영역 활성화 허가가
+아니라 기존 코퍼스 비회귀만 뜻한다.
+
+기존 executor와의 실제 타입·parser·봉인 연결도 테스트했다. 두 adapter 결과 3건/153건이
+`executeAutomaticScriptureCatalogValidation`의 payload parser와 validation record 봉인을
+통과한다. 이 통합 테스트의 `candidateGenerationEvaluation`은 명시적인 테스트 fixture다.
+운영 후보 생성 adapter나 독립 사례 저작 근거를 구현한 것이 아니며, 빈 결과로 통과시킨 것도
+아니다.
+
+### 결함 주입과 검증
+
+다섯 핵심 경계를 하나씩 임시로 무력화했다: 검증한 snapshot/baseCatalog 참조를 그대로 보존,
+현재 환경 대조 생략, candidate Gate 결과를 baseline 결과로 대체, acceptable allowlist 무시,
+유효하지 않은 후보 허용. 다섯 변형 모두 신규 테스트가 실패로 잡았고 매번 원본을 바이트 단위로
+복원했다.
+
+신규 테스트 18/18, `src/lib/automatic-scripture-catalog-*.test.ts` 612/612,
+`npm run test:logic` 4351/4351, `npm run test:ui` 113/113,
+`npx --no-install tsc --noEmit` 오류 0이 통과했다. package 파일은 바꾸지 않았다.
+OpenAI·Supabase·DB 호출, 배포는 없었다.
+
+
+## 9-16. 후보 생성 사례 증거 계약 v1과 결정적 Gate 재생 (2026-09-18, 후속)
+
+`candidateGenerationEvaluation`이 단순한 `{caseId, cardId, passed}` 목록만 받던 공백을 메우기
+위해 `automatic-scripture-catalog-candidate-generation-evidence.ts`를 추가했다. 이 계약은 후보가
+생긴 뒤 만드는 합성 사례와 동결 분석을 candidate hash·research-result hash·base/proposed catalog
+hash·후보 생성 model/prompt·현재 Analyzer 환경에 함께 결속하고, 저장된 최상위 artifact hash를
+내용에서 다시 계산한다. 사례는 카드마다 정확히 세 건이며 코드가 정한 `GEN-SC-…-01~03` 순서,
+중복 없는 문장, 해당 카드 영역으로 resolved된 normal 분석이어야 한다. 카드 id·영역 id·성경 표기를
+문장에 직접 넣어 답을 암시할 수 없고, 동결 분석과 safety 내부의 계약 밖 필드도 거절한다.
+
+후보 생성기는 현재 `gpt-5.6-sol`로 고정한다. 사례 작성 profile은
+`aroeda-candidate-generation-case-author-astra`(`gpt-6-astra`, independence group
+`openai-gpt-6`) 하나를 전체 값과 재계산한 profile hash로 고정한다. 모델 이름만 Astra로 적거나
+prompt/schema/profile version을 바꾼 profile은 통과하지 않는다. 다만 이 단계의 profile은
+version 이름표만 들고 있었다 — 자세한 것은 9-18을 보라. 모델 allowlist가 정한 계열을
+대조해 후보 생성 모델과 사례 작성 모델의 independence group이 같으면 별도 오류로 거절한다.
+따라서 Sol이 자기 시험 문제를 만들거나 Terra로 이름만 바꿔 같은 계열이 자기 채점하는 경로는
+닫혀 있다.
+
+검증된 증거 adapter는 후보 계약을 다시 검증해 만든 proposed catalog에 각 동결 분석을 실제
+Recommendation Gate로 재생한다. `recommend`이며 선택 카드가 사례의 cardId와 정확히 같을 때만
+`passed=true`를 만든다. 실행 시 executor가 넘긴 후보 지문도 증거의 candidateHash와 다시
+대조하므로 다른 후보에 adapter를 재사용할 수 없다. 모델이 pass를 주장하는 필드는 증거 스키마에 없다. 생성 시점에 입력을
+복제하고 반환 때 새 payload를 만들므로 호출자가 원본이나 이전 반환값을 바꿔도 다음 판정은
+달라지지 않는다.
+
+현재 Analyzer는 정적 17개 영역만 안다. 그래서 `new_domain_with_cards`는 증거가 있어 보이더라도
+동적 domain manifest가 구현되기 전에는 명시적으로 fail-closed다. §9-16 완료 당시에는 Astra
+사례 저작 transport와 Analyzer 실행이 없었고, 이후 §9-17에서 구현했다. append-only DB 표/RPC,
+validation payload와 activation SQL의 증거 재대조는 아직 없으므로 운영 자동 활성화는 열리지 않았다.
+
+회귀 테스트 20건은 정상 증거와 실제 Gate 통과, 같은 Sol 계열 자기 채점, 임의 Astra profile,
+임의 profile/artifact hash, 후보·연구·두 catalog 버전 결속, 사례 수·순서·중복, 답을 암시하는
+문장, analysis/safety 여분 필드, 위험·영역 선택·대상 영역 불일치, 현재 환경 차이, 새 영역 차단,
+입출력 격리와 외부 접근 부재를 고정한다. 등록 profile 대조·independence group·artifact 재계산·
+현재 환경 대조·새 영역 차단을 하나씩 임시로 무력화한 다섯 변형은 각각 신규 테스트 실패로
+잡혔고, 매번 원본을 바이트 단위로 복원했다. OpenAI·Supabase·DB 호출은 없었다.
+최종 검증은 신규 테스트 20/20, 자동 Scripture Catalog 전체 632/632,
+`npm run test:logic` 4371/4371, `npm run test:ui` 113/113,
+`npx --no-install tsc --noEmit` 오류 0으로 통과했다.
+
+
+## 9-17. Astra 사례 저작·Analyzer 순차 실행·증거 봉인 (2026-09-22)
+
+추가 파일은 `_shared/automatic-scripture-catalog-case-author.ts`,
+`automatic-scripture-catalog-generation-transport.ts`, `automatic-scripture-catalog-generation-runner.ts`,
+`src/lib/automatic-scripture-catalog-generation-pipeline.test.ts`다. 기존 §9-15/16 코드와 산출물은 보존했다.
+
+### 요청과 분석 경계
+
+실행기는 기준 카탈로그와 후보를 복제·검증하고, 기존 영역 후보이며 생성 모델이 현재 Sol 설정과
+같은 경우에만 사례 저작 요청을 만든다. 새 영역 또는 잘못된 후보는 외부 호출 전에 거절한다.
+Astra 요청은 §9-16의 고정 profile을 사용하며 후보 카드의 문맥·설명·오용 방지 정보와 같은 영역의
+경쟁 카드 설명만 보낸다. 점수·정답 태그는 보내지 않는다. 지시문은 카드 내용을 지시가 아닌
+검증 대상 데이터로 취급하고, 합성 문장 작성·독립적인 생활 상황·안전 경계·개인정보 배제를 명시한다.
+지시문 v1의 실제 지문도 회귀 테스트로 고정했다.
+
+응답의 `scenarios`는 후보 cardId를 키로 쓰고 값은 정확히 세 문장의 배열이다. JSON schema는
+필수 카드 집합과 여분 필드 금지를 강제하며 로컬 parser가 다시 검사한다. 객체 키 순서가 달라도
+cardId로 대응하고 `GEN-SC-…-01~03` id는 코드가 만든다. 1~300자·앞뒤 공백·잘못된 타입·카드/영역
+id·장절 패턴·개인정보 패턴을 확인하고 NFKC 정규화와 공백/문장부호 제거 뒤 중복도 거절한다.
+문장의 의미상 중복이나 적절성 전체를 이 정적 검사만으로 증명하지는 않는다.
+
+한 후보에 Astra를 한 번만 호출한다. 전체 저작 결과가 유효한 뒤에야 문장을 하나씩 Analyzer에
+보낸다. Analyzer는 기존 `buildOpenAIPayload`의 모델·지시문·스키마를 그대로 쓰며 input은 합성
+문장 하나뿐이다. 목표 카드·영역·Astra의 설명·정답을 붙이지 않는다. 한 분석이 끝나기 전에 다음
+분석을 시작하지 않고, 각 결과의 exact-fields·태그 사전·normal 안전 수준·resolved 영역·대상
+카드 영역을 검사한다. 마지막에 기존 증거 봉인 함수와 증거 validator를 다시 거쳐야만
+`completed`와 evidence를 반환한다. 이 `completed`는 증거 생성 완료이며 후보 활성화 통과가 아니다.
+카드가 선택되지 않는 유효 분석도 그대로 증거에 남고, 기존 Gate adapter가 `passed=false`를 낸다.
+통과할 때까지 사례를 다시 쓰거나 분석을 반복하는 경로는 없다.
+
+### 통신과 실패 결과
+
+통신은 고정 Responses URL에 POST 한 번, redirect 금지, 재시도/다른 모델 전환 없음,
+`store:false`, 도구 없음, 비스트리밍으로 제한한다. Astra와 Analyzer 모두 출력 상한 8192 tokens,
+요청별 상한 60초다. 본문 읽기까지 시간 제한에 포함하며 abort를 무시하는 시험용 fetch도 deadline에
+종료된다. 성공 응답은 최대 262144 bytes까지 읽고, 크기 초과·시간 초과·HTTP 실패 때 읽기를 취소한다.
+HTTP 오류 본문은 읽거나 노출하지 않는다. SDK 자동 retry를 거치지 않고 native fetch를 사용한다.
+
+응답은 완료 상태·기대 모델·단일 completed assistant message를 확인한다. 오류·incomplete·refusal·
+tool output·중복 메시지·잘못된 JSON은 성공 글이 섞여 있어도 거절한다. reasoning·usage·원본 오류는
+증거에 들어가지 않는다. 키는 서버 조립부에서 인자로 주입하며 파일·환경변수·DB·로그는 직접
+읽거나 쓰지 않는다. transport factory 생성이나 모듈 import만으로는 호출하지 않는다.
+
+실행기 실패는 `reason`과 분석 실패일 때의 코드 지정 caseId만 반환한다. 부분 증거·완료된
+부분 분석·원본 오류·상세 모델 값은 반환하지 않는다. 체크포인트/재개/저장은 이번 실행기에 없으므로
+별도의 명시적 재실행은 후보 전체를 새로 처리한다. 호출 횟수·비용 정책은 운영 조립부에서 정해야 한다.
+
+### 검증과 남은 범위
+
+신규 65개 테스트에서 실제 factory를 가짜 fetch로 연결해 Astra 1회→Analyzer 3회→증거 validator→
+실제 Gate를 확인했다. 카드 두 장의 저작 1회/분석 6회, 순차 실행, 잘못된 마지막 문장 때문에
+첫 분석도 시작하지 않는 경우, 중간 실패 뒤 호출 0회, 후보가 선택되지 않아 실제 Gate 판정이
+실패하는 경우, 입력/분석 객체 격리도 확인했다. 모든 모델 응답은 fixture이며 실제 모델의 의미 품질·
+실제 호출 성공을 증명하지 않는다.
+
+모델 응답 대조·정규화 중복·여분 응답 필드·분석 여분 필드·대상 영역·입력 복제·실제 응답 크기·
+redirect 금지의 8개 방어선을 각각 무력화했을 때 테스트가 실패했고 원본을 바이트 단위로 복원했다.
+
+이 계약의 profile/hash는 의도된 작성 경로와 내용의 연결이며 모델 호출에 대한 전자서명은 아니다.
+실제 provenance 신뢰는 서버 조립부·권한이 제한된 append-only 저장·활성화 시 재검증까지 필요하다.
+증거 DB 표/RPC, validation payload/activation SQL 연결, 새 영역용 동적 manifest, 운영 호출은 아직
+구현하거나 실행하지 않았다. 사람 사전 승인은 추가하지 않았다. 자동 검증→활성화→소유자 공지
+정책은 유지하되, 연결이 끝나기 전까지 자동 활성화는 열리지 않는다.
+
+최종 로컬 검증: 신규 테스트 65/65, 전체 로직 4436/4436, UI 9 suites/113 tests 통과,
+TypeScript 오류 0. 패키지·마이그레이션 변경과 실제 모델·DB 호출은 없다.
+
+확인한 API 기준: [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs),
+[Astra 모델 지침](https://developers.openai.com/api/docs/guides/latest-model).
 
 ## 10. 아직 연결되지 않은 런타임 범위
 
@@ -1511,20 +1691,24 @@ checkpoint/snapshot 저장소·가짜 preflight만 쓰고, 몇 개는 실제 파
   기준 카탈로그·validator profile도 등록되지 않았다.
 - 후보를 자동으로 만드는 생성기와 실행기의 DB 오케스트레이션·Edge Function 연결부가 없다.
   Sol·Astra 신학 평가 fetch transport(§9-7)는 구현됐지만, 아직 실행기를 감싸는 운영 진입점에 연결되지 않았다.
-- **결정적 검사(deterministic) adapter 셋이 아직 없다.** §9-14에서 `safety_boundary` 3건과
-  `corpus_regression` 153건의 독립 검증된 고정 분석 스냅샷을 로컬에 생성했지만, 이 산출물은 아직
-  Git이나 DB에 보관되지 않았고 실행기에 주입되는 adapter·executor·validation record에도 연결되지
-  않았다. `candidateGenerationEvaluation`(카드별 생성 사례)의 독립 판단 근거도 여전히 없다.
-  **남은 공백을 빈 결과나 지어낸 사례로 메우지 않는다** — 스냅샷의 안전한 버전 관리 방식과 두 결정적
-  adapter, 후보 생성 모델과 사례 저작 모델의 독립성 결속을 별도 작업으로 구현해야 한다.
-  `candidateGenerationEvaluation`은 현재 스냅샷 계약에도 아직 없다(§9-9의 "candidate_generation은 왜
-  없는가" 참고). 로컬 스냅샷이 존재한다는 사실만으로 activation-ready가 되지는 않는다.
+- 결정적 검사 중 `safetyBoundary`·`corpusRegression`은 §9-15에서 Git 고정 스냅샷과 실제
+  adapter로 연결됐다. `candidateGenerationEvaluation`은 §9-16에서 독립 사례 저작 profile에
+  결속된 증거 계약과 실제 Gate 재생 adapter까지 생겼고, §9-17에서 Astra 사례 저작 transport와
+  Analyzer 순차 실행·증거 봉인 실행기도 구현했다. append-only DB 보관, validation payload와
+  activation SQL의 증거 재대조, 운영 조립부 연결은 아직 없다. **남은 공백을 빈 결과나 지어낸 사례로 메우지 않는다.** 이 항목들이 구현되기 전에는
+  운영 orchestration이 완성되지 않았고 activation-ready가 아니다. 새 영역은 동적 Analyzer
+  domain manifest·prompt/schema/runtime validator·포인터/롤백 원자성도 없으므로 계속
+  fail-closed다.
 - 공지 outbox를 읽어 보내는 발송기와 발송 결과 기록이 없다.
 - validator용 활성 카탈로그·수요 읽기 RPC(§9-8)는 생겼다. 앱 런타임이 활성 카탈로그를 읽는 별도 경로와
   캐시·폴백 정책은 아직 없다.
 - migration은 검증용 임시 컨테이너에만 적용했고(§9-1, §9-6), 운영 Supabase 프로젝트에는 적용하지 않았다.
 
 ## 11. 테스트
+
+- `automatic-scripture-catalog-generation-pipeline.test.ts` (§9-17, 65건) — 고정 Astra 요청·카드별
+  정확한 문장 집합·제공자 실패·통신 상한·비밀정보 비노출·Analyzer 공용 payload·호출 순서·
+  실패 시 중단·입출력 격리·실제 factory/증거 validator/Gate 연결을 외부 호출 없이 검증한다.
 
 - `automatic-scripture-catalog-contract.test.ts` — 기준 카탈로그(현재 17개 영역·51장 그대로), 지문 결정성, 정렬, 금지 설정·개인정보, 두 후보 종류와 거절 규칙.
 - `automatic-scripture-catalog-activation-contract.test.ts` — 검증 기록 무효/막음 구분, 실제 개역한글 원문 지문 재계산, 중복 재계산,
@@ -1579,6 +1763,19 @@ checkpoint/snapshot 저장소·가짜 preflight만 쓰고, 몇 개는 실제 파
   catalog) 중 하나만 바뀌고 나머지 해시를 모두 올바르게 재계산해도 정확히 그 필드 하나의
   오류만 나는지, 잘못된 baseline hash 인자와 스냅샷 구조 오류가 각각 올바른 순서로(구조
   오류가 먼저) 보고되는지를 고정한다.
+- `automatic-scripture-catalog-frozen-analysis-adapter.test.ts` (§9-15, 18건) — Git 고정 산출물의
+  156건·종류별 개수·세 지문·기준 catalog 지문, 계약/현재 환경 재검증, raw response·usage·사용자
+  식별 필드 부재를 고정한다. CatalogCard→Gate 카드 무손실 투영, safety 3건, corpus 153건의 실제
+  baseline/candidate 계산, 새 영역 fixture의 비회귀, SC-002 의미 중복 fixture의 9건 회귀 검출,
+  반환값 격리, 후보 재검증, 버전 진입점과 executor parser·봉인 연결을 확인한다. executor 통합의
+  candidateGeneration은 아직 구현되지 않았음을 드러내는 명시적 fixture만 쓴다.
+- `automatic-scripture-catalog-candidate-generation-evidence.test.ts` (§9-16, 20건) — 후보·연구·
+  catalog 버전·현재 Analyzer 환경·고정 Astra 사례 저작 profile과 그 independence group을 하나의
+  재계산 가능한 증거로 결속한다. 카드별 정확히 세 사례의 id·순서·문장 중복/답 암시·동결 분석
+  exact-fields와 영역/안전 일관성을 고정하고, proposed catalog의 실제 Gate가 해당 카드를 고른
+  경우에만 pass가 되는지 확인한다. 실행 후보 지문도 다시 대조한다. 같은 Sol 계열 자기 채점,
+  임의 profile/hash, 입력·반환값 변조,
+  동적 manifest가 없는 새 영역 후보가 다시 허용되지 않도록 고정한다.
 - `automatic-scripture-catalog-analysis-snapshot-builder.test.ts` (§9-11, 36건) —
   `EVALUATION_CASES`(153) + `SAFETY_BOUNDARY_SCENARIOS`(3)에서 만든 156개 결정적 계획이
   caseId 오름차순·중복 없음·결정성을 지키는지, EVAL 153개의 ID·text·expected가 부가
@@ -1623,3 +1820,264 @@ checkpoint/snapshot 저장소·가짜 preflight만 쓰고, 몇 개는 실제 파
 그래서 각 규칙 하나만 어긋나게 만들고 그 규칙이 내는 오류 문구를 직접 확인하는 테스트를 더했고,
 validator profile 자가 등록 금지와 수요 날짜 위조 금지도 새로 고정했다. 다시 돌렸을 때 **25개 변형이 모두 실패로 잡힌다.**
 테스트에 쓰인 카드·validator·평가 결과는 시험용 fixture이며 실제 값이 아니다.
+
+## 9-18. 사례 저작 지시문·스키마를 증거에 결속 (2026-09-22, 후속)
+
+9-16의 사례 작성 profile은 `promptVersion`·`schemaVersion`이라는 **이름표만** 들고 있었다.
+그래서 지시문이나 Structured Output 스키마를 고쳐도 봉인된 증거가 바이트 단위로 그대로였고,
+옛 설정으로 만든 증거를 지금 증거로 받아들이게 된다. Analyzer 쪽은 반대였다 —
+`environment.analyzerInstructionsHash`·`analyzerSchemaHash`가 원문 지문을 담고 있어서 지시문이
+바뀌면 옛 증거가 거절된다. 이 비대칭을 없앴다.
+
+원본을 한곳으로 모았다. `automatic-scripture-catalog-case-author-contract.ts`가 지시문 원문,
+전송 스키마 생성기, 사례 수·문장 길이 상한의 유일한 출처다. 요청을 만드는 곳, 증거를 봉인하는
+곳, 증거를 다시 검증하는 곳이 모두 이 파일을 쓴다. 증거 모듈이 case-author를 직접 import하면
+순환이 되므로(case-author가 증거 모듈의 profile을 쓴다) 양쪽이 함께 의존하는 순수 계층으로
+분리했다. 이 파일은 네트워크·DB·파일·환경변수·시계를 읽지 않는다.
+
+결속은 두 자리로 나눈다. 스키마에는 후보의 카드 id가 `required`와 `properties`에 들어가므로
+후보마다 값이 달라져 정적 profile에 담을 수 없기 때문이다.
+
+- `caseAuthorProfile.instructionsHash` — **정적**. 실제 요청에 쓰는 `CASE_AUTHOR_INSTRUCTIONS`
+  원문의 지문이며, 모듈 적재 시점에 그 문자열에서 계산한다. 하드코딩한 상수가 아니다.
+- `caseAuthorRequest.schemaHash` — **후보별**. 실제로 전송하는 `text.format` 전체(`name`·
+  `strict`·스키마)의 지문이다. 검증할 때 **같은 후보의 카드 id**로 스키마를 다시 만들어 대조한다.
+
+따라서 지시문 한 글자, 사례 수 상한, 문장 길이 상한, `additionalProperties`, `strict`, 스키마
+이름 중 무엇이 바뀌어도 이전 설정으로 봉인한 증거는 거절된다. 버전 문자열 비교나 문서에 적어 둔
+고정 해시 비교가 아니라, 검증 시점에 살아 있는 원본에서 다시 계산한 값끼리 대조한다.
+
+회귀 테스트는 지시문만 바꾼 경우, 스키마만 바꾼 경우(사례 수 상한·스키마 이름), 둘을 함께 바꾸고
+profile hash와 최상위 artifactHash까지 전부 다시 계산한 위조 설정, `caseAuthorRequest` 누락과
+계약 밖 항목을 각각 거절하는지 고정한다. 정상 증거 통과와 다른 후보 증거 재사용 차단도 함께
+확인한다. 파이프라인 테스트는 실행기가 봉인한 두 지문이 실제로 전송된 본문의 `instructions`와
+`text.format`에서 나온 값과 같은지 끝단에서 대조한다. 핵심 비교 두 곳을 각각 일부러 지워 해당
+테스트가 실패하는 것을 확인하고 원본을 복원했다.
+
+**이 지문들이 증명하지 않는 것.** 설정의 동일성만 말한다. 실제로 모델을 불렀다는 증명도
+전자서명도 아니다. 증거를 쓸 수 있는 주체는 하위 지문과 최상위 지문을 모두 다시 계산해 사례를
+지어낼 수 있고, 그렇게 만든 증거는 스스로 일관되다는 것만 증명한다. 그 경계는 권한이 제한된
+append-only 저장과 활성화 시 재검증으로만 좁혀지며 아직 구현되지 않았다.
+
+이번 작업에서 **고치지 않은 것**(후속): 요청별 timeout 값의 전달 경로와 후보 전체 실행의
+마감 시각(9-19에서 처리), Analyzer 요청 설정이 운영 `analyze-situation`과 다른 점, 증거 DB
+표·RPC·활성화 연결. 사람 사전 승인은 추가하지 않았다.
+
+## 9-19. 요청별 시간 제한과 후보 전체 실행 마감 (2026-09-22, 후속)
+
+두 가지가 비어 있었다. `transport.author`가 `spec.timeoutMs`를 무시하고 언제나 60초를
+넘겼고, 후보 전체 실행에는 마감이 아예 없었다. 후보당 카드 5장 × 카드당 3사례이므로 저작
+1회 + 분석 최대 15회가 순차로 이어지고, 각 호출이 60초를 온전히 쓰면 전체가 960초까지
+늘어난다. 이번에 두 층을 나눠 채웠다. 호출 횟수 제한(카드 5장, 사례 3건, 분석 15회)은
+그대로 둔다.
+
+**요청 하나의 실제 제한**은 네 값 중 가장 짧은 것이다.
+
+    min(요청이 지정한 값, transport 설정값, 60초, 실행 전체의 남은 시간)
+
+큰 값을 넣어 상한을 늘릴 수 없다. `0`·음수·소수·`NaN`·`Infinity`·다른 타입은 `fetch`를
+부르기 전에 `configuration_error`로 거절한다(회귀 테스트가 호출 0회를 확인한다). 설정값이
+60초를 넘으면 조용히 깎지 않고 생성 시점에 거절한다 — 운영 설정이 잘못된 것은 드러나야
+한다. 제한에는 응답 본문을 다 읽는 시간까지 포함하므로, 헤더만 빨리 오고 본문이 끝나지
+않는 경우도 같은 마감에 걸린다.
+
+**실행 전체 예산**은 기본·최대 120초이며 호출자와 테스트는 더 짧게만 정할 수 있다. 저작
+1회와 모든 분석이 **같은 마감 시각 하나**를 나눠 쓴다. 단계가 바뀐다고 예산이 초기화되지
+않는다. 경과 시간은 `performance.now()` 기반 단조 증가 시계로 재므로 시스템 시각이 뒤로
+조정돼도 마감이 밀리지 않고, 시계는 주입할 수 있어 테스트가 실제로 120초를 기다리지 않고
+예산 소진을 재현한다. 마감은 `runCandidateGenerationEvidence`에 직접 의존 함수를 주입하는
+경로에도 똑같이 적용된다.
+
+**취소와 늦은 완료.** 마감이나 호출자 취소가 나면 진행 중인 요청에 취소 신호를 전달하고
+다음 호출을 시작하지 않는다. 의존 함수가 취소를 무시하고 영원히 붙잡고 있어도 실행기
+자체는 정해진 시간에 실패를 반환한다. 단순 `Promise.race`로 끝내지 않는다 — 경주에서 진
+작업은 사라지지 않으므로, 한 번만 열리는 빗장을 두고 늦게 온 성공·실패를 모두 받아
+삼킨다. 받지 않으면 처리되지 않은 rejection이 되고, 받아도 확정된 뒤의 값은 어디에도 쓰지
+않는다. 그래서 뒤늦게 끝난 작업이 분석을 추가로 부르거나 증거를 성공으로 되살리지 못한다.
+타이머와 이벤트 리스너는 실행이 끝날 때 정리한다. 실패 결과는 고정된 reason과, 분석
+단계라면 코드가 부여한 caseId만 담는다 — 원본 오류·제공자 응답·API 키·사례 문장·부분
+증거는 어느 경로로도 나가지 않는다.
+
+**취소가 보장하지 않는 것.** 취소 신호는 우리 쪽 대기를 끝내고 in-flight 요청에 abort를
+전달할 뿐이다. 이미 제공자에 도달한 작업이 서버에서 계속 수행되는 것, 그에 따른 **과금**,
+이미 시작된 부수효과를 되돌리지 않는다. 우리가 그 결과를 쓰지 않는다는 것만 보장한다.
+
+순환을 피하려고 순수 모듈 둘을 새로 두었다. 실패 분류(`generation-failure`)는 아무것도
+import하지 않는 잎사귀이고, 시간 예산(`generation-deadline`)은 그것만 import한다. 요청
+계약과 transport가 둘 다 이 타입을 쓰기 때문에 어느 한쪽에 두면 순환이 생긴다.
+
+회귀 테스트는 짧은 `spec.timeoutMs`가 설정값보다 먼저 적용되는지, 잘못된 시간 설정이 호출
+0회로 거절되는지, 저작 대기와 응답 본문 대기 중 전체 마감이 걸리는지, 중간 분석에서 예산을
+다 쓰면 다음 분석을 부르지 않는지, 취소를 무시하는 의존 함수에서도 실행기가 반환하는지,
+이미 취소된 실행이 호출 0회인지, 늦은 성공·실패가 결과를 바꾸거나 후속 호출을 만들지
+않는지, 단계마다 예산이 초기화되지 않는지를 각각 고정한다. 정상 실행·지문 결속·입력
+격리·다른 후보 증거 재사용 차단도 함께 확인한다. 요청별 제한과 후속 호출 차단을 각각
+무력화해 해당 테스트가 실패하는 것을 확인하고 원본을 복원했다 — 제한을 없앴을 때 한
+테스트가 실제로 50초를 쓰고, 후속 호출 차단을 없앴을 때 실행기가 반환하지 않는다.
+
+이번 작업에서 **고치지 않은 것**(후속): Analyzer 요청 설정이 운영 `analyze-situation`과
+다른 점, 증거 DB 표·RPC, 활성화 SQL, 새 영역용 동적 manifest. 자동 재시도·부분 결과
+재개·사람 사전 승인은 추가하지 않았다.
+
+## 9-20. 취소 즉시 종료·마감 원인 구분·예산 기본값 (2026-09-22, 후속)
+
+9-19를 독립 검수에서 재현해 세 곳을 고쳤다.
+
+**1. 취소해도 transport가 계속 기다렸다.** 취소 신호를 무시하는 제공자를 상대로
+`onRunAbort`가 `controller.abort()`만 불렀다. 요청 본문을 만드는 async 작업은 그대로
+매달려 있어서 `Promise.race`가 끝나지 않았고, `finally`가 돌지 않아 최대 60초짜리 요청
+타이머가 살아 있었다. 재현했을 때 취소 120ms 뒤에도 transport promise는 `pending`이었고
+프로세스가 50초를 더 붙들려 있었다. 이제 취소 신호 자체를 race의 한 주자로 넣어 취소
+즉시 대기가 끝나고 `finally`가 타이머와 리스너를 정리한다. 같은 재현이 323ms에 끝난다.
+
+이것은 **우리 쪽 대기**를 끝내는 것이다. 이미 제공자에 도달한 작업이 서버에서 계속
+수행되는 것과 그 과금을 멈추지는 않는다.
+
+**2. 소수점 절삭과 타이머 경합이 원인을 바꿨다.** 전체 예산 120ms, 마감 시작 0,
+transport 시작 0.25ms일 때 남은 119.75ms를 `Math.floor`로 119ms로 깎았다. 요청 타이머가
+119.25ms에 먼저 울면 실제 마감(120ms) 전이므로 `provider_timeout`이 되고, 실행기는 이를
+`author_failed`로 보고하면서 전체 마감 타이머를 정리해 버렸다. 두 가지를 바꿨다.
+
+- 남은 시간은 **올림**한다. 내림하면 요청 타이머가 실제 마감보다 먼저 울어 조기 종료가 된다.
+- 끝난 이유는 **어느 타이머가 먼저 울렸는지가 아니라 단조 시계가 정한다.** transport와
+  실행기가 실패를 만들 때마다 `done()`으로 시계를 다시 보고, 시계상 예산이 끝났으면
+  `run_deadline_exceeded`로 보고한다.
+
+더 짧은 요청별 제한은 그대로 `provider_timeout` → `author_failed`로 남는다. 전체 마감으로
+과잉 귀속하지 않는다.
+
+**3. 잘못된 전체 예산이 기본값으로 바뀌었다.** `options.budgetMs ?? 120_000`은 `null`도
+기본값으로 바꾼다. 그래서 `budgetMs: null`이 120초로 조용히 승격되고 저작 함수가 호출됐다.
+이제 **생략(`undefined`)만** 기본값이고, `null`을 포함한 잘못된 타입은
+`configuration_error`로 외부 호출 0회에서 거절한다. `now`와 `signal`도 같은 규칙을 쓴다.
+
+회귀 테스트는 취소 직후 transport promise 종료와 타이머 정리, 취소 뒤 늦은 성공·실패가
+결과를 바꾸지 않고 처리되지 않은 rejection도 남기지 않는 것, 후속 호출 0회, 저작·분석
+양쪽에서 요청 타이머가 먼저 울어도 원인이 전체 마감으로 보고되는 것, 그 판정이 전체 마감
+타이머를 기다리지 않고 이뤄지는 것(경과 시간으로 고정), 남은 시간이 1ms 미만이어도 실제
+마감 전에는 끊지 않는 것, 더 짧은 요청별 제한이 유지되는 것, `budgetMs`/`now`/`signal`의
+`null`·잘못된 타입이 호출 0회로 거절되는 것을 각각 고정한다. 모두 주입한 단조 시계와 짧은
+예산으로 돌리므로 실제 60초·120초를 기다리지 않는다. 취소 racer, 올림, 원인 구분을 각각
+무력화해 해당 테스트가 실패하는 것을 짧은 테스트 상한 아래에서 확인하고 원본을 복원했다.
+
+기존 지문 결속(9-18)과 취소 후 후속 호출 차단(9-19)은 그대로다. Analyzer 요청 설정, 증거
+DB 표·RPC, 활성화 SQL은 이번에도 손대지 않았다.
+
+## 9-21. 전체 마감 타이머의 반올림과 재예약 (2026-09-22, 후속)
+
+9-20에서 요청별 타이머는 올림하도록 고쳤지만 **전체 마감 타이머**는 그대로였다.
+`remainingMs()`의 소수값을 `setTimeout`에 그대로 넘기고, 콜백은 시계를 다시 보지 않은 채
+곧바로 `finish('run_deadline_exceeded')`를 불렀다.
+
+재현: `startedAt = 0`, `budgetMs = 120`, 타이머 예약 시각 0.25 → 남은 시간 119.75.
+`setTimeout`이 지연의 소수부를 잘라 119로 만들면 콜백이 119.25에 실행된다. 그때
+`remainingMs()`는 아직 0.75인데도 마감과 abort가 확정됐다. 예산이 남은 실행이 끊기고,
+진행 중이던 요청도 함께 취소됐다.
+
+세 가지를 고쳤다.
+
+- 전체 마감 타이머도 남은 시간을 **올림**해 예약한다.
+- 콜백이 단조 시계를 **다시 본다.** 아직 남아 있으면 마감을 확정하지 않고 남은 시간으로
+  **재예약**한다. 마감을 정하는 것은 타이머가 아니라 시계다.
+- `finish`와 `dispose`가 **재예약된 타이머까지** 정리한다. 취소가 먼저 오면 사유는
+  `run_cancelled`로 남고, 이후 시계가 예산을 넘겨도 그 사유가 덮이지 않는다.
+
+회귀 테스트는 예약 지연이 119.75가 아니라 120으로 올림되는지(`setTimeout`을 테스트에서
+감싸 지연값을 직접 확인한다), 조기 콜백에서 마감·abort가 확정되지 않고 남은 시간이
+유지되는지, 재예약된 타이머가 실제 마감에서 종료하는지, 재예약 뒤 취소·dispose로
+정리되는지, 조기 콜백이 실행 중인 요청의 취소 신호를 올리지 않는지를 각각 고정한다. 모두
+주입한 시계와 30ms 안팎의 예산으로 돌린다. 올림 제거와 콜백 재확인 제거를 각각 무력화해
+해당 테스트가 실패하는 것을 짧은 테스트 상한 아래에서 확인하고 원본을 복원했다.
+
+재예약 횟수에는 코드가 정한 상한이 없다. 실제 마감을 확인할 때까지 필요한 만큼 다시
+예약한다 — 타이머가 일찍 울릴 때마다 시계를 보고, 아직 남았으면 또 예약한다. 시계가
+멈춰 있으면 마감도 오지 않으므로 재예약이 계속된다(마감에 이르지 않았으니 맞는 동작이다).
+멈추는 것은 `finish`나 `dispose`뿐이므로, 실행기는 어떤 경로로 끝나든 `dispose`를 부르고
+테스트도 마찬가지다.
+
+9-18의 지문 결속, 9-19의 예산 공유와 후속 호출 차단, 9-20의 transport 취소 처리·실패
+사유·`null` 거절은 그대로다.
+
+## 9-22. 요청 타이머의 조기 종료 (2026-09-22, 후속)
+
+9-21에서 전체 마감 타이머는 고쳤지만 **요청 타이머**는 그대로였다. 콜백이 두 마감을
+확인하기 전에 `controller.abort()`부터 불렀다. `stopReason()`은 이미 끊긴 뒤에 *사유만*
+고르는 함수라 조기 종료 자체를 막지 못했다. 그래서
+"헤더 뒤 본문이 끝나지 않으면 실행 마감으로 취소한다"가 간헐적으로
+`provider_timeout`을 냈다.
+
+재현: 전체 예산 30ms, 요청 제한 60초, 헤더는 돌려주지만 본문은 끝나지 않는 fetch.
+단조 시각 29.75ms에서 요청 타이머 콜백이 조기 실행되면, 아직 전체 예산이 0.25ms 남았는데도
+본문이 취소되고 `provider_timeout`으로 끝났다.
+
+네 가지를 고쳤다.
+
+- 요청 시작 시 **요청별 절대 마감 시각**을 한 번 고정한다(`requestDeadlineAt = 시작 시각 +
+  요청 제한`). 재예약해도 이 값은 움직이지 않으므로 요청 예산이 다시 시작하지 않는다.
+- 요청 타이머도 전체 마감과 **같은 단조 시계**를 쓴다. `RunDeadline`이 자기 시계를
+  `now()`로 내어 주고, 마감이 없는 호출만 자체 단조 시계를 쓴다. 시계가 다르면 둘 중
+  어느 쪽이 먼저인지 비교할 수 없다.
+- 콜백은 **abort보다 먼저** 두 마감을 확인한다. 전체 마감·취소가 왔으면 그 사유로,
+  요청별 절대 마감을 지났으면 `provider_timeout`으로 끊는다. 둘 다 아직이면 abort도
+  reject도 하지 않고 남은 시간(두 마감 중 이른 쪽까지, 올림)으로 재예약한다.
+- 성공·실패·취소 어느 경로로 끝나도 `finally`가 재예약된 요청 타이머까지 정리한다.
+
+회귀 테스트는 헤더 대기와 본문 대기 양쪽에서 조기 콜백이 요청을 끊지 않고 본문도 취소하지
+않는 것, 그 뒤 실제 마감에서 `run_deadline_exceeded`로 끝나는 것, 재예약을 여러 번 거쳐도
+요청별 마감이 절대 시각으로 유지되는 것, 전체 마감·호출자 취소·더 짧은 요청별 제한이 각각
+제 사유로 구분되는 것, 완료 뒤 남은 타이머가 없는 것을 고정한다. 마지막 항목은 실행 동안
+`setTimeout`/`clearTimeout`을 감싸 살아 있는 타이머를 직접 세어 확인한다 — 정리가 새면
+테스트가 통과하면서 프로세스만 종료되지 않아, 단순 실행으로는 드러나지 않기 때문이다.
+
+기존 실패 테스트의 기대값(`run_deadline_exceeded`)은 그대로 두었다. 대신 시계가 멈춘 채
+끝나기를 기다리던 기존 테스트 두 개는 시계를 실제로 진행시키도록 고쳤다 — 시계가 가지
+않으면 마감도 오지 않는 것이 고친 뒤의 올바른 동작이기 때문이다. 두 테스트의 기대값은
+`provider_timeout`에서 `run_deadline_exceeded`로 **강화**됐다.
+
+무력화 검사는 상한을 둔 실행기로 돌렸다. 정리가 새거나 요청 예산이 재시작하면 테스트
+프로세스 자체가 종료되지 않기 때문에, 테스트 타임아웃만으로는 부족하다.
+
+## 9-23. 생성용 Analyzer 요청 설정의 증거 결속 (2026-09-22, 후속)
+
+동결된 분석은 운영과 **같은 모델·지시문·스키마**로 만들지만 **요청 설정은 다르다.**
+
+| 보내는 값 | 운영 `analyze-situation` | 후보 생성용 분석 |
+| --- | --- | --- |
+| `model`·`store`·`instructions`·`input`·`text` | 보낸다 | 보낸다 |
+| `max_output_tokens` | 보내지 않는다 | `8192` |
+| `tools` | 보내지 않는다 | `[]` |
+| `stream` | 보내지 않는다 | `false` |
+| `background` | 보내지 않는다 | `false` |
+| `truncation` | 보내지 않는다 | `'disabled'` |
+
+공용 `environment`는 모델·지시문·스키마·taxonomy·Gate·Matcher 지문만 담으므로 아래 다섯
+줄을 잡지 못했다. 그래서 요청 설정을 바꿔도 이전 설정으로 만든 증거가 그대로 통과했다.
+
+**단일 출처.** `automatic-scripture-catalog-generation-analysis-request.ts`가 생성용 요청
+본문의 유일한 출처다. transport가 전송할 때와 증거를 검증할 때 같은 함수를 쓴다. 증거
+모듈이 transport를 import하면 순환이 되므로 양쪽이 함께 의존하는 순수 계층으로 두었다.
+이 파일은 네트워크·DB·파일·환경변수·시계를 읽지 않는다.
+
+**무엇을 묶는가.** 실제 전송 본문에서 사례 문장인 `input`만 뺀 **나머지 전부**를 canonical
+hash로 묶어 `evidence.analysisRequest.requestHash`에 담고, 최상위 `artifactHash`에도
+포함한다. 모델 id, 지시문, Structured Output 설정, 위 다섯 가지가 모두 들어간다. `input`은
+사례마다 달라지고 이미 `cases[].text`와 최상위 지문으로 결속돼 있으므로 설정 지문은 문장과
+무관하다 — 같은 설정이면 어떤 문장에서도 같은 값이 나오고, 문장을 바꾸면 최상위 지문이
+달라진다.
+
+**검증.** 저장된 값끼리의 일관성만 보지 않는다. 검증할 때마다 지금 요청 생성 함수에서 지문을
+다시 계산해 대조한다. 누락·잘못된 타입·계약 밖 필드도 거절한다. 설정 지문과 최상위
+`artifactHash`를 함께 다시 계산한 위조 증거도 거절된다.
+
+격리한 복사본에서 `max_output_tokens`를 8192에서 4096으로 바꿔 네 방향을 모두 확인했다 —
+원본 설정에서 원본 증거는 통과, 바뀐 설정에서 이전 증거는 거절, 바뀐 설정에서 새로 봉인한
+증거는 통과, 그 새 증거를 원본 설정에서 보면 거절. 저장소의 실제 설정 값은 바꾸지 않았다.
+
+**이 지문이 보장하지 않는 것.** 우리가 **명시적으로 보낸 설정**이 지금과 같다는 것만
+말한다. 같은 설정이 같은 출력을 낸다는 것(모델은 결정적이지 않다), 우리가 보내지 않은 값에
+제공자가 적용하는 숨은 기본값이 그대로라는 것, 그리고 실제로 그 요청을 보냈다는 것은
+증명하지 않는다. 마지막 것은 증거를 쓸 수 있는 주체가 지문을 전부 다시 계산할 수 있기
+때문이며, 그 경계는 권한이 제한된 append-only 저장과 활성화 시 재검증으로만 좁혀진다.
+
+운영 `analyze-situation`의 payload, 공용 `environment` 계약, 기존 156건 frozen snapshot은
+바꾸지 않았다. 증거 DB 표·RPC, 활성화 SQL, 새 영역 manifest는 이번에도 범위가 아니다.
