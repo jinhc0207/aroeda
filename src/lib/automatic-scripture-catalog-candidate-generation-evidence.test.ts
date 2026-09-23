@@ -103,6 +103,7 @@ describe('후보 생성 사례 증거 v1', () => {
     if (!built.ok) throw new Error(built.errors.join(' / '));
     assert.equal(built.ok, true);
     const payload = await built.evaluateCandidateGeneration(candidate);
+    assert.equal(payload.evidenceArtifactHash, evidence.artifactHash);
     assert.deepEqual(payload.cases.map((item) => item.caseId), ['GEN-SC-052-01', 'GEN-SC-052-02', 'GEN-SC-052-03']);
     assert.equal(payload.cases.every((item) => item.cardId === 'SC-052' && item.passed), true);
   });

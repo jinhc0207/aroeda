@@ -208,6 +208,7 @@ describe('자동 검증 기록 · fail-closed', () => {
       ['acceptable 하락', (record) => { record.checks.corpusRegression.payload.cases[1].candidate.acceptableMatch = false; }],
       ['생성 평가 부족', (record) => { record.checks.candidateGenerationEvaluation.payload.cases = record.checks.candidateGenerationEvaluation.payload.cases.slice(0, 2); }],
       ['생성 평가 실패', (record) => { record.checks.candidateGenerationEvaluation.payload.cases[0].passed = false; }],
+      ['생성 증거 지문 형식', (record) => { record.checks.candidateGenerationEvaluation.payload.evidenceArtifactHash = 'not-an-artifact-hash'; }],
       ['독립 평가 반대', (record) => { record.checks.contextTheologyReview.payload.evaluations[1].cardEvaluations[0].criteria[0].verdict = 'fail'; }],
       ['같은 평가자', (record) => { record.checks.contextTheologyReview.payload.evaluations[1].profileHash = record.checks.contextTheologyReview.payload.evaluations[0].profileHash; }],
       ['본문 수 불일치', (record) => { record.checks.passageExistence.payload.passages = []; }],

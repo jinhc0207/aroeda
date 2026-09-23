@@ -281,7 +281,7 @@ describe('고정 분석 deterministic adapter', () => {
         evaluateSafetyBoundary: frozen.evaluateSafetyBoundary,
         evaluateCorpusRegression: frozen.evaluateCorpusRegression,
         // 이 단계는 아직 구현 대상이다. 빈 결과로 속이지 않고 테스트 fixture라고 명시한다.
-        evaluateCandidateGeneration: async () => ({ cases: generationCases }),
+        evaluateCandidateGeneration: async () => ({ evidenceArtifactHash: `sart_${'e'.repeat(64)}`, cases: generationCases }),
       },
       evaluateSol: theology,
       evaluateAstra: theology,

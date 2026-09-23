@@ -2170,3 +2170,48 @@ baseline·candidate·validation·activation·rollback·validation_context RPC에
 않으며, 자동 활성화는 계속 fail-closed다. 활성화가 정확한 `artifactHash`로 증거를 결속하고
 재검증하는 것, 새 영역(`new_domain_with_cards`)용 동적 Analyzer manifest, 운영 배포는 다음
 단계다. 사람 사전 승인 단계는 이번에도 넣지 않았다.
+
+## 9-25. 검증 기록·활성화와 후보 생성 증거의 정확한 결속 (2026-09-23, 후속)
+
+9-24의 보관소가 만든 `(artifact_hash, candidate_hash)` 복합 unique를 실제 검증과 활성화에
+연결했다. 검증 계약은 v4다. `candidateGenerationEvaluation.payload`는 이제 `cases`뿐 아니라
+`evidenceArtifactHash`를 반드시 가지며, 결정적 adapter는 자신이 재생한 증거의 실제
+`artifactHash`를 이 자리에 넣는다. 누락·형식 오류·계약 밖 필드는 실행기와 최종 계약 검증에서
+모두 거절된다.
+
+검증 표에는 `candidate_generation_evidence_artifact_hash` 열을 추가했다. 이 열과
+`candidate_hash`의 복합 외래 키가 후보 생성 증거의 `(artifact_hash, candidate_hash)`를
+가리킨다. 저장 RPC는 다음을 모두 확인한 뒤 같은 트랜잭션에서 검증·attestation을 적는다.
+
+1. payload의 필드는 `evidenceArtifactHash`·`cases` 두 개뿐이다.
+2. 증거 지문 형식이 맞고, 그 증거가 같은 후보에 실제로 저장돼 있다.
+3. 검증 사례의 `(caseId, cardId)` 투영이 저장 증거의 사례와 개수·순서까지 정확히 같다.
+4. 재전송이라면 검증 JSON·attestation뿐 아니라 연결한 증거 지문도 같아야 한다.
+
+활성화 RPC도 저장 시 검사를 믿고 넘어가지 않는다. 검증 행의 연결 열, payload의 지문, 실제
+증거 행을 다시 읽고 후보 지문과 사례 투영을 다시 대조한다. 그 뒤에만 기존의 카드별 최소 3건,
+모든 `passed=true`, 후보 카드 소속 검사를 수행한다. 따라서 존재하는 다른 증거를 가리키거나,
+증거의 일부 사례를 빼거나 순서를 바꾸거나 카드 id를 바꾼 검증으로 활성화할 수 없다.
+
+### v3 기록의 처리
+
+기존 v3 행은 삭제·변환하지 않는다. 새 열을 nullable로 추가해 `null`인 채 그대로 보존한다.
+표 제약은 v3+null과 v4+실제 연결만 허용하지만, 새 저장 RPC는 v4만 받고 새 활성화 RPC도 v4만
+받는다. 그래서 과거 기록은 감사 자료로 남되 새 자동 활성화에는 사용할 수 없다. 억지로 v3 행을
+직접 넣은 실제 DB 시나리오에서도 행은 보존되고 활성화만 `check_violation`으로 거절됐다.
+
+### 실제 DB 확인
+
+깨끗한 Supabase PostgreSQL 17.6 컨테이너에 전체 migration을 순서대로 적용했다. 실제 TypeScript
+fixture가 만든 후보·검증·9개 attestation을 사용했고, 후보 생성 증거는 새 저장 RPC로 먼저
+보관했다. 정상 v4 저장과 활성화가 통과해 검증 행의 증거 지문·활성 포인터·활성화 기록이 모두
+같은 후보를 가리켰다. 다음 경로는 모두 부분 기록 없이 거절됐다.
+
+- 저장되지 않은 증거 지문을 가리키는 v4 검증
+- 저장 증거와 `(caseId, cardId)` 투영이 다른 v4 검증
+- 연결 열이 `null`인 기존 v3 검증의 활성화
+- `service_role`의 증거 표 직접 읽기
+
+DB는 여전히 증거가 실제 모델 호출에서 만들어졌는지 증명하지 않는다. 이번 단계가 추가한 보장은
+**검증과 활성화가 보관된 바로 그 증거 한 건을 사용한다는 것**이다. 새 영역 동적 manifest,
+운영 배포, 사람 사전 승인은 범위에 넣지 않았다.

@@ -65,6 +65,7 @@ const passingCorpus = (): CorpusRegressionPayload => ({
 });
 
 const passingGeneration = (candidate: ScriptureCatalogCandidate): CandidateGenerationEvaluationPayload => ({
+  evidenceArtifactHash: `sart_${'e'.repeat(64)}`,
   cases: candidate.cards.flatMap((card, cardIndex) =>
     Array.from({ length: 3 }, (_, index) => ({
       caseId: `GEN-${cardIndex + 1}-${index + 1}`,
@@ -302,6 +303,22 @@ describe('자동 validator 실행기 · 앞 단계 실패는 뒤 호출을 막�
     assert.equal(calls.sol, 0);
     assert.equal(calls.astra, 0);
     if (result.kind === 'rejected') assert.equal(result.record?.checks.candidateGenerationEvaluation.status, 'fail');
+  });
+
+  it('후보 생성 평가에 보관 증거 지문이 없거나 형식이 틀리면 unavailable로 닫힌다', async () => {
+    const base = buildBaselineCatalog();
+    const { candidate } = await makeExistingDomainCandidate(base);
+    for (const generation of [
+      { cases: passingGeneration(candidate).cases },
+      { ...passingGeneration(candidate), evidenceArtifactHash: 'not-an-artifact-hash' },
+    ]) {
+      const { input, calls } = await makeHarness({ generation });
+      const result = await executeAutomaticScriptureCatalogValidation(input);
+      assert.equal(result.kind, 'unavailable');
+      assert.equal(calls.sol, 0);
+      assert.equal(calls.astra, 0);
+      if (result.kind === 'unavailable') assert.deepEqual(result.reasonCodes, ['DETERMINISTIC_PAYLOAD_INVALID']);
+    }
   });
 
   it('개역한글 본문을 읽지 못하면 실패 기록을 남기고 모델을 부르지 않는다', async () => {

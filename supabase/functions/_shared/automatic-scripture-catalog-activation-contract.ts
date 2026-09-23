@@ -61,10 +61,9 @@ import {
 /* 이름 · 권한 · SQL 사본 대상 상수                                       */
 /* ------------------------------------------------------------------ */
 
-// v3: contextTheologyReview.payload.evaluations[].cardVerdicts(카드 최종 verdict 하나)를
-// cardEvaluations(카드마다 rubric criterion 아홉 개 개별 판정)로 바꾼 호환 불가능한 변경.
-// SQL 쪽은 20260916141221_upgrade_automatic_scripture_catalog_validation_v3.sql이 맞춘다.
-export const VALIDATION_CONTRACT_VERSION = 'automatic-scripture-catalog-validation/v3';
+// v4: candidateGenerationEvaluation을 DB에 보관된 정확한 후보 생성 증거 artifactHash와
+// 결속한다. SQL 쪽은 20260922234709_bind_candidate_generation_evidence_to_validation_v4.sql이 맞춘다.
+export const VALIDATION_CONTRACT_VERSION = 'automatic-scripture-catalog-validation/v4';
 export const DEMAND_EVIDENCE_CONTRACT_VERSION = 'scripture-demand-evidence/v1';
 export const VALIDATOR_PROFILE_CONTRACT_VERSION = 'scripture-catalog-validator-profile/v1';
 export const VALIDATOR_REGISTRY_CONTRACT_VERSION = 'scripture-catalog-validator-registry/v1';
@@ -486,6 +485,7 @@ export type CorpusRegressionPayload = {
   cases: { caseId: string; baseline: CorpusOutcome; candidate: CorpusOutcome }[];
 };
 export type CandidateGenerationEvaluationPayload = {
+  evidenceArtifactHash: string;
   cases: { caseId: string; cardId: string; passed: boolean }[];
 };
 
@@ -918,7 +918,9 @@ export async function validateAutomaticValidationRecord(
         const cardIds = new Set(candidate.cards.map((card) => card.id));
         if (
           !isPlainObject(payload) ||
-          exactFields(payload, ['cases'], 'p').length > 0 ||
+          exactFields(payload, ['evidenceArtifactHash', 'cases'], 'p').length > 0 ||
+          typeof payload.evidenceArtifactHash !== 'string' ||
+          !ARTIFACT_HASH_FORMAT.test(payload.evidenceArtifactHash) ||
           !Array.isArray(payload.cases) ||
           payload.cases.some(
             (item: unknown) =>

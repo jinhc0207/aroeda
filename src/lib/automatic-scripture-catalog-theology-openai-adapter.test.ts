@@ -70,6 +70,7 @@ const passingCorpus = (): CorpusRegressionPayload => ({
   })),
 });
 const passingGeneration = (candidate: ScriptureCatalogCandidate): CandidateGenerationEvaluationPayload => ({
+  evidenceArtifactHash: `sart_${'e'.repeat(64)}`,
   cases: candidate.cards.flatMap((card, cardIndex) =>
     Array.from({ length: 3 }, (_, index) => ({ caseId: `GEN-${cardIndex + 1}-${index + 1}`, cardId: card.id, passed: true })),
   ),

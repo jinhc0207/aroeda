@@ -65,16 +65,19 @@ const MIGRATION_DIR = path.join(projectRoot, 'supabase/migrations');
 const MIGRATION_NAME = '20260915120000_create_automatic_scripture_catalog.sql';
 const PROFILE_MIGRATION_NAME = '20260916011019_register_automatic_scripture_catalog_validator_profiles.sql';
 const V3_MIGRATION_NAME = '20260916141221_upgrade_automatic_scripture_catalog_validation_v3.sql';
+const V4_MIGRATION_NAME = '20260922234709_bind_candidate_generation_evidence_to_validation_v4.sql';
 const VALIDATION_CONTEXT_MIGRATION_NAME = '20260917090000_add_scripture_catalog_validation_context_rpc.sql';
 const GENERATION_EVIDENCE_MIGRATION_NAME =
   '20260922144425_create_scripture_catalog_candidate_generation_evidence_store.sql';
 const SQL = readFileSync(path.join(MIGRATION_DIR, MIGRATION_NAME), 'utf8');
 const V3_SQL = readFileSync(path.join(MIGRATION_DIR, V3_MIGRATION_NAME), 'utf8');
+const V4_SQL = readFileSync(path.join(MIGRATION_DIR, V4_MIGRATION_NAME), 'utf8');
 
 /** 설명 주석에는 예시 낱말이 있다. 동작을 볼 때는 한 줄 주석을 뺀 것만 본다. */
 const stripComments = (sql: string) => sql.split('\n').filter((line) => !/^\s*--/.test(line)).join('\n');
 const CODE = stripComments(SQL);
 const V3_CODE = stripComments(V3_SQL);
+const V4_CODE = stripComments(V4_SQL);
 
 /** 함수 하나의 본문(as $$ ... $$;)만 code에서 잘라 온다. create나 create or replace 둘 다 찾는다. */
 function functionBodyIn(code: string, schemaAndName: string): string {
@@ -99,6 +102,10 @@ function functionBody(schemaAndName: string): string {
 /** v3 업그레이드 migration에서 함수 본문을 자른다(create or replace로 다시 만든 것). */
 function v3FunctionBody(schemaAndName: string): string {
   return functionBodyIn(V3_CODE, schemaAndName);
+}
+
+function v4FunctionBody(schemaAndName: string): string {
+  return functionBodyIn(V4_CODE, schemaAndName);
 }
 
 function readSqlTextArray(body: string, name: string): string[] {
@@ -569,6 +576,7 @@ describe('자동 카탈로그 migration · D. 경계와 개인정보', () => {
     const others = readdirSync(MIGRATION_DIR)
       .filter((name) => name.endsWith('.sql')
         && name !== MIGRATION_NAME && name !== PROFILE_MIGRATION_NAME && name !== V3_MIGRATION_NAME
+        && name !== V4_MIGRATION_NAME
         && name !== VALIDATION_CONTEXT_MIGRATION_NAME && name !== GENERATION_EVIDENCE_MIGRATION_NAME)
       .map((name) => readFileSync(path.join(MIGRATION_DIR, name), 'utf8'));
     for (const sql of others) {
@@ -627,9 +635,9 @@ describe('자동 카탈로그 migration · E. v2 → v3 업그레이드', () => 
     }
   });
 
-  it('VALIDATION_CONTRACT_VERSION(v3) 문자열이 TS와 정확히 같고, v3 migration에도 있다', () => {
-    assert.equal(VALIDATION_CONTRACT_VERSION, 'automatic-scripture-catalog-validation/v3');
-    assert.ok(V3_CODE.includes(`'${VALIDATION_CONTRACT_VERSION}'`));
+  it('v3 migration은 역사적 v3 문자열을 그대로 고정한다', () => {
+    assert.equal(VALIDATION_CONTRACT_VERSION, 'automatic-scripture-catalog-validation/v4');
+    assert.ok(V3_CODE.includes("'automatic-scripture-catalog-validation/v3'"));
     // 옛 v2 문자열을 v3 migration 안에서 실행 코드로 쓰지 않는다(주석 설명은 예외).
     assert.equal(V3_CODE.includes('automatic-scripture-catalog-validation/v2'), false);
   });
@@ -701,5 +709,59 @@ describe('자동 카탈로그 migration · E. v2 → v3 업그레이드', () => 
   it('v3 migration도 예외를 삼키지 않고 동적 SQL을 쓰지 않는다', () => {
     assert.equal(/\bexception\s+when\b/i.test(V3_CODE), false);
     assert.equal(/\bexecute\s+(format|'|\$|v_)/i.test(V3_CODE), false);
+  });
+});
+
+/* ================================================================== */
+/* F. v3 → v4 업그레이드 (후보 생성 증거 결속)                           */
+/* ================================================================== */
+
+describe('자동 카탈로그 migration · F. v3 → v4 증거 결속', () => {
+  const v4Store = v4FunctionBody(`public.${STORE_SCRIPTURE_CATALOG_VALIDATION_RPC}`);
+  const v4Activation = v4FunctionBody(`public.${ACTIVATE_SCRIPTURE_CATALOG_CANDIDATE_RPC}`);
+
+  it('현재 TS 계약과 v4 저장·활성화 함수가 같은 버전을 쓴다', () => {
+    assert.equal(VALIDATION_CONTRACT_VERSION, 'automatic-scripture-catalog-validation/v4');
+    assert.ok(v4Store.includes(`p_validation ->> 'contractVersion' is distinct from '${VALIDATION_CONTRACT_VERSION}'`));
+    assert.ok(v4Activation.includes(`v_validation ->> 'contractVersion' is distinct from '${VALIDATION_CONTRACT_VERSION}'`));
+  });
+
+  it('기존 v3 행은 null 증거 연결로 보존하지만 v4 행은 payload와 같은 지문을 반드시 저장한다', () => {
+    assert.ok(V4_CODE.includes('add column candidate_generation_evidence_artifact_hash text'));
+    assert.ok(V4_CODE.includes("validation ->> 'contractVersion' = 'automatic-scripture-catalog-validation/v3'"));
+    assert.ok(V4_CODE.includes("validation ->> 'contractVersion' = 'automatic-scripture-catalog-validation/v4'"));
+    assert.ok(V4_CODE.includes("validation #>> '{checks,candidateGenerationEvaluation,payload,evidenceArtifactHash}'"));
+  });
+
+  it('검증 행은 정확한 (증거 지문, 후보 지문) 복합 외래 키로 증거 보관소에 이어진다', () => {
+    assert.match(
+      V4_CODE,
+      /foreign key \(candidate_generation_evidence_artifact_hash, candidate_hash\)\s+references private\.scripture_catalog_candidate_generation_evidence \(artifact_hash, candidate_hash\)\s+on delete restrict/,
+    );
+  });
+
+  it('저장과 활성화가 증거 행을 후보와 함께 다시 읽고 사례 id·카드 id의 순서까지 대조한다', () => {
+    for (const body of [v4Store, v4Activation]) {
+      assert.ok(body.includes('from private.scripture_catalog_candidate_generation_evidence'));
+      assert.ok(body.includes('artifact_hash = v_evidence_hash'));
+      assert.ok(body.includes('candidate_hash = p_candidate_hash'));
+      assert.ok(body.includes("jsonb_build_object('caseId', item ->> 'caseId', 'cardId', item ->> 'cardId')"));
+      assert.ok(body.includes('v_validation_case_projection is distinct from v_evidence_case_projection'));
+    }
+  });
+
+  it('v4 함수는 고정 search_path·권한 회수·service_role 실행만 유지한다', () => {
+    for (const rpc of [STORE_SCRIPTURE_CATALOG_VALIDATION_RPC, ACTIVATE_SCRIPTURE_CATALOG_CANDIDATE_RPC]) {
+      const body = rpc === STORE_SCRIPTURE_CATALOG_VALIDATION_RPC ? v4Store : v4Activation;
+      const qualified = rpc === STORE_SCRIPTURE_CATALOG_VALIDATION_RPC
+        ? `public.${rpc}(text, text, jsonb, jsonb)`
+        : `public.${rpc}(text, text, text, text)`;
+      assert.ok(body.includes('security definer'));
+      assert.ok(body.includes('set search_path = private, pg_catalog'));
+      assert.ok(V4_CODE.includes(`revoke all on function ${qualified} from public;`));
+      assert.ok(V4_CODE.includes(`grant execute on function ${qualified} to service_role;`));
+    }
+    assert.equal(/\bexception\s+when\b/i.test(V4_CODE), false);
+    assert.equal(/\bexecute\s+(format|'|\$|v_)/i.test(V4_CODE), false);
   });
 });

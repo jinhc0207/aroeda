@@ -470,14 +470,17 @@ export async function buildCandidateGenerationEvidenceAdapter(
       if ((await computeCatalogCandidateHash(isolatedRuntimeCandidate)) !== isolatedEvidence.candidateHash) {
         throw new Error('실행 후보가 증거에 결속된 후보와 다릅니다.');
       }
-      return { cases: sealedCases.map((item) => {
-        const result = runRecommendationGate(structuredClone(item.analysis), cards);
-        return {
-          caseId: item.caseId,
-          cardId: item.cardId,
-          passed: result.route === 'recommend' && result.selectedCardId === item.cardId,
-        };
-      }) };
+      return {
+        evidenceArtifactHash: isolatedEvidence.artifactHash,
+        cases: sealedCases.map((item) => {
+          const result = runRecommendationGate(structuredClone(item.analysis), cards);
+          return {
+            caseId: item.caseId,
+            cardId: item.cardId,
+            passed: result.route === 'recommend' && result.selectedCardId === item.cardId,
+          };
+        }),
+      };
     },
   };
 }

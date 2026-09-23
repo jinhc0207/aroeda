@@ -8,6 +8,7 @@
 
 import { SOURCE_SHA256 } from './bible-reference-index.ts';
 import {
+  ARTIFACT_HASH_FORMAT,
   type CatalogDomain,
   type CatalogPassage,
   type ScriptureCatalogCandidate,
@@ -197,7 +198,13 @@ function parseGenerationPayload(
   value: unknown,
   candidate: ScriptureCatalogCandidate,
 ): CandidateGenerationEvaluationPayload | null {
-  if (!isPlainObject(value) || !exactFields(value, ['cases']) || !Array.isArray(value.cases)) return null;
+  if (
+    !isPlainObject(value) ||
+    !exactFields(value, ['evidenceArtifactHash', 'cases']) ||
+    typeof value.evidenceArtifactHash !== 'string' ||
+    !ARTIFACT_HASH_FORMAT.test(value.evidenceArtifactHash) ||
+    !Array.isArray(value.cases)
+  ) return null;
   const cardIds = new Set(candidate.cards.map((card) => card.id));
   const seen = new Set<string>();
   for (const item of value.cases) {
