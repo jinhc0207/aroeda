@@ -85,7 +85,7 @@ export default function DomainChoiceScreen() {
 
           <View style={styles.options}>
             {domainChoiceOptions.map((option) => {
-              const label = domainLabel(option.domain);
+              const label = option.displayName ?? domainLabel(option.domain);
               if (!label) return null;
 
               return (

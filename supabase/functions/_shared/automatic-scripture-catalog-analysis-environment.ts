@@ -29,11 +29,9 @@
  *   작업은 그 RPC나 DB에 연결하지 않는다.
  *
  * 새 영역(new_domain_with_cards) 정책
- *   `analyzerDomainManifestHash`는 지금도 정적 `SITUATION_DOMAINS`+`FALLBACK_DOMAIN`의
- *   지문일 뿐이다. 활성 카탈로그에서 유도되는 동적 Analyzer domain manifest, 그 manifest를
- *   prompt/schema/runtime validator가 함께 쓰는 것, catalog pointer 전환과의 원자성,
- *   롤백 시 두 상태의 동시 복원 — 이 중 무엇도 아직 없다. 그래서 `new_domain_with_cards`
- *   후보의 자동 활성화는 이번 작업 이후에도 fail-closed로 계속 막혀 있어야 한다.
+ *   고정 스냅샷은 아래 정적 builder를 계속 쓴다. 후보 생성 증거와 운영 런타임은 검증된
+ *   카탈로그에서 manifest를 만들고 prompt·schema·runtime validator와 같은 영역·상황 태그를
+ *   쓴다. 활성 포인터 읽기와 롤백 원자성은 runtime RPC 계약이 맡는다.
  */
 
 import {
@@ -47,9 +45,24 @@ import {
   type FrozenAnalysisSnapshot,
   validateAnalysisSnapshot,
 } from './automatic-scripture-catalog-analysis-snapshot-contract.ts';
-import { INSTRUCTIONS, MODEL, SITUATION_ANALYSIS_SCHEMA } from './analyzer-contract.ts';
+import {
+  INSTRUCTIONS,
+  MODEL,
+  SITUATION_ANALYSIS_SCHEMA,
+  buildAnalyzerInstructions,
+  buildSituationAnalysisSchema,
+} from './analyzer-contract.ts';
 import { TAXONOMY } from './analysis-taxonomy.ts';
-import { FALLBACK_DOMAIN, SITUATION_DOMAINS } from './situation-domains.ts';
+import {
+  STATIC_ANALYZER_DOMAIN_MANIFEST,
+  buildCandidateAnalyzerDomainManifest,
+  projectAnalyzerDomainManifestForHash,
+  type AnalyzerDomainManifest,
+} from './automatic-scripture-catalog-analyzer-domain-manifest.ts';
+import type {
+  ScriptureCatalogCandidate,
+  ScriptureCatalogSnapshot,
+} from './automatic-scripture-catalog-contract.ts';
 import { RECOMMENDATION_GATE_CONTRACT_VERSION } from './recommendation-gate.ts';
 import { SCRIPTURE_MATCHER_CONTRACT_VERSION } from './scripture-matcher.ts';
 
@@ -65,12 +78,42 @@ export async function buildCurrentAnalysisSnapshotEnvironment(
     analyzerInstructionsHash: await computeArtifactHash(INSTRUCTIONS),
     analyzerSchemaHash: await computeArtifactHash(SITUATION_ANALYSIS_SCHEMA),
     analysisTaxonomyHash: await computeArtifactHash(TAXONOMY),
-    // 새 영역 정책(파일 머리말 참고) — 동적 manifest가 생기기 전까지는 정적 목록의 지문이 전부다.
-    analyzerDomainManifestHash: await computeArtifactHash({ domains: SITUATION_DOMAINS, fallbackDomain: FALLBACK_DOMAIN }),
+    // 고정 156건 스냅샷과 운영 정적 Analyzer는 기존 목록의 지문을 유지한다.
+    analyzerDomainManifestHash: await computeArtifactHash(
+      projectAnalyzerDomainManifestForHash(STATIC_ANALYZER_DOMAIN_MANIFEST),
+    ),
     recommendationGate: { kind: 'version', version: RECOMMENDATION_GATE_CONTRACT_VERSION },
     scriptureMatcher: { kind: 'version', version: SCRIPTURE_MATCHER_CONTRACT_VERSION },
     baselineCatalogVersionHash,
   };
+}
+
+/** 동적 manifest의 prompt·schema·validator 목록과 같은 값을 지문으로 묶는다. */
+export async function buildAnalysisSnapshotEnvironmentForManifest(
+  baselineCatalogVersionHash: string,
+  manifest: AnalyzerDomainManifest,
+): Promise<AnalysisSnapshotEnvironmentBinding> {
+  return {
+    analyzerModel: MODEL,
+    analyzerInstructionsHash: await computeArtifactHash(buildAnalyzerInstructions(manifest)),
+    analyzerSchemaHash: await computeArtifactHash(buildSituationAnalysisSchema(manifest)),
+    analysisTaxonomyHash: await computeArtifactHash({
+      ...TAXONOMY,
+      situationTags: [...manifest.situationTags],
+    }),
+    analyzerDomainManifestHash: await computeArtifactHash(projectAnalyzerDomainManifestForHash(manifest)),
+    recommendationGate: { kind: 'version', version: RECOMMENDATION_GATE_CONTRACT_VERSION },
+    scriptureMatcher: { kind: 'version', version: SCRIPTURE_MATCHER_CONTRACT_VERSION },
+    baselineCatalogVersionHash,
+  };
+}
+
+export async function buildCandidateGenerationAnalysisEnvironment(
+  candidate: ScriptureCatalogCandidate,
+  baseCatalog: ScriptureCatalogSnapshot,
+): Promise<AnalysisSnapshotEnvironmentBinding> {
+  const manifest = await buildCandidateAnalyzerDomainManifest(candidate, baseCatalog);
+  return buildAnalysisSnapshotEnvironmentForManifest(candidate.baseVersionHash, manifest);
 }
 
 /** 오류 메시지에 어떤 필드가 어긋났는지 정확히 드러내기 위한 목록. */

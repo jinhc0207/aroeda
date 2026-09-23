@@ -12,6 +12,7 @@
 
 import { handlePreflight } from '../_shared/cors.ts';
 import { createSupabaseQuotaChecker } from '../_shared/rate-limit.ts';
+import { createScriptureCatalogRuntimeLoader } from '../_shared/automatic-scripture-catalog-runtime-fetch-transport.ts';
 import { handleAnalyzeSituation } from './handler.ts';
 
 // Deno 런타임 타입 (이 프로젝트의 TypeScript 설정은 Node 기준이라 최소한만 선언한다)
@@ -30,6 +31,10 @@ const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const checkQuota = createSupabaseQuotaChecker({
   url: Deno.env.get('SUPABASE_URL'),
   apiKey: Deno.env.get('SUPABASE_ANON_KEY'),
+});
+const loadCatalogRuntime = createScriptureCatalogRuntimeLoader({
+  supabaseUrl: Deno.env.get('SUPABASE_URL'),
+  serviceRoleKey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
 });
 
 async function callOpenAI(payload: Record<string, unknown>, apiKey: string): Promise<unknown> {
@@ -56,6 +61,7 @@ Deno.serve((request: Request) => {
   if (preflight) return preflight;
 
   return handleAnalyzeSituation(request, {
+    loadCatalogRuntime,
     checkQuota,
     getApiKey: () => Deno.env.get('OPENAI_API_KEY'),
     callOpenAI,

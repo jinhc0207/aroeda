@@ -18,6 +18,10 @@ import {
   type RecommendationDeps,
 } from './request-recommendation.ts';
 import { SCRIPTURE_CARDS, getScriptureCard } from '../data/scripture-cards.ts';
+import {
+  SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
+  projectRuntimeCardView,
+} from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime.ts';
 
 const readySession: SessionSummary = { sessionExists: true, isAnonymous: true, source: 'restored' };
 const failedSession: SessionSummary = {
@@ -89,6 +93,17 @@ const domainChoicePayload = (
   },
 });
 
+const dynamicCard = {
+  ...projectRuntimeCardView(getScriptureCard('SC-001')),
+  id: 'SC-999',
+  domains: ['caregiving_strain'],
+};
+const withRuntimeViews = <T extends object>(payload: T, cards = [dynamicCard]) => ({
+  ...payload,
+  cards,
+  domains: [{ id: 'caregiving_strain', displayName: '오래 돌보는 무게' }],
+});
+
 function fakeDeps(options: {
   session?: SessionSummary;
   sessionThrows?: boolean;
@@ -96,7 +111,7 @@ function fakeDeps(options: {
   invokeThrows?: boolean;
 }) {
   const calls = { ensureSession: 0, invoke: 0 };
-  const sent: { situation: string }[] = [];
+  const sent: { situation: string; catalogRuntimeVersion: string }[] = [];
 
   const deps: RecommendationDeps = {
     async ensureSession() {
@@ -149,7 +164,10 @@ describe('말씀 추천 요청', () => {
     const outcome = await requestRecommendation('두렵습니다.', deps);
 
     assert.equal(calls.invoke, 1);
-    assert.deepEqual(sent, [{ situation: '두렵습니다.' }]);
+    assert.deepEqual(sent, [{
+      situation: '두렵습니다.',
+      catalogRuntimeVersion: SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
+    }]);
     assert.deepEqual(outcome, { status: 'recommend', cardId: 'SC-001', selectedDomain: 'fear_uncertainty' });
   });
 
@@ -158,6 +176,33 @@ describe('말씀 추천 요청', () => {
     const outcome = await requestRecommendation('어머니가 돌아가셨어요.', deps);
 
     assert.deepEqual(outcome, { status: 'recommend', cardId: 'SC-009', selectedDomain: 'grief_loss' });
+  });
+
+  it('활성 카탈로그가 보낸 새 영역 카드도 모양·본문·영역을 검증해 그대로 돌려준다', async () => {
+    const payload = withRuntimeViews(gatePayload('recommend', dynamicCard.id, 'caregiving_strain'));
+    const { deps } = fakeDeps({ outcome: { ok: true, data: payload } });
+    const result = await requestRecommendation('오래 돌보느라 지쳤어요.', deps);
+    assert.deepEqual(result, {
+      status: 'recommend',
+      cardId: dynamicCard.id,
+      selectedDomain: 'caregiving_strain',
+      card: dynamicCard,
+    });
+  });
+
+  it('새 카드 공개 모양에 내부 필드·틀린 본문 표기·영역 불일치가 있으면 거절한다', async () => {
+    for (const card of [
+      { ...dynamicCard, theologicalInsight: '내부 전용' },
+      { ...dynamicCard, referenceLabel: '틀린 표기' },
+      { ...dynamicCard, domains: ['fear_uncertainty'] },
+    ]) {
+      const { deps } = fakeDeps({
+        outcome: { ok: true, data: withRuntimeViews(gatePayload('recommend', dynamicCard.id, 'caregiving_strain'), [card]) },
+      });
+      assert.deepEqual(await requestRecommendation('상황', deps), {
+        status: 'error', kind: 'general', diagnostic: 'FUNCTION_RESPONSE_INVALID',
+      });
+    }
   });
 
   it('카드가 primaryDomain에 실제로 속하지 않으면 믿지 않는다', async () => {
@@ -337,6 +382,35 @@ describe('영역 선택(domain_choice) 응답', () => {
     const outcome = await requestRecommendation('생활비도 걱정, 면접도 걱정입니다.', deps);
 
     assert.deepEqual(outcome, { status: 'domain_choice', options });
+  });
+
+  it('활성 카탈로그의 새 영역 선택지는 한국어 이름과 공개 카드를 함께 보존한다', async () => {
+    const rawOptions = [
+      recommendOption('caregiving_strain', dynamicCard.id),
+      noCoverageOption('financial_hardship'),
+    ];
+    const payload = withRuntimeViews(
+      domainChoicePayload(['caregiving_strain', 'financial_hardship'], rawOptions),
+    );
+    const { deps } = fakeDeps({ outcome: { ok: true, data: payload } });
+
+    assert.deepEqual(await requestRecommendation('돌봄과 생활비가 함께 버거워요.', deps), {
+      status: 'domain_choice',
+      options: [
+        {
+          domain: 'caregiving_strain',
+          displayName: '오래 돌보는 무게',
+          resolution: 'recommend',
+          selectedCardId: dynamicCard.id,
+          selectedCard: dynamicCard,
+        },
+        {
+          domain: 'financial_hardship',
+          resolution: 'no_coverage',
+          selectedCardId: null,
+        },
+      ],
+    });
   });
 
   it('option은 멀쩡해도 top-level primaryDomain이 문자열이면 거절한다', async () => {

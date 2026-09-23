@@ -34,6 +34,10 @@ import { useEffect } from 'react';
 import PrayerScreen from '@/app/prayer';
 import { getScriptureCard } from '@/data/scripture-cards';
 import { SituationProvider, useSituation } from '@/state/situation';
+import {
+  SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
+  type RuntimeCardView,
+} from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime';
 
 // 이 화면이 실제로 쓰는 것만 흉내 낸다.
 jest.mock('expo-router', () => ({
@@ -63,6 +67,14 @@ const invoke = supabase.functions.invoke;
 
 /** 이미 검수된 카드 하나. 테스트용으로 새로 만들지 않는다. */
 const CARD = getScriptureCard('SC-001');
+const DYNAMIC_CARD: RuntimeCardView = {
+  id: 'SC-999',
+  domains: ['caregiving_strain'],
+  referenceLabel: CARD.referenceLabel,
+  passages: CARD.passages ?? [CARD.passage],
+  userExplanation: '동적 카드 설명입니다.',
+  prayerDirection: '돌봄 가운데 필요한 힘과 쉼을 구합니다.',
+};
 
 /** 상황 문장은 서버로 나가는 값이므로 알아보기 쉬운 표시를 쓴다. */
 const SITUATION = '내일 결과 발표를 앞두고 잠이 오지 않습니다.';
@@ -114,6 +126,26 @@ const renderPrayer = () =>
     </SituationProvider>,
   );
 
+function WithRuntimeSituation({ card, situation }: { card: RuntimeCardView; situation: string }) {
+  const { situation: current, selectedCardId, selectedCard, setSituation, setRecommendation } = useSituation();
+
+  useEffect(() => {
+    setSituation(situation);
+    setRecommendation({ cardId: card.id, selectedDomain: card.domains[0]!, card });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.id, situation]);
+
+  if (selectedCardId !== card.id || selectedCard?.id !== card.id || current !== situation) return null;
+  return <PrayerScreen />;
+}
+
+const renderDynamicPrayer = () =>
+  render(
+    <SituationProvider>
+      <WithRuntimeSituation card={DYNAMIC_CARD} situation={SITUATION} />
+    </SituationProvider>,
+  );
+
 /** 서버가 잘 응답한 경우. */
 const respondOk = () =>
   invoke.mockResolvedValue({ data: { ok: true, guidance: GUIDANCE_FIXTURE }, error: null } as never);
@@ -154,7 +186,7 @@ describe('기도 화면 · 들어오면 기도문을 준비한다', () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
-  it('서버로 나가는 것은 상황·말씀 번호·선택 영역 셋뿐이다', async () => {
+  it('서버로 나가는 사용자 자료는 상황·말씀 번호·선택 영역뿐이다', async () => {
     respondOk();
 
     await renderPrayer();
@@ -165,11 +197,14 @@ describe('기도 화면 · 들어오면 기도문을 준비한다', () => {
     expect(functionName).toBe('generate-prayer-guidance');
 
     const body = options.body as Record<string, unknown>;
-    // 딱 세 가지만. 하나라도 더 붙으면 여기서 걸린다.
-    expect(Object.keys(body).sort()).toEqual(['cardId', 'selectedDomain', 'situation']);
+    // 사용자 자료 셋과 고정된 앱 capability뿐이다.
+    expect(Object.keys(body).sort()).toEqual([
+      'cardId', 'catalogRuntimeVersion', 'selectedDomain', 'situation',
+    ]);
     expect(body.situation).toBe(SITUATION);
     expect(body.cardId).toBe(CARD.id);
     expect(body.selectedDomain).toBe(CARD.domains[0]);
+    expect(body.catalogRuntimeVersion).toBe(SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION);
   });
 
   it('말씀 설명과 기도 방향을 우리 쪽에서 보내지 않는다', async () => {
@@ -182,6 +217,20 @@ describe('기도 화면 · 들어오면 기도문을 준비한다', () => {
     const sent = JSON.stringify(invoke.mock.calls);
     expect(sent.includes(CARD.userExplanation)).toBe(false);
     expect(sent.includes(CARD.prayerDirection)).toBe(false);
+  });
+
+  it('로컬 목록에 없는 활성 카드도 같은 id·새 영역으로 기도 요청하고 화면에 유지한다', async () => {
+    respondOk();
+
+    await renderDynamicPrayer();
+    expect(screen.getByText(DYNAMIC_CARD.referenceLabel)).toBeTruthy();
+    expect(await screen.findByText(GUIDANCE_FIXTURE.prayerText)).toBeTruthy();
+
+    const [, options] = invoke.mock.calls[0] as [string, { body: Record<string, unknown> }];
+    expect(options.body.cardId).toBe(DYNAMIC_CARD.id);
+    expect(options.body.selectedDomain).toBe('caregiving_strain');
+    expect(JSON.stringify(options.body)).not.toContain(DYNAMIC_CARD.userExplanation);
+    expect(JSON.stringify(options.body)).not.toContain(DYNAMIC_CARD.prayerDirection);
   });
 });
 

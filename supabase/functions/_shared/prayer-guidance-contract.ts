@@ -18,8 +18,12 @@
  */
 
 import type { ScriptureCard } from './scripture-cards.ts';
-import { isChoosableDomain } from './domain-choice-resolution.ts';
-import type { SituationDomain } from './situation-domains.ts';
+import { DOMAIN_ID_FORMAT } from './automatic-scripture-catalog-contract.ts';
+import {
+  SCRIPTURE_CATALOG_RUNTIME_CLIENT_FIELD,
+  SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
+  parseScriptureCatalogClientMode,
+} from './automatic-scripture-catalog-runtime.ts';
 
 /** 쓰는 모델. 상황 분석기와 같은 모델을 쓴다. 이 기능만을 위해 새로 정하지 않는다. */
 export { MODEL as PRAYER_GUIDANCE_MODEL } from './analyzer-contract.ts';
@@ -54,17 +58,21 @@ export const PRAYER_GUIDANCE_RETRY_COUNT = 0;
 /* ------------------------------------------------------------------ */
 
 /**
- * 부르는 쪽이 보낼 수 있는 항목. 이 셋뿐이고 모두 필수다.
+ * 부르는 쪽이 보내는 사용자 자료 세 항목과 선택적 앱 capability다.
  *
  * selectedDomain은 사용자가 말씀을 받은 삶의 영역(내부 표준 domain 값)이다.
  * 한글 문구가 아니다. 서버는 이 값을 믿지 않고, 다시 분석한 결과 안에 실제로 있는지 확인한다.
+ * catalogRuntimeVersion은 새 앱이 동적 카드·영역을 표시할 수 있음을 알리는 고정값이다.
  */
-export const PRAYER_GUIDANCE_REQUEST_FIELDS = ['situation', 'cardId', 'selectedDomain'] as const;
+export const PRAYER_GUIDANCE_REQUEST_FIELDS = [
+  'situation', 'cardId', 'selectedDomain', SCRIPTURE_CATALOG_RUNTIME_CLIENT_FIELD,
+] as const;
 
 export type PrayerGuidanceRequest = {
   situation: string;
   cardId: string;
-  selectedDomain: SituationDomain;
+  selectedDomain: string;
+  catalogRuntimeVersion?: typeof SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION;
 };
 
 /**
@@ -92,10 +100,24 @@ export function parsePrayerGuidanceRequest(
   const { situation, cardId, selectedDomain } = value;
   if (typeof situation !== 'string' || situation.trim().length === 0) return { ok: false };
   if (typeof cardId !== 'string' || cardId.trim().length === 0) return { ok: false };
-  // 표준 영역이어야 하고 other_uncovered는 고를 수 없다.
-  if (!isChoosableDomain(selectedDomain)) return { ok: false };
+  // 여기서는 내부 영역 id 모양만 본다. 실제 활성 영역인지와 fallback 여부는 같은 요청에서
+  // 읽은 활성 카탈로그 manifest에 대어 handler가 확인한다.
+  if (typeof selectedDomain !== 'string' || !DOMAIN_ID_FORMAT.test(selectedDomain)) return { ok: false };
 
-  return { ok: true, input: { situation, cardId, selectedDomain } };
+  const clientMode = parseScriptureCatalogClientMode(value);
+  if (clientMode === 'invalid') return { ok: false };
+
+  return {
+    ok: true,
+    input: {
+      situation,
+      cardId,
+      selectedDomain,
+      ...(clientMode === 'dynamic'
+        ? { catalogRuntimeVersion: SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION }
+        : {}),
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ */

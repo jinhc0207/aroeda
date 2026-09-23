@@ -16,6 +16,15 @@
 import type { SessionSummary } from './anonymous-session.ts';
 import { isChoosableDomain } from './domain-choice-resolution.ts';
 import type { SituationDomain } from '../data/situation-domains.ts';
+import {
+  DOMAIN_ID_FORMAT,
+} from '../../supabase/functions/_shared/automatic-scripture-catalog-contract.ts';
+import {
+  SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
+  parseRuntimeCardView,
+  parseRuntimeDomainView,
+  type RuntimeCardView,
+} from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime.ts';
 
 export const GATE_ROUTES = ['recommend', 'no_coverage', 'safety', 'ambiguous', 'domain_choice'] as const;
 export type GateRouteName = (typeof GATE_ROUTES)[number];
@@ -28,10 +37,13 @@ const isDomainChoiceResolution = (value: unknown): value is DomainChoiceResoluti
   typeof value === 'string' && (DOMAIN_CHOICE_RESOLUTIONS as readonly string[]).includes(value);
 
 export type DomainChoiceOption = {
-  domain: SituationDomain;
+  domain: string;
+  /** 활성 카탈로그가 제공한 사용자 표시 이름. 예전 정적 응답에서는 없을 수 있다. */
+  displayName?: string;
   resolution: DomainChoiceResolution;
   /** resolution이 recommend일 때만 카드 번호가 있다. */
   selectedCardId: string | null;
+  selectedCard?: RuntimeCardView;
 };
 
 /**
@@ -68,7 +80,10 @@ export type InvokeOutcome =
 
 export type RecommendationDeps = {
   ensureSession: () => Promise<SessionSummary>;
-  invokeRecommendScripture: (body: { situation: string }) => Promise<InvokeOutcome>;
+  invokeRecommendScripture: (body: {
+    situation: string;
+    catalogRuntimeVersion: typeof SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION;
+  }) => Promise<InvokeOutcome>;
   /** 로컬 Scripture Card에 실제로 있는 id인지 확인한다. */
   cardExists: (cardId: string) => boolean;
   /** 카드가 실제로 그 영역에 속하는지 확인한다. recommend와 domain_choice option 검증에 쓴다. */
@@ -76,7 +91,7 @@ export type RecommendationDeps = {
 };
 
 export type RecommendationOutcome =
-  | { status: 'recommend'; cardId: string; selectedDomain: SituationDomain }
+  | { status: 'recommend'; cardId: string; selectedDomain: string; card?: RuntimeCardView }
   /** 중심 영역을 하나로 정할 근거가 없어, 사용자가 고를 두 후보를 그대로 전달한다. */
   | { status: 'domain_choice'; options: [DomainChoiceOption, DomainChoiceOption] }
   | { status: 'route'; route: Exclude<GateRouteName, 'recommend' | 'domain_choice'> }
@@ -102,10 +117,14 @@ function parseGateResponse(data: unknown): {
   primaryDomain: unknown;
   domainChoiceCandidates: unknown;
   domainChoiceOptions: unknown;
+  cards: unknown;
+  domains: unknown;
 } | null {
   if (typeof data !== 'object' || data === null) return null;
 
-  const { ok, result } = data as { ok?: unknown; result?: unknown };
+  const { ok, result, cards, domains } = data as {
+    ok?: unknown; result?: unknown; cards?: unknown; domains?: unknown;
+  };
   if (ok !== true) return null;
   if (typeof result !== 'object' || result === null) return null;
 
@@ -113,7 +132,25 @@ function parseGateResponse(data: unknown): {
     result as Record<string, unknown>;
   if (!isGateRoute(route)) return null;
 
-  return { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions };
+  return { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions, cards, domains };
+}
+
+function parseRuntimeViews(cards: unknown, domains: unknown) {
+  if (cards === undefined && domains === undefined) return { cards: new Map<string, RuntimeCardView>(), domains: new Map<string, string>(), legacy: true };
+  if (!Array.isArray(cards) || !Array.isArray(domains)) return null;
+  const cardMap = new Map<string, RuntimeCardView>();
+  for (const raw of cards) {
+    const card = parseRuntimeCardView(raw);
+    if (!card || cardMap.has(card.id)) return null;
+    cardMap.set(card.id, card);
+  }
+  const domainMap = new Map<string, string>();
+  for (const raw of domains) {
+    const domain = parseRuntimeDomainView(raw);
+    if (!domain || domainMap.has(domain.id)) return null;
+    domainMap.set(domain.id, domain.displayName);
+  }
+  return { cards: cardMap, domains: domainMap, legacy: false };
 }
 
 /**
@@ -130,10 +167,13 @@ function parseDomainChoiceOptions(
   domainChoiceCandidates: unknown,
   domainChoiceOptions: unknown,
   deps: Pick<RecommendationDeps, 'cardExists' | 'cardBelongsToDomain'>,
+  views: NonNullable<ReturnType<typeof parseRuntimeViews>>,
 ): [DomainChoiceOption, DomainChoiceOption] | null {
   if (!Array.isArray(domainChoiceCandidates) || domainChoiceCandidates.length !== 2) return null;
-  if (!domainChoiceCandidates.every(isChoosableDomain)) return null;
-  const candidates = domainChoiceCandidates as SituationDomain[];
+  if (!domainChoiceCandidates.every((domain) =>
+    typeof domain === 'string' && domain !== 'other_uncovered' &&
+    (isChoosableDomain(domain) || (DOMAIN_ID_FORMAT.test(domain) && views.domains.has(domain))))) return null;
+  const candidates = domainChoiceCandidates as string[];
   if (candidates[0] === candidates[1]) return null;
 
   if (!Array.isArray(domainChoiceOptions) || domainChoiceOptions.length !== 2) return null;
@@ -152,12 +192,28 @@ function parseDomainChoiceOptions(
 
     if (resolution === 'recommend') {
       if (typeof selectedCardId !== 'string') return null;
-      if (!deps.cardExists(selectedCardId)) return null;
-      if (!deps.cardBelongsToDomain(selectedCardId, optionDomain)) return null;
-      options.push({ domain: optionDomain, resolution, selectedCardId });
+      const card = views.cards.get(selectedCardId);
+      if (card) {
+        if (!card.domains.includes(optionDomain)) return null;
+      } else {
+        if (!views.legacy || !deps.cardExists(selectedCardId)) return null;
+        if (!deps.cardBelongsToDomain(selectedCardId, optionDomain as SituationDomain)) return null;
+      }
+      options.push({
+        domain: optionDomain,
+        ...(views.domains.has(optionDomain) ? { displayName: views.domains.get(optionDomain)! } : {}),
+        resolution,
+        selectedCardId,
+        ...(card ? { selectedCard: card } : {}),
+      });
     } else {
       if (selectedCardId !== null) return null;
-      options.push({ domain: optionDomain, resolution, selectedCardId: null });
+      options.push({
+        domain: optionDomain,
+        ...(views.domains.has(optionDomain) ? { displayName: views.domains.get(optionDomain)! } : {}),
+        resolution,
+        selectedCardId: null,
+      });
     }
   }
 
@@ -190,7 +246,10 @@ export async function requestRecommendation(
 
   let outcome: InvokeOutcome;
   try {
-    outcome = await deps.invokeRecommendScripture({ situation });
+    outcome = await deps.invokeRecommendScripture({
+      situation,
+      catalogRuntimeVersion: SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
+    });
   } catch {
     return { status: 'error', kind: 'general', diagnostic: 'FUNCTION_INVOKE_FAILED' };
   }
@@ -208,6 +267,8 @@ export async function requestRecommendation(
   if (!parsed) {
     return INVALID_RESPONSE;
   }
+  const views = parseRuntimeViews(parsed.cards, parsed.domains);
+  if (!views) return INVALID_RESPONSE;
 
   if (parsed.route === 'domain_choice') {
     // domain_choice는 top-level 카드를 고르지 않은 상태다. 문서(RECOMMENDATION_GATE.md STEP 1-1)대로
@@ -217,7 +278,7 @@ export async function requestRecommendation(
       return INVALID_RESPONSE;
     }
 
-    const options = parseDomainChoiceOptions(parsed.domainChoiceCandidates, parsed.domainChoiceOptions, deps);
+    const options = parseDomainChoiceOptions(parsed.domainChoiceCandidates, parsed.domainChoiceOptions, deps, views);
     if (!options) return INVALID_RESPONSE;
     return { status: 'domain_choice', options };
   }
@@ -227,16 +288,28 @@ export async function requestRecommendation(
   }
 
   // recommend인데 카드가 없거나 우리가 모르는 id면 임의의 카드로 대체하지 않는다.
-  if (typeof parsed.selectedCardId !== 'string' || !deps.cardExists(parsed.selectedCardId)) {
+  if (typeof parsed.selectedCardId !== 'string') {
     return INVALID_RESPONSE;
   }
+
+  const runtimeCard = views.cards.get(parsed.selectedCardId);
+  if (!runtimeCard && (!views.legacy || !deps.cardExists(parsed.selectedCardId))) return INVALID_RESPONSE;
 
   // 영역이 표준값이 아니거나, 고른 카드가 실제로 그 영역에 속하지 않으면 믿지 않는다.
-  if (!isChoosableDomain(parsed.primaryDomain) || !deps.cardBelongsToDomain(parsed.selectedCardId, parsed.primaryDomain)) {
+  const domainAllowed = typeof parsed.primaryDomain === 'string' && parsed.primaryDomain !== 'other_uncovered' &&
+    (isChoosableDomain(parsed.primaryDomain) ||
+      (DOMAIN_ID_FORMAT.test(parsed.primaryDomain) && views.domains.has(parsed.primaryDomain)));
+  const cardBelongs = runtimeCard
+    ? typeof parsed.primaryDomain === 'string' && runtimeCard.domains.includes(parsed.primaryDomain)
+    : domainAllowed && deps.cardBelongsToDomain(parsed.selectedCardId, parsed.primaryDomain as SituationDomain);
+  if (!domainAllowed || !cardBelongs) {
     return INVALID_RESPONSE;
   }
 
-  return { status: 'recommend', cardId: parsed.selectedCardId, selectedDomain: parsed.primaryDomain };
+  return {
+    status: 'recommend', cardId: parsed.selectedCardId, selectedDomain: parsed.primaryDomain as string,
+    ...(runtimeCard ? { card: runtimeCard } : {}),
+  };
 }
 
 /** invoke가 실패로 끝났을 때 상태 코드만으로 안전하게 분류한다. 응답 본문은 보지 않는다. */

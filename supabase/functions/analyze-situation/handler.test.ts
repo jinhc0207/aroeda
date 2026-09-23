@@ -18,6 +18,10 @@ import {
 } from './handler.ts';
 import { INSTRUCTIONS, MODEL } from '../_shared/analyzer-contract.ts';
 import type { SituationAnalysis } from '../_shared/situation-analysis.ts';
+import {
+  buildTestCatalogRuntime,
+  buildTestDynamicCatalogRuntime,
+} from '../_shared/automatic-scripture-catalog-runtime-test-fixtures.ts';
 
 const validAnalysis: SituationAnalysis = {
   domainPriority: 'resolved',
@@ -42,8 +46,10 @@ const openAIResponse = (analysis: unknown) => ({
 });
 
 const allowQuota = async () => ({ status: 'allowed' }) as const;
+const baselineRuntime = await buildTestCatalogRuntime();
 
 const depsWith = (overrides: Partial<Handlerdeps> = {}): Handlerdeps => ({
+  loadCatalogRuntime: async () => structuredClone(baselineRuntime),
   checkQuota: allowQuota,
   getApiKey: () => 'test-key-not-real',
   callOpenAI: async () => openAIResponse(validAnalysis),
@@ -56,6 +62,44 @@ const post = (body: unknown) =>
     headers: { 'content-type': 'application/json' },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
+
+async function dynamicRuntime() {
+  return buildTestDynamicCatalogRuntime();
+}
+
+describe('analyze-situation · 활성 카탈로그 runtime', () => {
+  it('runtime을 읽지 못하면 quota·OpenAI 0회로 503이고 정적 fallback을 쓰지 않는다', async () => {
+    let quotaCalls = 0;
+    let openAICalls = 0;
+    const response = await handleAnalyzeSituation(post({ situation: '돌봄이 너무 오래 이어져 지쳤어요.' }), depsWith({
+      loadCatalogRuntime: async () => { throw new Error('private db detail'); },
+      checkQuota: async () => { quotaCalls += 1; return { status: 'allowed' }; },
+      callOpenAI: async () => { openAICalls += 1; return openAIResponse(validAnalysis); },
+    }));
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { ok: false, error: 'CATALOG_UNAVAILABLE' });
+    assert.equal(quotaCalls, 0);
+    assert.equal(openAICalls, 0);
+  });
+
+  it('활성 새 영역을 prompt·schema·validator·응답에 같은 값으로 쓴다', async () => {
+    const runtime = await dynamicRuntime();
+    const dynamicAnalysis: SituationAnalysis<string> = {
+      ...validAnalysis,
+      primaryDomain: 'caregiving_strain',
+      situationTags: ['오래 돌봄'],
+    };
+    const payloads: Record<string, unknown>[] = [];
+    const response = await handleAnalyzeSituation(post({ situation: '가족을 오래 돌보느라 지쳤어요.' }), depsWith({
+      loadCatalogRuntime: async () => runtime,
+      callOpenAI: async (value) => { payloads.push(value); return openAIResponse(dynamicAnalysis); },
+    }));
+    assert.equal(response.status, 200);
+    assert.equal(((await response.json()) as { analysis: SituationAnalysis<string> }).analysis.primaryDomain, 'caregiving_strain');
+    assert.match(String(payloads[0]?.instructions), /caregiving_strain/);
+    assert.equal(JSON.stringify(payloads[0]?.text).includes('caregiving_strain'), true);
+  });
+});
 
 describe('analyze-situation · 입력 검증', () => {
   it('POST가 아니면 405', async () => {
@@ -315,6 +359,7 @@ describe('analyze-situation · CORS', () => {
     let openAICalled = false;
     let keyRead = false;
     const response = await handleAnalyzeSituation(options(), {
+      loadCatalogRuntime: async () => structuredClone(baselineRuntime),
       checkQuota: allowQuota,
       getApiKey: () => {
         keyRead = true;

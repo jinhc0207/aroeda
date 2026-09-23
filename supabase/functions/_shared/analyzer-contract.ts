@@ -12,24 +12,26 @@ import {
   EMOTION_TAGS,
   PASTORAL_FUNCTIONS,
   PRAYER_MODES,
-  SITUATION_TAGS,
   SPIRITUAL_QUESTION_TAGS,
 } from './analysis-taxonomy.ts';
 import {
-  COVERED_DOMAINS,
-  DOMAIN_DESCRIPTIONS,
-  SITUATION_DOMAINS,
-  UNCOVERED_DOMAINS,
-  FALLBACK_DOMAIN,
-} from './situation-domains.ts';
+  STATIC_ANALYZER_DOMAIN_MANIFEST,
+  analyzerDomainIds,
+  type AnalyzerDomainDefinition,
+  type AnalyzerDomainManifest,
+} from './automatic-scripture-catalog-analyzer-domain-manifest.ts';
 import { DOMAIN_PRIORITY_STATUSES, SAFETY_CATEGORIES, SAFETY_LEVELS } from './situation-analysis.ts';
 
-const domainList = (domains: readonly string[]) =>
-  domains.map((domain) => `- ${domain}: ${DOMAIN_DESCRIPTIONS[domain as never]}`).join('\n');
+const domainList = (domains: readonly AnalyzerDomainDefinition[]) =>
+  domains.map((domain) => `- ${domain.id}: ${domain.description}`).join('\n');
 
 export const MODEL = 'gpt-5.6-luna';
 
-export const INSTRUCTIONS = `당신은 아뢰다의 Situation Analyzer입니다.
+export function buildAnalyzerInstructions(
+  manifest: AnalyzerDomainManifest = STATIC_ANALYZER_DOMAIN_MANIFEST,
+): string {
+  const fallbackDomain = manifest.fallbackDomain.id;
+  return `당신은 아뢰다의 Situation Analyzer입니다.
 
 역할은 사용자의 성경본문을 선택하거나 기도문을 쓰는 것이 아닙니다.
 
@@ -169,7 +171,7 @@ primaryDomain은 사용자가 처한 삶의 핵심 상황을 나타냅니다.
 (상대에게 받은 상처 뒤 보복을 내려놓으려는 관계 문제이며, 분류할 수 없는 일반 감정이 아닙니다.)
 
 "죽음이 가까워진 것 같아 가족과 무엇을 말해야 할지 모르겠어요."
-→ primaryDomain = ${FALLBACK_DOMAIN}
+→ primaryDomain = ${fallbackDomain}
 (질병·사별·자해 위험의 원인을 임의로 만들지 않습니다. 현재 영역만으로 분명히 분류할 수 없습니다.)
 
 [Domain Priority]
@@ -192,7 +194,7 @@ needs_choice:
 - 두 후보의 순서는 우선순위가 아닙니다.
 - 두 문제가 사용자 마음속에서 똑같이 중요하다고 주장하는 것이 아닙니다.
   문장만으로 처리 순서를 정할 수 없다는 뜻입니다.
-- ${FALLBACK_DOMAIN}은 후보로 넣지 않습니다.
+- ${fallbackDomain}은 후보로 넣지 않습니다.
 - 감정, 원인, 결과, 과거 배경을 별도 후보로 만들지 않습니다.
 - 세 가지 이상이 언급되더라도, 가장 분명하게 서로 독립된 두 영역만 후보로 넣습니다.
 
@@ -236,13 +238,13 @@ needs_choice라는 이유로 안전 신호를 빼거나 약하게 표시하지 �
 
 사용자가 꿈·환상·징조를 말하더라도, 그것이 하나님의 직접 메시지인지 아닌지 단정하지 않습니다.
 
-핵심 상황이 아래 목록 어디에도 적절히 들어가지 않으면 ${FALLBACK_DOMAIN}을 사용합니다.
+핵심 상황이 아래 목록 어디에도 적절히 들어가지 않으면 ${fallbackDomain}을 사용합니다.
 
 사용할 수 있는 Situation Domain (이 목록 밖의 값은 절대 만들지 않습니다):
 
-${domainList(COVERED_DOMAINS)}
-${domainList(UNCOVERED_DOMAINS)}
-- ${FALLBACK_DOMAIN}: ${DOMAIN_DESCRIPTIONS[FALLBACK_DOMAIN]}
+${domainList(manifest.coveredDomains)}
+${domainList(manifest.uncoveredDomains)}
+- ${manifest.fallbackDomain.id}: ${manifest.fallbackDomain.description}
 
 [Minimum Sufficient Tagging]
 
@@ -500,13 +502,17 @@ confidence는 0과 1 사이의 숫자로, 이 분석이 사용자의 문장을 �
 
 사용할 수 있는 표준 태그 목록:
 
-situationTags: ${SITUATION_TAGS.join(', ')}
+situationTags: ${manifest.situationTags.join(', ')}
 emotionTags: ${EMOTION_TAGS.join(', ')}
 spiritualQuestionTags: ${SPIRITUAL_QUESTION_TAGS.join(', ')}
 prayerModes: ${PRAYER_MODES.join(', ')}
 pastoralFunctions: ${PASTORAL_FUNCTIONS.join(', ')}
 
 목록에 없는 태그는 절대 만들지 않는다. 맞는 태그가 없으면 그 항목은 빈 배열로 둔다.`;
+}
+
+/** 운영 Analyzer의 기존 정적 계약. */
+export const INSTRUCTIONS = buildAnalyzerInstructions();
 
 /**
  * Structured Outputs용 JSON Schema.
@@ -518,47 +524,56 @@ pastoralFunctions: ${PASTORAL_FUNCTIONS.join(', ')}
  * primaryDomain의 null 허용은 OpenAI Structured Outputs 문서의 단순한 형태
  * (type: ['string', 'null'], enum에 null 포함)를 쓴다.
  */
-export const SITUATION_ANALYSIS_SCHEMA = {
-  type: 'object',
-  properties: {
-    domainPriority: { type: 'string', enum: [...DOMAIN_PRIORITY_STATUSES] },
-    primaryDomain: { type: ['string', 'null'], enum: [...SITUATION_DOMAINS, null] },
-    domainChoiceCandidates: {
-      type: 'array',
-      items: { type: 'string', enum: SITUATION_DOMAINS.filter((domain) => domain !== FALLBACK_DOMAIN) },
-    },
-    secondaryDomains: { type: 'array', items: { type: 'string', enum: [...SITUATION_DOMAINS] } },
-    situationTags: { type: 'array', items: { type: 'string', enum: SITUATION_TAGS } },
-    emotionTags: { type: 'array', items: { type: 'string', enum: EMOTION_TAGS } },
-    spiritualQuestionTags: {
-      type: 'array',
-      items: { type: 'string', enum: SPIRITUAL_QUESTION_TAGS },
-    },
-    prayerModes: { type: 'array', items: { type: 'string', enum: PRAYER_MODES } },
-    pastoralFunctions: { type: 'array', items: { type: 'string', enum: PASTORAL_FUNCTIONS } },
-    safety: {
-      type: 'object',
-      properties: {
-        level: { type: 'string', enum: [...SAFETY_LEVELS] },
-        categories: { type: 'array', items: { type: 'string', enum: [...SAFETY_CATEGORIES] } },
+export function buildSituationAnalysisSchema(
+  manifest: AnalyzerDomainManifest = STATIC_ANALYZER_DOMAIN_MANIFEST,
+) {
+  const domains = analyzerDomainIds(manifest);
+  const fallbackDomain = manifest.fallbackDomain.id;
+  return {
+    type: 'object',
+    properties: {
+      domainPriority: { type: 'string', enum: [...DOMAIN_PRIORITY_STATUSES] },
+      primaryDomain: { type: ['string', 'null'], enum: [...domains, null] },
+      domainChoiceCandidates: {
+        type: 'array',
+        items: { type: 'string', enum: domains.filter((domain) => domain !== fallbackDomain) },
       },
-      required: ['level', 'categories'],
-      additionalProperties: false,
+      secondaryDomains: { type: 'array', items: { type: 'string', enum: [...domains] } },
+      situationTags: { type: 'array', items: { type: 'string', enum: [...manifest.situationTags] } },
+      emotionTags: { type: 'array', items: { type: 'string', enum: EMOTION_TAGS } },
+      spiritualQuestionTags: {
+        type: 'array',
+        items: { type: 'string', enum: SPIRITUAL_QUESTION_TAGS },
+      },
+      prayerModes: { type: 'array', items: { type: 'string', enum: PRAYER_MODES } },
+      pastoralFunctions: { type: 'array', items: { type: 'string', enum: PASTORAL_FUNCTIONS } },
+      safety: {
+        type: 'object',
+        properties: {
+          level: { type: 'string', enum: [...SAFETY_LEVELS] },
+          categories: { type: 'array', items: { type: 'string', enum: [...SAFETY_CATEGORIES] } },
+        },
+        required: ['level', 'categories'],
+        additionalProperties: false,
+      },
+      confidence: { type: 'number' },
     },
-    confidence: { type: 'number' },
-  },
-  required: [
-    'domainPriority',
-    'primaryDomain',
-    'domainChoiceCandidates',
-    'secondaryDomains',
-    'situationTags',
-    'emotionTags',
-    'spiritualQuestionTags',
-    'prayerModes',
-    'pastoralFunctions',
-    'safety',
-    'confidence',
-  ],
-  additionalProperties: false,
-} as const;
+    required: [
+      'domainPriority',
+      'primaryDomain',
+      'domainChoiceCandidates',
+      'secondaryDomains',
+      'situationTags',
+      'emotionTags',
+      'spiritualQuestionTags',
+      'prayerModes',
+      'pastoralFunctions',
+      'safety',
+      'confidence',
+    ],
+    additionalProperties: false,
+  } as const;
+}
+
+/** 운영 Analyzer의 기존 정적 schema. */
+export const SITUATION_ANALYSIS_SCHEMA = buildSituationAnalysisSchema();

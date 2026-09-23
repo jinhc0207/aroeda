@@ -14,10 +14,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '@/constants/aroeda-theme';
 import { getScriptureCard } from '@/data/scripture-cards';
-import type { SituationDomain } from '@/data/situation-domains';
 import { requestPrayerGuidance, type PrayerGuidance } from '@/lib/request-prayer-guidance';
 import { supabase } from '@/lib/supabase';
 import { useSituation } from '@/state/situation';
+import { SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION } from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime';
 
 /**
  * 기도 화면
@@ -40,7 +40,12 @@ import { useSituation } from '@/state/situation';
  * supabase.functions.invoke 결과를 단순한 모양으로 바꾼다.
  * 왜 실패했는지는 화면이 알 필요가 없다. 어느 경우든 기존 안내로 넘어간다.
  */
-async function invokePrayerGuidance(body: { situation: string; cardId: string; selectedDomain: SituationDomain }) {
+async function invokePrayerGuidance(body: {
+  situation: string;
+  cardId: string;
+  selectedDomain: string;
+  catalogRuntimeVersion: typeof SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION;
+}) {
   const { data, error } = await supabase.functions.invoke('generate-prayer-guidance', { body });
   if (error) return { ok: false as const };
   return { ok: true as const, data };
@@ -64,6 +69,7 @@ export default function PrayerScreen() {
   const {
     situation,
     selectedCardId,
+    selectedCard,
     selectedDomain,
     setSituation,
     clearRecommendation,
@@ -83,12 +89,13 @@ export default function PrayerScreen() {
   // 추천된 카드가 없거나 모르는 id면 다른 말씀으로 대체하지 않습니다.
   const card = useMemo(() => {
     if (!selectedCardId) return null;
+    if (selectedCard?.id === selectedCardId) return selectedCard;
     try {
       return getScriptureCard(selectedCardId);
     } catch {
       return null;
     }
-  }, [selectedCardId]);
+  }, [selectedCardId, selectedCard]);
 
   /**
    * 기도문은 화면에 한 번 들어올 때 한 번만 받아 옵니다.

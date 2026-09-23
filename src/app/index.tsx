@@ -22,6 +22,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { SCRIPTURE_CARDS } from '@/data/scripture-cards';
 import type { SituationDomain } from '@/data/situation-domains';
+import { SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION } from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime';
 import { useSituation } from '@/state/situation';
 
 /** 서버가 준 카드 id가 실제로 우리가 가진 카드인지 확인한다. */
@@ -37,7 +38,10 @@ const cardBelongsToDomain = (cardId: string, domain: SituationDomain) => {
  * supabase.functions.invoke 결과를 단순한 모양으로 바꾼다.
  * 사용량 제한(429)만 구분할 수 있으면 된다. 원본 오류는 남기지 않는다.
  */
-async function invokeRecommendScripture(body: { situation: string }) {
+async function invokeRecommendScripture(body: {
+  situation: string;
+  catalogRuntimeVersion: typeof SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION;
+}) {
   const { data, error } = await supabase.functions.invoke('recommend-scripture', { body });
 
   if (error) {
@@ -115,7 +119,11 @@ export default function SituationScreen() {
     if (getResetCount() !== resetCountAtStart) return;
 
     if (outcome.status === 'recommend') {
-      setRecommendation({ cardId: outcome.cardId, selectedDomain: outcome.selectedDomain });
+      setRecommendation({
+        cardId: outcome.cardId,
+        selectedDomain: outcome.selectedDomain,
+        ...(outcome.card ? { card: outcome.card } : {}),
+      });
       router.push('/scripture');
       return;
     }

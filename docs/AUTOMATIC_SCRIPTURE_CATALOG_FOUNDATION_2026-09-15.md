@@ -2215,3 +2215,134 @@ fixture가 만든 후보·검증·9개 attestation을 사용했고, 후보 생�
 DB는 여전히 증거가 실제 모델 호출에서 만들어졌는지 증명하지 않는다. 이번 단계가 추가한 보장은
 **검증과 활성화가 보관된 바로 그 증거 한 건을 사용한다는 것**이다. 새 영역 동적 manifest,
 운영 배포, 사람 사전 승인은 범위에 넣지 않았다.
+
+## 9-26. 새 영역 후보용 동적 Analyzer domain manifest (2026-09-23, 후속)
+
+`new_domain_with_cards` 후보도 기존 영역 후보와 같은 사례 저작·Analyzer 분석·증거 봉인 경로를
+쓸 수 있게 했다. 이 단계에서는 후보 생성 경로에서 검증된 후보와 기준 카탈로그로 manifest를
+만들었고, 뒤의 9-27에서 같은 builder를 사용자용 운영 런타임에도 연결했다.
+
+manifest는 정적 17개 영역을 기준으로 시작한다. 기준 카탈로그에 이미 들어온 동적 영역과 이번
+후보의 새 영역을 결정적인 id 순서로 더한다. 정적 영역의 설명은 카탈로그 사본이 덮어쓰지 못한다.
+후보는 먼저 `validateCatalogCandidate`를 통과해야 하므로 잘못된 새 영역·카드·버전 지문으로
+manifest를 만들 수 없다.
+
+같은 manifest 한 건을 네 경계가 함께 쓴다.
+
+1. Analyzer 지시문의 domain id·설명 목록
+2. Structured Output schema의 `primaryDomain`·`domainChoiceCandidates`·`secondaryDomains` enum
+3. 응답 runtime validator의 허용 domain과 fallback 규칙
+4. 증거의 분석 요청 지문과 environment의 instructions/schema/domain-manifest 지문
+
+따라서 prompt에만 새 영역을 넣고 validator가 거절하거나, schema만 넓히고 증거 지문이 옛 값을
+가리키는 상태가 생기지 않는다. 정적 manifest로 봉인한 새 영역 증거는 요청 지문과 environment
+두 곳에서 거절된다. 반대로 동적 manifest로 봉인한 증거는 카드마다 3건, 새 영역 3장이면 9건의
+분석을 모두 통과한 뒤 기존 Gate 재생 adapter로 이어진다.
+
+사례 저작기도 새 영역을 받을 수 있게 했다. 모델에는 검증된 `newDomain` 설명과 후보 카드 prose만
+보내며, `situationTags`·판정·연구 결과 지문은 계속 보내지 않는다. 합성 문장에 새 domain id를
+직접 넣는 것도 기존 금지 규칙에 포함했다.
+
+### 회귀 보장
+
+- `buildAnalyzerInstructions(STATIC_ANALYZER_DOMAIN_MANIFEST) === INSTRUCTIONS`
+- 정적 manifest로 만든 schema가 기존 `SITUATION_ANALYSIS_SCHEMA`와 동일
+- 운영 Analyzer payload와 기존 156건 고정 스냅샷 환경은 변경 없음
+- 새 영역 id·설명이 prompt와 schema에 함께 들어가고, 정적 validator는 거절하지만 동적
+  validator는 통과
+- 새 영역 요청·환경 지문은 정적 값과 다르며 같은 후보에서는 결정적
+- 실제 transport factory에서 사례 저작 1회 + Analyzer 9회가 같은 동적 prompt·schema를 사용
+- 불완전한 새 영역 증거도 예외를 던지지 않고 실패 결과로 닫힘
+
+### 당시 남은 운영 경계
+
+9-26 시점에는 manifest가 후보 생성과 증거 검증 전용이었다. 활성 카탈로그 읽기, 장애 시
+fail-closed 정책, 포인터 전환·롤백과 사용자용 Analyzer/추천/기도 런타임 연결은 9-27에서
+구현했다. 9-26 작업 자체에서는 운영 배포와 실제 OpenAI·Supabase 호출을 하지 않았다.
+
+## 9-27. 활성 카탈로그의 사용자 런타임 연결 (2026-09-23, 후속)
+
+검증·활성화된 카탈로그가 실제 사용자 요청에도 한 판으로 적용되도록 `analyze-situation`,
+`recommend-scripture`, `generate-prayer-guidance`와 앱 표시 상태를 연결했다. Git의 정적 카드로
+DB·계약·지문 오류를 정적 카드로 조용히 덮는 경로는 서버 런타임에 없다. 구 앱 호환 요청은
+아래 capability 협상에 따라 명시적으로 기존 정적 계약을 쓰며, 이때도 활성판 조회가 먼저 성공해야 한다.
+
+### 원자적 읽기와 fail-closed
+
+신규 `get_active_scripture_catalog_runtime()` RPC는 입력이 없는 `STABLE SECURITY DEFINER` SQL
+함수다. 활성 포인터와 그 포인터가 가리키는 버전 행을 **한 SELECT의 join**으로 읽으므로, 활성화나
+롤백이 동시에 일어나도 포인터와 다른 카탈로그를 섞어 반환하지 않는다. 실행 권한은
+`service_role`에만 있고 `PUBLIC`·`anon`·`authenticated`에는 없다.
+
+Edge transport는 한 번만 호출하며 1.5초 상한, 호출자 취소 신호, 응답 구조·카탈로그 계약·전체
+카탈로그 지문 재계산을 모두 통과한 값만 반환한다. fetch나 본문 읽기가 abort를 무시해도 시간
+제한 또는 기도 전체 마감에서 기다리기를 끝낸다. 읽기·HTTP·JSON·계약·지문 중 하나라도 실패하면
+503 계열의 기존 일반 실패 응답으로 닫고, 정적 카드나 이전 카탈로그와 섞지 않는다.
+
+### Analyzer·Gate·기도가 쓰는 같은 판
+
+검증된 활성 카탈로그 한 판에서 다음 세 재료를 함께 만든다.
+
+1. 정적 17개 영역 + 활성 카탈로그의 새 영역 manifest
+2. 정적 카드 + 활성 카드가 실제로 쓰는 `situationTags` 합집합
+3. 전체 활성 카탈로그를 Gate가 쓰는 카드 모양으로 바꾼 목록
+
+영역과 상황 태그는 같은 manifest에서 Analyzer 지시문, Structured Output schema, 응답 validator,
+후보 증거의 요청·환경 지문에 함께 들어간다. `emotionTags`·`spiritualQuestionTags`·`prayerModes`·
+`pastoralFunction`의 닫힌 사전은 그대로다. 기준 카탈로그에서는 기존 지시문과 schema가 동일하다.
+
+추천은 Analyzer가 본 `runtime` 객체의 카드로 Gate를 실행한다. 기도는 요청 초기에 활성 카탈로그를
+한 번 읽고, 선택 영역·카드 확인, 재분석, Gate 재검증, 기도 생성까지 그 객체를 재사용한다. 따라서
+한 요청 안에서 포인터가 바뀌어도 영역은 이전 판인데 카드는 다음 판인 조합이 생기지 않는다.
+
+### 앱으로 내보내는 최소 공개 카드
+
+추천 응답은 실제 선택된 카드와 선택지에 필요한 카드만 아래 공개 projection으로 보낸다.
+
+- 카드 id, 영역 id 하나, 계산된 성경 표기와 본문 위치
+- 사용자 설명, 기도 방향
+- 선택지에 필요한 영역 id와 검증된 한국어 표시 이름
+
+신학 검증 메모, 문맥 요약, 태그, 오용 방지 규칙, 연구·검증 지문은 내보내지 않는다. 앱도 exact
+fields, id 형식, 본문 위치, 계산 표기, 길이, 카드-영역 소속을 다시 검사한다. 검증된 공개 카드는
+기기 저장소가 아니라 Situation Context 메모리에만 두고 말씀·기도 화면에서 사용한다. 새 영역
+선택지의 한국어 이름도 응답에서 받은 검증값을 쓰므로 내부 영문 id가 화면에 나오지 않는다.
+
+앱은 추천과 기도 도움 요청에 `catalogRuntimeVersion: "scripture-catalog-runtime/v1"`을 보내 동적 카드와 새 영역을
+검증·표시할 수 있음을 명시한다. 새 Edge는 이 값이 정확한 요청에만 활성 manifest·카드와 공개
+`cards`/`domains` 응답을 사용한다. 표시가 없는 구 앱 요청은 먼저 활성판을 정상 조회한 뒤 기존 정적
+Analyzer·Gate·카드 자료를 사용하고, 추천은 옛 `{ ok, result }` 응답 모양을 유지한다. 기도 도움도
+추천과 같은 공통 capability parser와 runtime 선택 함수를 써서, 구 앱이 받은 정적 카드를 동적 Gate로
+다시 판정해 조용히 기도 방향 fallback으로 떨어뜨리지 않는다. 따라서 새 카드·영역을 활성화해도 구 앱의
+추천·기도 도움 기능이 전면 실패하거나 저하되지 않는다. DB 조회가 실패하면 구 앱도 503으로 닫히므로 이 경로가 장애
+fallback으로 쓰이지 않는다. 알 수 없는 capability 값은 오타를 구 앱으로 숨기지 않고 입력 오류로
+거절한다. 기도 도움은 기존 외부 실패 계약대로 구체 사유를 감춘 단일 503으로 닫는다.
+
+반대 방향의 순차 배포를 위해 새 앱 parser는 `cards`와 `domains`가 **둘 다 없는** 옛 Edge의 정적
+응답만 기존 로컬 카드 검사로 받을 수 있다. 둘 중 하나만 있거나 동적 카드가 공개 계약을 어기면 전부
+거절한다. 옛 Edge는 추가 capability 필드를 무시하고 기존 추천을 반환하므로 앱과 Edge의 배포 순서가
+어느 쪽이 먼저여도 기능이 유지된다.
+
+### 회귀 검증 범위
+
+- 새 영역과 새 상황 태그가 prompt·schema·validator·환경 지문에 함께 들어감
+- Analyzer와 Gate가 같은 활성 판으로 새 카드를 선택함
+- runtime 읽기 실패 시 quota·모델 호출 0회, 정적 fallback 없음
+- capability가 있는 새 앱은 동적 판을, 표시가 없는 구 앱은 활성판 조회 성공 뒤 정적 계약을 사용함
+- 구 앱 요청의 DB 실패는 503이며, 알 수 없는 capability는 호출 0회 입력 오류로 닫힘
+- 동적 활성판에서도 구 앱의 정적 카드가 기도 재분석·정적 Gate·기도 생성까지 이어짐
+- 동적 domain-choice가 한국어 이름과 공개 카드를 보존하고 뒤로가기 선택지도 유지함
+- 로컬 목록에 없는 카드가 로컬 개역한글 본문·공개 설명·기도 방향으로 표시됨
+- 그 카드 id와 새 영역이 기도 서버 요청에 전달되고 서버가 같은 활성 판으로 재검증함
+- 내부 필드, 잘못된 성경 표기, 카드-영역 불일치 응답은 앱에서 거절됨
+- service-role transport가 timeout·호출자 취소에서 abort 무시 요청도 기다리지 않음
+
+### 운영 적용 상태와 순서
+
+이 변경은 **아직 운영 Supabase에 적용하거나 Edge Function을 배포하지 않았다.** 배포할 때는 먼저
+runtime RPC migration을 적용하고 활성 포인터·버전 행이 정상인지 확인한 뒤, 세 Edge Function을
+같은 릴리스로 배포해야 한다. RPC 없이 함수만 먼저 배포하거나 활성 포인터가 비어 있으면 의도대로
+503으로 닫힌다. 그 다음 앱을 배포하면 옛 정적 응답과 새 공개 카드 응답을 모두 안전하게 넘길 수
+있다. 새 앱이 아직 설치되지 않은 사용자가 남아 있어도 capability가 없는 요청은 정적 계약으로
+처리되므로, 새 카드·영역 활성화를 앱 보급률에 묶지 않는다. 실제 운영 전에는 로컬 PostgreSQL에서
+service_role 권한·기준판·활성화·롤백을 포함한 RPC 시나리오를 다시 확인해야 한다.

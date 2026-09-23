@@ -41,8 +41,11 @@ import {
 import type { QuotaDecision } from '../_shared/rate-limit.ts';
 import { runRecommendationGate } from '../_shared/recommendation-gate.ts';
 import { resolveAnalysisForChosenDomain } from '../_shared/domain-choice-resolution.ts';
-import { getScriptureCard, type ScriptureCard } from '../_shared/scripture-cards.ts';
+import type { ScriptureCard } from '../_shared/scripture-cards.ts';
 import { extractOutputText } from '../_shared/openai-response.ts';
+import {
+  scriptureCatalogRuntimeForClient,
+} from '../_shared/automatic-scripture-catalog-runtime.ts';
 import {
   PRAYER_GUIDANCE_MODEL,
   PRAYER_GUIDANCE_MODEL_TIMEOUT_MS,
@@ -187,13 +190,31 @@ async function runPrayerGuidance(
   const parsed = parsePrayerGuidanceRequest(body);
   if (!parsed.ok) return unavailable('prayer_guidance_invalid_request');
 
-  // 아는 말씀인지 먼저 본다. 모르는 번호면 분석까지 갈 이유가 없다.
-  let card;
+  // 추천 때와 같은 활성 포인터 한 판을 쓴다. 읽지 못하면 정적 카드로 대체하지 않는다.
+  let activeRuntime;
   try {
-    card = getScriptureCard(parsed.input.cardId);
+    activeRuntime = await deps.loadCatalogRuntime({ signal });
   } catch {
-    return unavailable('prayer_guidance_unknown_card');
+    return unavailable('prayer_guidance_catalog_unavailable');
   }
+  const runtime = scriptureCatalogRuntimeForClient(
+    activeRuntime,
+    parsed.input.catalogRuntimeVersion ? 'dynamic' : 'legacy',
+  );
+  const gateCards = deps.cards ?? runtime.cards;
+  const runtimeDomainIds = [
+    ...runtime.manifest.coveredDomains.map((domain) => domain.id),
+    ...runtime.manifest.uncoveredDomains.map((domain) => domain.id),
+    runtime.manifest.fallbackDomain.id,
+  ];
+  if (
+    parsed.input.selectedDomain === runtime.manifest.fallbackDomain.id ||
+    !runtimeDomainIds.includes(parsed.input.selectedDomain)
+  ) return unavailable('prayer_guidance_unknown_domain');
+
+  // 아는 말씀인지 먼저 본다. 모르는 번호면 분석까지 갈 이유가 없다.
+  const card = runtime.cards.find((item) => item.id === parsed.input.cardId);
+  if (!card) return unavailable('prayer_guidance_unknown_card');
 
   // 상황을 다시 살핀다. 사용량 확인과 API Key 확인도 이 안에서 함께 이루어진다.
   //
@@ -212,7 +233,7 @@ async function runPrayerGuidance(
       }),
   };
 
-  const analyzed = await analyzeSituationRequest(request, analysisDeps);
+  const analyzed = await analyzeSituationRequest(request, analysisDeps, runtime);
   if (!analyzed.ok) {
     // 분석기가 만든 답을 그대로 내보내지 않는다.
     // 사용량 제한인지, 열쇠가 없는지, 모델이 실패했는지 밖에서 구분되면 안 된다.
@@ -230,13 +251,18 @@ async function runPrayerGuidance(
   // 사용자가 고른 영역이 다시 살핀 결과 안에 실제로 있는가.
   // needs_choice면 두 후보 중 하나, resolved면 primary 또는 secondary여야 한다.
   // 없으면 거절한다. 요청 값을 분석 결과에 억지로 넣지 않는다.
-  const resolved = resolveAnalysisForChosenDomain(analyzed.analysis, parsed.input.selectedDomain);
+  const resolved = resolveAnalysisForChosenDomain(
+    analyzed.analysis,
+    parsed.input.selectedDomain,
+    runtimeDomainIds,
+    runtime.manifest.fallbackDomain.id,
+  );
   if (resolved === null) {
     return unavailable('prayer_guidance_domain_not_detected');
   }
 
   // 고른 영역을 중심으로 추천 판단을 다시 돌린다. 규칙은 기존 Primary-First 그대로다.
-  const gate = runRecommendationGate(resolved, deps.cards);
+  const gate = runRecommendationGate(resolved, gateCards);
 
   if (gate.route !== 'recommend') {
     // 안전인지, 다룰 수 없는 영역인지, 모호한지 밖으로 나누지 않는다.

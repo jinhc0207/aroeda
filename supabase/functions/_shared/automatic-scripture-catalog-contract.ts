@@ -21,7 +21,7 @@
  *
  * 이 파일이 하지 않는 일
  *   카드를 만들지 않는다. 저장하지 않는다. 바깥을 부르지 않는다.
- *   추천 런타임은 아직 이 카탈로그를 읽지 않는다.
+ *   활성 포인터를 읽고 사용자 요청에 적용하는 일은 별도 runtime 계약과 Edge Function이 맡는다.
  */
 
 import { isValidBibleReference } from './bible-reference.ts';

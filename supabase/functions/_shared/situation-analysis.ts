@@ -8,7 +8,7 @@
  */
 
 import { TAXONOMY, unknownTags, type TaxonomyKind } from './analysis-taxonomy.ts';
-import { FALLBACK_DOMAIN, isSituationDomain, type SituationDomain } from './situation-domains.ts';
+import { FALLBACK_DOMAIN, SITUATION_DOMAINS, type SituationDomain } from './situation-domains.ts';
 
 /**
  * 영역 우선순위 판단 상태.
@@ -41,24 +41,24 @@ export type SafetyAssessment = {
   categories: SafetyCategory[];
 };
 
-export type SituationAnalysis = {
+export type SituationAnalysis<TDomain extends string = SituationDomain> = {
   /** 중심 영역을 정할 수 있는지. 조건 관계는 validateSituationAnalysis가 확인한다. */
   domainPriority: DomainPriorityStatus;
   /**
    * 사용자가 처한 삶의 핵심 상황. 가장 강한 감정을 고르는 자리가 아니다.
    * resolved면 반드시 표준 domain, needs_choice면 반드시 null이다.
    */
-  primaryDomain: SituationDomain | null;
+  primaryDomain: TDomain | null;
   /**
    * needs_choice일 때 사용자에게 먼저 다룰 영역을 물어볼 후보. 서로 다른 표준 domain 정확히 2개.
    * other_uncovered는 들어갈 수 없다. resolved면 빈 배열이다. 순서는 우선순위가 아니다.
    */
-  domainChoiceCandidates: SituationDomain[];
+  domainChoiceCandidates: TDomain[];
   /**
    * resolved일 때 복합 상황에서 실제로 함께 존재하는 다른 문제만 넣는다. 없으면 빈 배열.
    * needs_choice면 반드시 빈 배열이다.
    */
-  secondaryDomains: SituationDomain[];
+  secondaryDomains: TDomain[];
   situationTags: string[];
   emotionTags: string[];
   spiritualQuestionTags: string[];
@@ -89,8 +89,16 @@ const safetyCategorySet = new Set<string>(SAFETY_CATEGORIES);
  * 분석 결과가 표준 규격을 지키는지 확인한다.
  * 규격을 어긴 이유를 모두 모아서 돌려준다.
  */
-export function validateSituationAnalysis(value: unknown): ValidationResult {
+export function validateSituationAnalysisForDomains(
+  value: unknown,
+  domainIds: readonly string[],
+  fallbackDomain: string,
+  allowedSituationTags: readonly string[] = TAXONOMY.situationTags,
+): ValidationResult {
   const errors: string[] = [];
+  const domainSet = new Set(domainIds);
+  const situationTagSet = new Set(allowedSituationTags);
+  const isAllowedDomain = (domain: unknown) => typeof domain === 'string' && domainSet.has(domain);
 
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return { valid: false, errors: ['분석 결과가 객체가 아닙니다.'] };
@@ -112,7 +120,9 @@ export function validateSituationAnalysis(value: unknown): ValidationResult {
     if (new Set(stringTags).size !== stringTags.length) {
       errors.push(`${field}에 같은 태그가 중복되어 있습니다.`);
     }
-    const unknown = unknownTags(field, stringTags);
+    const unknown = field === 'situationTags'
+      ? stringTags.filter((tag) => !situationTagSet.has(tag))
+      : unknownTags(field, stringTags);
     if (unknown.length > 0) {
       errors.push(`${field}에 표준 사전에 없는 태그가 있습니다: ${unknown.join(', ')}`);
     }
@@ -131,7 +141,7 @@ export function validateSituationAnalysis(value: unknown): ValidationResult {
   // primaryDomain: 값이 있으면 표준 domain이어야 한다. null 허용 여부는 상태별로 아래에서 본다.
   if (analysis.primaryDomain === undefined) {
     errors.push('primaryDomain이 없습니다. needs_choice면 null을 넣습니다.');
-  } else if (analysis.primaryDomain !== null && !isSituationDomain(analysis.primaryDomain)) {
+  } else if (analysis.primaryDomain !== null && !isAllowedDomain(analysis.primaryDomain)) {
     errors.push(`primaryDomain 값이 표준 domain이 아닙니다: ${String(analysis.primaryDomain)}`);
   }
 
@@ -143,7 +153,7 @@ export function validateSituationAnalysis(value: unknown): ValidationResult {
   } else if (!candidatesAreArray) {
     errors.push('domainChoiceCandidates가 배열이 아닙니다.');
   } else {
-    const unknownCandidates = candidates.filter((domain) => !isSituationDomain(domain));
+    const unknownCandidates = candidates.filter((domain) => !isAllowedDomain(domain));
     if (unknownCandidates.length > 0) {
       errors.push(
         `domainChoiceCandidates에 표준 domain이 아닌 값이 있습니다: ${unknownCandidates.map(String).join(', ')}`,
@@ -152,8 +162,8 @@ export function validateSituationAnalysis(value: unknown): ValidationResult {
     if (new Set(candidates).size !== candidates.length) {
       errors.push('domainChoiceCandidates에 같은 domain이 중복되어 있습니다.');
     }
-    if (candidates.includes(FALLBACK_DOMAIN)) {
-      errors.push(`domainChoiceCandidates에 ${FALLBACK_DOMAIN}은 넣을 수 없습니다.`);
+    if (candidates.includes(fallbackDomain)) {
+      errors.push(`domainChoiceCandidates에 ${fallbackDomain}은 넣을 수 없습니다.`);
     }
   }
 
@@ -165,7 +175,7 @@ export function validateSituationAnalysis(value: unknown): ValidationResult {
       errors.push('secondaryDomains가 배열이 아닙니다.');
     } else {
       const secondaryDomains = analysis.secondaryDomains as unknown[];
-      const unknownDomains = secondaryDomains.filter((domain) => !isSituationDomain(domain));
+      const unknownDomains = secondaryDomains.filter((domain) => !isAllowedDomain(domain));
       if (unknownDomains.length > 0) {
         errors.push(
           `secondaryDomains에 표준 domain이 아닌 값이 있습니다: ${unknownDomains.map(String).join(', ')}`,
@@ -248,6 +258,11 @@ export function validateSituationAnalysis(value: unknown): ValidationResult {
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+/** 운영 Analyzer의 기존 정적 17개 영역 계약. */
+export function validateSituationAnalysis(value: unknown): ValidationResult {
+  return validateSituationAnalysisForDomains(value, SITUATION_DOMAINS, FALLBACK_DOMAIN);
 }
 
 /** 검증에 실패하면 오류를 던진다. */

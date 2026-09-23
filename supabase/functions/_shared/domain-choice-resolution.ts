@@ -16,7 +16,7 @@
  *   - 네트워크, DB, 모델 호출이 없다.
  */
 
-import { FALLBACK_DOMAIN, isSituationDomain, type SituationDomain } from './situation-domains.ts';
+import { FALLBACK_DOMAIN, SITUATION_DOMAINS, isSituationDomain, type SituationDomain } from './situation-domains.ts';
 import type { SituationAnalysis } from './situation-analysis.ts';
 
 /** 사용자가 고를 수 있는 표준 영역인가. other_uncovered는 고를 수 없다. */
@@ -32,39 +32,46 @@ export function isChoosableDomain(value: unknown): value is SituationDomain {
  * resolved: 고른 영역이 primaryDomain이거나 secondaryDomains 중 하나일 때 성공.
  *   고른 영역이 primary가 되고, 기존 primary와 나머지 secondary는 중복 없이 secondary로 남는다.
  */
-export function resolveAnalysisForChosenDomain(
-  analysis: SituationAnalysis,
+export function resolveAnalysisForChosenDomain<TDomain extends string>(
+  analysis: SituationAnalysis<TDomain>,
   chosenDomain: unknown,
-): SituationAnalysis | null {
-  if (!isChoosableDomain(chosenDomain)) return null;
+  allowedDomains: readonly string[] = SITUATION_DOMAINS,
+  fallbackDomain: string = FALLBACK_DOMAIN,
+): SituationAnalysis<TDomain> | null {
+  if (
+    typeof chosenDomain !== 'string' ||
+    chosenDomain === fallbackDomain ||
+    !allowedDomains.includes(chosenDomain)
+  ) return null;
+  const chosen = chosenDomain as TDomain;
 
   if (analysis.domainPriority === 'needs_choice') {
-    if (!analysis.domainChoiceCandidates.includes(chosenDomain)) return null;
+    if (!analysis.domainChoiceCandidates.includes(chosen)) return null;
     return {
       ...analysis,
       domainPriority: 'resolved',
-      primaryDomain: chosenDomain,
+      primaryDomain: chosen,
       domainChoiceCandidates: [],
-      secondaryDomains: unique(analysis.domainChoiceCandidates.filter((domain) => domain !== chosenDomain)),
+      secondaryDomains: unique(analysis.domainChoiceCandidates.filter((domain) => domain !== chosen)),
     };
   }
 
   if (analysis.domainPriority !== 'resolved' || analysis.primaryDomain === null) return null;
 
-  const detected = analysis.primaryDomain === chosenDomain || analysis.secondaryDomains.includes(chosenDomain);
+  const detected = analysis.primaryDomain === chosen || analysis.secondaryDomains.includes(chosen);
   if (!detected) return null;
 
   return {
     ...analysis,
     domainPriority: 'resolved',
-    primaryDomain: chosenDomain,
+    primaryDomain: chosen,
     domainChoiceCandidates: [],
     secondaryDomains: unique(
-      [analysis.primaryDomain, ...analysis.secondaryDomains].filter((domain) => domain !== chosenDomain),
+      [analysis.primaryDomain, ...analysis.secondaryDomains].filter((domain) => domain !== chosen),
     ),
   };
 }
 
-function unique(domains: SituationDomain[]): SituationDomain[] {
+function unique<TDomain extends string>(domains: TDomain[]): TDomain[] {
   return [...new Set(domains)];
 }

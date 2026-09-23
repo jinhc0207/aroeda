@@ -16,8 +16,8 @@
  * 필요한 동작만 인자로 받기 때문에 실제 서버 없이도 시험할 수 있다.
  */
 
-import { isChoosableDomain } from './domain-choice-resolution.ts';
-import type { SituationDomain } from '../data/situation-domains.ts';
+import { DOMAIN_ID_FORMAT } from '../../supabase/functions/_shared/automatic-scripture-catalog-contract.ts';
+import { SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION } from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime.ts';
 
 export type PrayerGuidance = {
   prayerText: string;
@@ -28,13 +28,14 @@ export type GuidanceInvokeOutcome = { ok: true; data: unknown } | { ok: false };
 
 export type PrayerGuidanceDeps = {
   /**
-   * 보내는 값은 이 셋뿐이다.
+   * 사용자 자료는 이 셋뿐이며, 여기에 고정된 앱 capability만 붙인다.
    * 사용자가 적고 있는 기도를 넘길 자리가 없다.
    */
   invokePrayerGuidance: (body: {
     situation: string;
     cardId: string;
-    selectedDomain: SituationDomain;
+    selectedDomain: string;
+    catalogRuntimeVersion: typeof SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION;
   }) => Promise<GuidanceInvokeOutcome>;
 };
 
@@ -79,7 +80,11 @@ export async function requestPrayerGuidance(
   if (input.cardId.trim().length === 0) return UNAVAILABLE;
 
   const { selectedDomain } = input;
-  if (!isChoosableDomain(selectedDomain)) return UNAVAILABLE;
+  if (
+    typeof selectedDomain !== 'string' ||
+    selectedDomain === 'other_uncovered' ||
+    !DOMAIN_ID_FORMAT.test(selectedDomain)
+  ) return UNAVAILABLE;
 
   let outcome: GuidanceInvokeOutcome;
   try {
@@ -87,6 +92,7 @@ export async function requestPrayerGuidance(
       situation: input.situation,
       cardId: input.cardId,
       selectedDomain,
+      catalogRuntimeVersion: SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
     });
   } catch {
     return UNAVAILABLE;

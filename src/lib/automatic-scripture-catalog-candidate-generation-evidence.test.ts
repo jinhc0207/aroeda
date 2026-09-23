@@ -208,13 +208,13 @@ describe('후보 생성 사례 증거 v1', () => {
 
   it('위험·영역 선택·대상 영역 불일치 분석을 각각 거절한다', async () => {
     const mutations = [
-      (item: SituationAnalysis) => { item.safety = { level: 'caution', categories: ['abuse'] }; },
-      (item: SituationAnalysis) => {
+      (item: SituationAnalysis<string>) => { item.safety = { level: 'caution', categories: ['abuse'] }; },
+      (item: SituationAnalysis<string>) => {
         item.domainPriority = 'needs_choice';
         item.primaryDomain = null;
         item.domainChoiceCandidates = ['decision_guidance', 'fear_uncertainty'];
       },
-      (item: SituationAnalysis) => { item.primaryDomain = 'fear_uncertainty'; },
+      (item: SituationAnalysis<string>) => { item.primaryDomain = 'fear_uncertainty'; },
     ];
     for (const mutate of mutations) {
       const { base, candidate, evidence } = await validEvidence();
@@ -232,14 +232,12 @@ describe('후보 생성 사례 증거 v1', () => {
     assert.equal(result.errors.some((item) => item.includes('현재 Analyzer 환경')), true);
   });
 
-  it('현재 정적 domain manifest로 분석할 수 없는 새 영역 후보는 증거 생성 여부와 무관하게 닫힌다', async () => {
+  it('새 영역 후보도 불완전한 증거 객체는 예외 없이 닫힌다', async () => {
     const base = buildBaselineCatalog();
     const { candidate } = await makeNewDomainCandidate(base);
     const result = await validateCandidateGenerationEvidence({}, candidate, base);
-    assert.deepEqual(result, {
-      valid: false,
-      errors: ['candidate: 동적 Analyzer domain manifest가 없어서 새 영역 생성 사례를 검증할 수 없습니다.'],
-    });
+    assert.equal(result.valid, false);
+    assert.equal(result.errors.includes('evidence.environment: 객체가 아닙니다.'), true);
   });
 
   it('호출자가 build 뒤 원본을 바꾸거나 반환 payload를 바꿔도 다음 결과는 변하지 않는다', async () => {

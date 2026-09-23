@@ -32,6 +32,7 @@ import ScriptureScreen from '@/app/scripture';
 import { getPassage, TRANSLATION_NAME } from '@/data/bible';
 import { getCardPassages, getScriptureCard } from '@/data/scripture-cards';
 import { SituationProvider, useSituation } from '@/state/situation';
+import type { RuntimeCardView } from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime';
 
 // 이 화면이 실제로 쓰는 네 가지만 흉내 낸다.
 jest.mock('expo-router', () => ({
@@ -53,6 +54,14 @@ const CARD = getScriptureCard('SC-001');
 
 /** 화면이 보여줄 절들. 성경 데이터에서 그대로 읽어 온다. */
 const VERSES = getCardPassages(CARD).flatMap((passage) => getPassage(passage));
+const DYNAMIC_CARD: RuntimeCardView = {
+  id: 'SC-999',
+  domains: ['caregiving_strain'],
+  referenceLabel: CARD.referenceLabel,
+  passages: getCardPassages(CARD),
+  userExplanation: '오래 돌보는 삶의 무게를 혼자 감당하지 않아도 된다는 설명입니다.',
+  prayerDirection: '돌봄 가운데 필요한 힘과 쉼을 구합니다.',
+};
 
 /**
  * 실제 Provider를 그대로 쓴다.
@@ -78,6 +87,25 @@ const renderWithCard = (cardId: string | null) =>
   render(
     <SituationProvider>
       <WithSelectedCard cardId={cardId} />
+    </SituationProvider>,
+  );
+
+function WithRuntimeCard({ card }: { card: RuntimeCardView }) {
+  const { selectedCardId, selectedCard, setRecommendation } = useSituation();
+
+  useEffect(() => {
+    setRecommendation({ cardId: card.id, selectedDomain: card.domains[0]!, card });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.id]);
+
+  if (selectedCardId !== card.id || selectedCard?.id !== card.id) return null;
+  return <ScriptureScreen />;
+}
+
+const renderWithRuntimeCard = (card: RuntimeCardView) =>
+  render(
+    <SituationProvider>
+      <WithRuntimeCard card={card} />
     </SituationProvider>,
   );
 
@@ -137,6 +165,17 @@ describe('말씀 화면 · 실제로 그려 보기', () => {
     await renderWithCard(CARD.id);
 
     expect(screen.getByText(CARD.prayerDirection)).toBeTruthy();
+  });
+
+  it('로컬 목록에 없는 활성 카탈로그 카드도 공개 내용과 로컬 성경 본문으로 표시한다', async () => {
+    await renderWithRuntimeCard(DYNAMIC_CARD);
+
+    expect(screen.getByText(DYNAMIC_CARD.referenceLabel)).toBeTruthy();
+    expect(screen.getByText(DYNAMIC_CARD.userExplanation)).toBeTruthy();
+    expect(screen.getByText(DYNAMIC_CARD.prayerDirection)).toBeTruthy();
+    for (const verse of VERSES) {
+      expect(screen.getByText(new RegExp(escapeForSearch(verse.text)))).toBeTruthy();
+    }
   });
 
   it('본문의 의미와 삶의 방향이라는 위계로 소개된다(기도가 먼저 보이지 않는다)', async () => {

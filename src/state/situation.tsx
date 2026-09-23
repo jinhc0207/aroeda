@@ -10,7 +10,7 @@ import {
 
 import type { DeletionResult } from '@/lib/request-account-deletion';
 import type { DomainChoiceOption } from '@/lib/request-recommendation';
-import type { SituationDomain } from '@/data/situation-domains';
+import type { RuntimeCardView } from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime';
 
 /**
  * 사용자가 입력한 '지금 나의 상황'과 서버가 고른 카드 id를
@@ -40,8 +40,10 @@ type SituationContextValue = {
   /** 서버가 고른 Scripture Card id. 추천이 없으면 null. */
   selectedCardId: string | null;
   setSelectedCardId: (value: string | null) => void;
+  /** 활성 카탈로그에서 받은 공개 카드. 정적 카드 응답에서는 null일 수 있다. */
+  selectedCard: RuntimeCardView | null;
   /** 그 카드가 속한 삶의 영역(내부 표준 domain 값). 카드가 없으면 null. */
-  selectedDomain: SituationDomain | null;
+  selectedDomain: string | null;
   /**
    * route가 domain_choice일 때, 사용자가 고를 두 후보 각각의 결과.
    * 그 밖에는 빈 배열이다.
@@ -51,7 +53,7 @@ type SituationContextValue = {
    * 카드와 그 카드가 속한 영역을 함께 저장한다.
    * 일반 추천과 영역 선택 뒤의 추천 모두 이 함수 하나로 저장한다. 남아 있던 domainChoiceOptions는 비운다.
    */
-  setRecommendation: (value: { cardId: string; selectedDomain: SituationDomain }) => void;
+  setRecommendation: (value: { cardId: string; selectedDomain: string; card?: RuntimeCardView }) => void;
   /** route가 domain_choice일 때 두 option을 저장한다. 남아 있던 카드·영역은 비운다. */
   setDomainChoiceOptions: (options: DomainChoiceOption[]) => void;
   /**
@@ -112,8 +114,9 @@ const SituationContext = createContext<SituationContextValue | null>(null);
 
 export function SituationProvider({ children }: { children: ReactNode }) {
   const [situation, setSituation] = useState('');
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
-  const [selectedDomain, setSelectedDomain] = useState<SituationDomain | null>(null);
+  const [selectedCardId, setSelectedCardIdState] = useState<string | null>(null);
+  const [selectedCard, setSelectedCard] = useState<RuntimeCardView | null>(null);
+  const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
   const [domainChoiceOptions, setDomainChoiceOptionsState] = useState<DomainChoiceOption[]>([]);
   const [resetCount, setResetCount] = useState(0);
   const resetCountRef = useRef(0);
@@ -126,6 +129,11 @@ export function SituationProvider({ children }: { children: ReactNode }) {
   const [deletionOutcome, setDeletionOutcome] = useState<DeletionResult | null>(null);
 
   const getResetCount = useCallback(() => resetCountRef.current, []);
+  const setSelectedCardId = useCallback((value: string | null) => {
+    setSelectedCardIdState(value);
+    // id만 직접 바꾸는 옛 경로에서는 이전 활성 카드 객체를 재사용하지 않는다.
+    setSelectedCard(null);
+  }, []);
 
   const clearAfterDataDeletion = useCallback(() => {
     // 먼저 바로 올린다. 이 순간 이후 도착하는 답은 즉시 버려진다.
@@ -133,6 +141,7 @@ export function SituationProvider({ children }: { children: ReactNode }) {
     setResetCount(resetCountRef.current);
     setSituation('');
     setSelectedCardId(null);
+    setSelectedCard(null);
     setSelectedDomain(null);
     setDomainChoiceOptionsState([]);
   }, []);
@@ -141,8 +150,9 @@ export function SituationProvider({ children }: { children: ReactNode }) {
    * 카드와 그 카드가 속한 영역을 함께 저장한다.
    * 일반 추천의 primaryDomain이든, 영역 선택 뒤 고른 option의 카드든 이 함수 하나로 저장한다.
    */
-  const setRecommendation = useCallback((value: { cardId: string; selectedDomain: SituationDomain }) => {
-    setSelectedCardId(value.cardId);
+  const setRecommendation = useCallback((value: { cardId: string; selectedDomain: string; card?: RuntimeCardView }) => {
+    setSelectedCardIdState(value.cardId);
+    setSelectedCard(value.card ?? null);
     setSelectedDomain(value.selectedDomain);
     setDomainChoiceOptionsState([]);
   }, []);
@@ -150,6 +160,7 @@ export function SituationProvider({ children }: { children: ReactNode }) {
   /** domain_choice route에서 받은 두 option을 저장한다. 아직 카드와 영역은 정해지지 않았다. */
   const setDomainChoiceOptions = useCallback((options: DomainChoiceOption[]) => {
     setSelectedCardId(null);
+    setSelectedCard(null);
     setSelectedDomain(null);
     setDomainChoiceOptionsState(options);
   }, []);
@@ -157,6 +168,7 @@ export function SituationProvider({ children }: { children: ReactNode }) {
   /** 새 추천을 시작하기 전과, 기도를 마치고 처음으로 돌아갈 때 이전 추천을 모두 비운다. */
   const clearRecommendation = useCallback(() => {
     setSelectedCardId(null);
+    setSelectedCard(null);
     setSelectedDomain(null);
     setDomainChoiceOptionsState([]);
   }, []);
@@ -167,12 +179,14 @@ export function SituationProvider({ children }: { children: ReactNode }) {
    */
   const applyDomainChoiceOption = useCallback((option: DomainChoiceOption) => {
     if (option.resolution === 'recommend' && option.selectedCardId) {
-      setSelectedCardId(option.selectedCardId);
+      setSelectedCardIdState(option.selectedCardId);
+      setSelectedCard(option.selectedCard ?? null);
       setSelectedDomain(option.domain);
       return;
     }
     // ambiguous·no_coverage는 고를 카드가 없다.
     setSelectedCardId(null);
+    setSelectedCard(null);
     setSelectedDomain(null);
   }, []);
 
@@ -230,6 +244,7 @@ export function SituationProvider({ children }: { children: ReactNode }) {
       setSituation,
       selectedCardId,
       setSelectedCardId,
+      selectedCard,
       selectedDomain,
       domainChoiceOptions,
       setRecommendation,
@@ -250,6 +265,7 @@ export function SituationProvider({ children }: { children: ReactNode }) {
     [
       situation,
       selectedCardId,
+      selectedCard,
       selectedDomain,
       domainChoiceOptions,
       setRecommendation,

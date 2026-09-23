@@ -50,9 +50,9 @@ export function catalogSnapshotToGateCards(snapshot: ScriptureCatalogSnapshot): 
     if (passages.length === 0) throw new Error(`${card.id}: 본문 위치가 없습니다.`);
     return {
       id: card.id,
-      // 새 영역 id는 현재 정적 SituationDomain union 밖일 수 있다. 고정 분석은 현재
-      // 영역만 내므로 그 카드는 기존 코퍼스 후보가 되지 않는다. 동적 manifest가
-      // 생기기 전 새 영역 활성화를 막는 상위 fail-closed 경계는 그대로 남는다.
+      // 새 영역 id는 운영 앱의 정적 SituationDomain union 밖일 수 있다. 후보 생성 증거는
+      // 동적 manifest로 별도 검증하며, 이 cast는 문자열 기반 Gate에 catalog 카드를 투영하는
+      // 기존 경계다.
       domains: [card.domainId as SituationDomain],
       referenceLabel: card.referenceLabel,
       passage: { ...passages[0] },

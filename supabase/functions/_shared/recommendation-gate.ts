@@ -22,7 +22,7 @@
  */
 
 import { SCRIPTURE_CARDS, type ScriptureCard } from './scripture-cards.ts';
-import type { SituationDomain } from './situation-domains.ts';
+import { FALLBACK_DOMAIN, type SituationDomain } from './situation-domains.ts';
 import { getCoverage, type CoverageResult } from './scripture-coverage.ts';
 import { matchScriptureCards, type CardScore } from './scripture-matcher.ts';
 import type { DomainPriorityStatus, SafetyAssessment, SituationAnalysis } from './situation-analysis.ts';
@@ -56,26 +56,26 @@ export type DomainChoiceResolution = 'recommend' | 'ambiguous' | 'no_coverage';
  * domain_choice에서 후보 영역 하나를 골랐을 때의 결과.
  * 태그·점수 상세·분석 결과 전체는 넣지 않는다.
  */
-export type DomainChoiceOption = {
-  domain: SituationDomain;
+export type DomainChoiceOption<TDomain extends string = SituationDomain> = {
+  domain: TDomain;
   resolution: DomainChoiceResolution;
   /** resolution이 recommend일 때만 카드 번호가 있다. */
   selectedCardId: string | null;
 };
 
-export type GateResult = {
+export type GateResult<TDomain extends string = SituationDomain> = {
   route: GateRoute;
   domainPriority: DomainPriorityStatus;
   /** resolved면 분석 결과의 중심 영역, needs_choice면 null. */
-  primaryDomain: SituationDomain | null;
+  primaryDomain: TDomain | null;
   /** needs_choice일 때 분석 결과의 두 후보를 그대로 보존한다. 그 밖의 경우 빈 배열. 순서는 우선순위가 아니다. */
-  domainChoiceCandidates: SituationDomain[];
+  domainChoiceCandidates: TDomain[];
   /**
    * domain_choice일 때 domainChoiceCandidates 순서 그대로 두 개. 그 밖의 route는 빈 배열.
    * 순서는 우선순위가 아니다.
    */
-  domainChoiceOptions: DomainChoiceOption[];
-  secondaryDomains: SituationDomain[];
+  domainChoiceOptions: DomainChoiceOption<TDomain>[];
+  secondaryDomains: TDomain[];
   safety: SafetyAssessment;
   /**
    * primaryDomain을 지금 카드가 다룰 수 있는지.
@@ -84,7 +84,7 @@ export type GateResult = {
    */
   coverage: CoverageResult | null;
   /** 후보가 될 수 있는 domain. 추천 경로에서는 정확히 [primaryDomain]이다. */
-  eligibleDomains: SituationDomain[];
+  eligibleDomains: TDomain[];
   /** primaryDomain을 가진 카드만 최종 후보가 된다. secondaryDomains의 카드는 들어오지 않는다. */
   eligibleCardIds: string[];
   /** 후보 카드만 점수순으로 정렬한 결과 */
@@ -116,10 +116,10 @@ export function selectFromRanked(rankedCandidates: CardScore[]): TieDecision {
   return { selectedCardId: null, isTie: true, topCards };
 }
 
-export function runRecommendationGate(
-  analysis: SituationAnalysis,
+export function runRecommendationGate<TDomain extends string = SituationDomain>(
+  analysis: SituationAnalysis<TDomain>,
   cards: ScriptureCard[] = SCRIPTURE_CARDS,
-): GateResult {
+): GateResult<TDomain> {
   const { domainPriority, primaryDomain, safety } = analysis;
   const needsChoice = domainPriority === 'needs_choice';
 
@@ -141,8 +141,14 @@ export function runRecommendationGate(
   // 두 후보 각각은 고른 영역 기준 resolved 분석으로 바꾼 뒤 같은 Primary-First 계산을 한 번씩만 한다.
   // (runResolvedGate는 runRecommendationGate를 다시 부르지 않는다.)
   if (needsChoice) {
-    const domainChoiceOptions = analysis.domainChoiceCandidates.map((domain): DomainChoiceOption => {
-      const resolved = resolveAnalysisForChosenDomain(analysis, domain);
+    const domainChoiceOptions = analysis.domainChoiceCandidates.map((domain): DomainChoiceOption<TDomain> => {
+      const runtimeDomains = [...new Set(cards.flatMap((card) => card.domains as readonly string[]))];
+      const resolved = resolveAnalysisForChosenDomain(
+        analysis,
+        domain,
+        [...runtimeDomains, ...analysis.domainChoiceCandidates],
+        FALLBACK_DOMAIN,
+      );
       if (resolved === null || resolved.primaryDomain === null) {
         throw new Error('domainChoiceCandidates에 고를 수 없는 영역이 있습니다. 분석 결과를 먼저 검증해야 합니다.');
       }
@@ -178,13 +184,13 @@ export function runRecommendationGate(
 }
 
 /** 모든 route가 공유하는 기본값. 카드 관련 필드와 영역 선택 필드는 비어 있다. */
-function emptyResult(analysis: SituationAnalysis) {
+function emptyResult<TDomain extends string>(analysis: SituationAnalysis<TDomain>) {
   return {
     domainPriority: analysis.domainPriority,
-    domainChoiceCandidates: [] as SituationDomain[],
-    domainChoiceOptions: [] as DomainChoiceOption[],
+    domainChoiceCandidates: [] as TDomain[],
+    domainChoiceOptions: [] as DomainChoiceOption<TDomain>[],
     safety: analysis.safety,
-    eligibleDomains: [] as SituationDomain[],
+    eligibleDomains: [] as TDomain[],
     eligibleCardIds: [] as string[],
     rankedCandidates: [] as CardScore[],
     selectedCardId: null as string | null,
@@ -192,13 +198,13 @@ function emptyResult(analysis: SituationAnalysis) {
   };
 }
 
-type ResolvedGatePart = {
+type ResolvedGatePart<TDomain extends string> = {
   route: DomainChoiceResolution;
   reason: 'PRIMARY_DOMAIN_NOT_COVERED' | 'CARD_SELECTED' | 'TOP_SCORE_TIE';
-  primaryDomain: SituationDomain;
-  secondaryDomains: SituationDomain[];
+  primaryDomain: TDomain;
+  secondaryDomains: TDomain[];
   coverage: CoverageResult;
-  eligibleDomains: SituationDomain[];
+  eligibleDomains: TDomain[];
   eligibleCardIds: string[];
   rankedCandidates: CardScore[];
   selectedCardId: string | null;
@@ -210,17 +216,17 @@ type ResolvedGatePart = {
  * safety 판단은 이미 끝났다고 보고, 여기서는 다시 보지 않는다.
  * 이 함수는 runRecommendationGate를 부르지 않는다.
  */
-function runResolvedGate(
-  analysis: SituationAnalysis,
-  primaryDomain: SituationDomain,
+function runResolvedGate<TDomain extends string>(
+  analysis: SituationAnalysis<TDomain>,
+  primaryDomain: TDomain,
   cards: ScriptureCard[],
-): ResolvedGatePart {
+): ResolvedGatePart<TDomain> {
   const coverage = getCoverage(primaryDomain, cards);
   const empty = {
     primaryDomain,
     secondaryDomains: analysis.secondaryDomains,
     coverage,
-    eligibleDomains: [] as SituationDomain[],
+    eligibleDomains: [] as TDomain[],
     eligibleCardIds: [] as string[],
     rankedCandidates: [] as CardScore[],
     selectedCardId: null,
@@ -240,10 +246,10 @@ function runResolvedGate(
   // 그래서 secondaryDomains는 결과와 분석 데이터에 그대로 남기되,
   // 그 영역에 속한다는 이유만으로 카드를 후보에 추가하지 않는다.
   // secondaryDomains를 태그로 바꾸거나 점수·가중치·threshold를 새로 만들지 않는다.
-  const eligibleDomains: SituationDomain[] = [primaryDomain];
+  const eligibleDomains: TDomain[] = [primaryDomain];
 
   const eligibleCardIds = cards
-    .filter((card) => card.domains.includes(primaryDomain))
+    .filter((card) => card.domains.some((domain) => domain === primaryDomain))
     .map((card) => card.id);
 
   // STEP 5 · 기존 Matcher 결과에서 후보 카드만 추린다. 배점은 그대로 둔다.

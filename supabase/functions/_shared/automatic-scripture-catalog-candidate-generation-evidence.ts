@@ -46,7 +46,13 @@ import {
   type AnalysisSnapshotEnvironmentBinding,
   validateFrozenSituationAnalysisShape,
 } from './automatic-scripture-catalog-analysis-snapshot-contract.ts';
-import { buildCurrentAnalysisSnapshotEnvironment } from './automatic-scripture-catalog-analysis-environment.ts';
+import { buildCandidateGenerationAnalysisEnvironment } from './automatic-scripture-catalog-analysis-environment.ts';
+import {
+  STATIC_ANALYZER_DOMAIN_MANIFEST,
+  analyzerDomainIds,
+  buildCandidateAnalyzerDomainManifest,
+  type AnalyzerDomainManifest,
+} from './automatic-scripture-catalog-analyzer-domain-manifest.ts';
 import {
   CANDIDATE_GENERATION_CASES_PER_CARD,
   CASE_AUTHOR_TEXT_MAX_LENGTH,
@@ -62,7 +68,7 @@ import {
 } from './automatic-scripture-catalog-validator-registry.ts';
 import { CANDIDATE_GENERATION_RUNTIME_CONFIG } from './published-content-candidate-generation-runtime-config.ts';
 import { runRecommendationGate } from './recommendation-gate.ts';
-import { type SituationAnalysis, validateSituationAnalysis } from './situation-analysis.ts';
+import { type SituationAnalysis, validateSituationAnalysisForDomains } from './situation-analysis.ts';
 
 export const CANDIDATE_GENERATION_EVIDENCE_CONTRACT_VERSION =
   'scripture-catalog-candidate-generation-evidence/v1';
@@ -124,7 +130,7 @@ export type CandidateGenerationEvidenceCase = {
   caseId: string;
   cardId: string;
   text: string;
-  analysis: SituationAnalysis;
+  analysis: SituationAnalysis<string>;
 };
 
 export type CandidateGenerationEvidence = {
@@ -214,6 +220,7 @@ export async function sealCandidateGenerationEvidence(input: {
   environment: AnalysisSnapshotEnvironmentBinding;
   cases: CandidateGenerationEvidenceCase[];
   caseAuthorProfile?: CandidateGenerationCaseAuthorProfile;
+  analyzerDomainManifest?: AnalyzerDomainManifest;
 }): Promise<CandidateGenerationEvidence> {
   const profile = structuredClone(input.caseAuthorProfile ?? CANDIDATE_GENERATION_CASE_AUTHOR_PROFILE);
   const withoutHash: Omit<CandidateGenerationEvidence, 'artifactHash'> = {
@@ -231,7 +238,11 @@ export async function sealCandidateGenerationEvidence(input: {
     caseAuthorRequest: {
       schemaHash: await computeCaseAuthorSchemaHash(input.candidate.cards.map((card) => card.id)),
     },
-    analysisRequest: { requestHash: await computeCandidateGenerationAnalysisRequestHash() },
+    analysisRequest: {
+      requestHash: await computeCandidateGenerationAnalysisRequestHash(
+        input.analyzerDomainManifest ?? STATIC_ANALYZER_DOMAIN_MANIFEST,
+      ),
+    },
     environment: structuredClone(input.environment),
     cases: structuredClone(input.cases),
   };
@@ -245,6 +256,7 @@ function validateCase(
   cardId: string,
   domainId: string,
   forbiddenLiterals: readonly string[],
+  manifest: AnalyzerDomainManifest,
 ): string[] {
   if (!isPlainObject(value)) return [`${label}: 객체가 아닙니다.`];
   const errors = exactFields(value, CASE_FIELDS, label);
@@ -264,10 +276,15 @@ function validateCase(
 
   const shapeErrors = validateFrozenSituationAnalysisShape(value.analysis, `${label}.analysis`);
   errors.push(...shapeErrors);
-  const analysisCheck = validateSituationAnalysis(value.analysis);
+  const analysisCheck = validateSituationAnalysisForDomains(
+    value.analysis,
+    analyzerDomainIds(manifest),
+    manifest.fallbackDomain.id,
+    manifest.situationTags,
+  );
   if (!analysisCheck.valid) errors.push(...analysisCheck.errors.map((message) => `${label}.analysis: ${message}`));
   if (shapeErrors.length === 0 && analysisCheck.valid) {
-    const analysis = value.analysis as SituationAnalysis;
+    const analysis = value.analysis as SituationAnalysis<string>;
     if (analysis.safety.level !== 'normal') errors.push(`${label}.analysis.safety: normal이어야 합니다.`);
     if (analysis.domainPriority !== 'resolved') errors.push(`${label}.analysis.domainPriority: resolved여야 합니다.`);
     if (analysis.primaryDomain !== domainId) errors.push(`${label}.analysis.primaryDomain: 대상 카드 영역과 같아야 합니다.`);
@@ -287,12 +304,7 @@ export async function validateCandidateGenerationEvidence(
   try {
     const candidateCheck = await validateCatalogCandidate(candidate, baseCatalog);
     if (!candidateCheck.valid) return { valid: false, errors: ['candidate: 기준 카탈로그 계약과 맞지 않습니다.'] };
-    if (candidate.candidateKind === 'new_domain_with_cards') {
-      return {
-        valid: false,
-        errors: ['candidate: 동적 Analyzer domain manifest가 없어서 새 영역 생성 사례를 검증할 수 없습니다.'],
-      };
-    }
+    const manifest = await buildCandidateAnalyzerDomainManifest(candidate, baseCatalog);
     if (!isPlainObject(value)) return { valid: false, errors: ['evidence: 객체가 아닙니다.'] };
 
     const errors = exactFields(value, TOP_FIELDS, 'evidence');
@@ -369,14 +381,16 @@ export async function validateCandidateGenerationEvidence(
       errors.push('evidence.analysisRequest: 객체가 아닙니다.');
     } else {
       errors.push(...exactFields(value.analysisRequest, ANALYSIS_REQUEST_FIELDS, 'evidence.analysisRequest'));
-      const requestHash = await computeCandidateGenerationAnalysisRequestHash();
+      const requestHash = await computeCandidateGenerationAnalysisRequestHash(manifest);
       if (value.analysisRequest.requestHash !== requestHash) {
         errors.push('evidence.analysisRequest.requestHash: 지금 생성용 Analyzer 요청 설정에서 다시 계산한 값과 다릅니다.');
       }
     }
 
-    const currentEnvironment = await buildCurrentAnalysisSnapshotEnvironment(candidate.baseVersionHash);
-    if (canonicalJson(value.environment) !== canonicalJson(currentEnvironment)) {
+    const currentEnvironment = await buildCandidateGenerationAnalysisEnvironment(candidate, baseCatalog);
+    if (!isPlainObject(value.environment)) {
+      errors.push('evidence.environment: 객체가 아닙니다.');
+    } else if (canonicalJson(value.environment) !== canonicalJson(currentEnvironment)) {
       errors.push('evidence.environment: 현재 Analyzer 환경과 다릅니다.');
     }
 
@@ -399,6 +413,7 @@ export async function validateCandidateGenerationEvidence(
               card.id,
               card.domainId,
               forbiddenLiterals,
+              manifest,
             ),
           );
           cursor += 1;
@@ -473,7 +488,12 @@ export async function buildCandidateGenerationEvidenceAdapter(
       return {
         evidenceArtifactHash: isolatedEvidence.artifactHash,
         cases: sealedCases.map((item) => {
-          const result = runRecommendationGate(structuredClone(item.analysis), cards);
+          // Gate의 런타임 비교는 문자열 기반이며 catalogSnapshotToGateCards도 동적 id를 같은
+          // 방식으로 투영한다. 정적 union은 운영 앱 계약용이므로 이 경계에서만 좁힌다.
+          const result = runRecommendationGate(
+            structuredClone(item.analysis) as SituationAnalysis,
+            cards,
+          );
           return {
             caseId: item.caseId,
             cardId: item.cardId,

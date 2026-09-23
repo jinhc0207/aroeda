@@ -24,7 +24,6 @@ import { type ScriptureCatalogCandidate, type ScriptureCatalogSnapshot } from '.
 import {
   buildCaseAuthorRequest, interpretCaseAuthorResponse, type CaseAuthorSpec,
 } from './automatic-scripture-catalog-case-author.ts';
-import { CandidateGenerationError } from './automatic-scripture-catalog-generation-failure.ts';
 import {
   type RunDeadline, type RunDeadlineOptions, createCandidateGenerationRunDeadline,
 } from './automatic-scripture-catalog-generation-deadline.ts';
@@ -32,13 +31,18 @@ import {
   type CandidateGenerationEvidence, type CandidateGenerationEvidenceCase,
   sealCandidateGenerationEvidence, validateCandidateGenerationEvidence,
 } from './automatic-scripture-catalog-candidate-generation-evidence.ts';
-import { buildCurrentAnalysisSnapshotEnvironment } from './automatic-scripture-catalog-analysis-environment.ts';
+import { buildCandidateGenerationAnalysisEnvironment } from './automatic-scripture-catalog-analysis-environment.ts';
+import {
+  analyzerDomainIds,
+  buildCandidateAnalyzerDomainManifest,
+  type AnalyzerDomainManifest,
+} from './automatic-scripture-catalog-analyzer-domain-manifest.ts';
 import { validateFrozenSituationAnalysisShape } from './automatic-scripture-catalog-analysis-snapshot-contract.ts';
-import { validateSituationAnalysis, type SituationAnalysis } from './situation-analysis.ts';
+import { validateSituationAnalysisForDomains, type SituationAnalysis } from './situation-analysis.ts';
 import { createCandidateGenerationTransport, type GenerationTransportConfig } from './automatic-scripture-catalog-generation-transport.ts';
 
 export type CandidateGenerationRunFailure =
-  | 'input_invalid' | 'new_domain_unsupported' | 'configuration_error'
+  | 'input_invalid' | 'configuration_error'
   | 'author_failed' | 'author_response_invalid' | 'analyze_failed' | 'analysis_invalid' | 'evidence_invalid'
   | 'run_deadline_exceeded' | 'run_cancelled';
 
@@ -48,7 +52,7 @@ export type CandidateGenerationRunResult =
 
 export type CandidateGenerationDependencies = {
   author: (spec: CaseAuthorSpec, deadline: RunDeadline) => Promise<unknown>;
-  analyze: (text: string, deadline: RunDeadline) => Promise<unknown>;
+  analyze: (text: string, deadline: RunDeadline, manifest: AnalyzerDomainManifest) => Promise<unknown>;
 };
 
 /** budgetMs 기본·최대 120초, signal은 호출자 취소, now는 테스트용 단조 시계. */
@@ -88,15 +92,16 @@ export async function runCandidateGenerationEvidence(
 
   try {
     let spec: CaseAuthorSpec;
+    let manifest: AnalyzerDomainManifest;
     let isolated: ScriptureCatalogCandidate;
     let base: ScriptureCatalogSnapshot;
     try {
       isolated = structuredClone(candidate);
       base = structuredClone(baseCatalog);
       spec = await buildCaseAuthorRequest(isolated, base);
-    } catch (error) {
-      return { status: 'failed', reason: error instanceof CandidateGenerationError && error.kind === 'new_domain_unsupported'
-        ? 'new_domain_unsupported' : 'input_invalid' };
+      manifest = await buildCandidateAnalyzerDomainManifest(isolated, base);
+    } catch {
+      return { status: 'failed', reason: 'input_invalid' };
     }
 
     // 이미 마감·취소되었으면 의존 함수를 한 번도 부르지 않는다.
@@ -115,14 +120,19 @@ export async function runCandidateGenerationEvidence(
       // 예산이 남아 있을 때만 다음 분석을 시작한다.
       if (deadline.done()) return fail('run_deadline_exceeded', item.caseId);
       let analysis: unknown;
-      try { analysis = structuredClone(await deadline.race(deps.analyze(item.text, deadline))); }
+      try { analysis = structuredClone(await deadline.race(deps.analyze(item.text, deadline, manifest))); }
       catch { return fail('analyze_failed', item.caseId); }
       try {
-        const checked = validateSituationAnalysis(analysis);
+        const checked = validateSituationAnalysisForDomains(
+          analysis,
+          analyzerDomainIds(manifest),
+          manifest.fallbackDomain.id,
+          manifest.situationTags,
+        );
         if (validateFrozenSituationAnalysisShape(analysis, 'analysis').length > 0 || !checked.valid) {
           return fail('analysis_invalid', item.caseId);
         }
-        const valid = analysis as SituationAnalysis;
+        const valid = analysis as SituationAnalysis<string>;
         const card = isolated.cards.find(card => card.id === item.cardId)!;
         if (valid.safety.level !== 'normal' || valid.domainPriority !== 'resolved' || valid.primaryDomain !== card.domainId) {
           return fail('analysis_invalid', item.caseId);
@@ -135,7 +145,10 @@ export async function runCandidateGenerationEvidence(
     if (deadline.done()) return fail('run_deadline_exceeded');
     try {
       const evidence = await sealCandidateGenerationEvidence({
-        candidate: isolated, environment: await buildCurrentAnalysisSnapshotEnvironment(isolated.baseVersionHash), cases,
+        candidate: isolated,
+        environment: await buildCandidateGenerationAnalysisEnvironment(isolated, base),
+        cases,
+        analyzerDomainManifest: manifest,
       });
       if (!(await validateCandidateGenerationEvidence(evidence, isolated, base)).valid) {
         return fail('evidence_invalid');

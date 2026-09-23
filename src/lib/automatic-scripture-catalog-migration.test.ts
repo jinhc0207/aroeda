@@ -69,6 +69,7 @@ const V4_MIGRATION_NAME = '20260922234709_bind_candidate_generation_evidence_to_
 const VALIDATION_CONTEXT_MIGRATION_NAME = '20260917090000_add_scripture_catalog_validation_context_rpc.sql';
 const GENERATION_EVIDENCE_MIGRATION_NAME =
   '20260922144425_create_scripture_catalog_candidate_generation_evidence_store.sql';
+const RUNTIME_RPC_MIGRATION_NAME = '20260923090000_add_active_scripture_catalog_runtime_rpc.sql';
 const SQL = readFileSync(path.join(MIGRATION_DIR, MIGRATION_NAME), 'utf8');
 const V3_SQL = readFileSync(path.join(MIGRATION_DIR, V3_MIGRATION_NAME), 'utf8');
 const V4_SQL = readFileSync(path.join(MIGRATION_DIR, V4_MIGRATION_NAME), 'utf8');
@@ -577,7 +578,8 @@ describe('자동 카탈로그 migration · D. 경계와 개인정보', () => {
       .filter((name) => name.endsWith('.sql')
         && name !== MIGRATION_NAME && name !== PROFILE_MIGRATION_NAME && name !== V3_MIGRATION_NAME
         && name !== V4_MIGRATION_NAME
-        && name !== VALIDATION_CONTEXT_MIGRATION_NAME && name !== GENERATION_EVIDENCE_MIGRATION_NAME)
+        && name !== VALIDATION_CONTEXT_MIGRATION_NAME && name !== GENERATION_EVIDENCE_MIGRATION_NAME
+        && name !== RUNTIME_RPC_MIGRATION_NAME)
       .map((name) => readFileSync(path.join(MIGRATION_DIR, name), 'utf8'));
     for (const sql of others) {
       assert.equal(sql.includes('scripture_catalog'), false);

@@ -27,7 +27,8 @@
  */
 
 import { computeArtifactHash } from './automatic-scripture-catalog-contract.ts';
-import { buildOpenAIPayload } from './edge-analyzer.ts';
+import type { AnalyzerDomainManifest } from './automatic-scripture-catalog-analyzer-domain-manifest.ts';
+import { buildOpenAIPayload, buildOpenAIPayloadForManifest } from './edge-analyzer.ts';
 
 /**
  * 운영 payload 위에 더 얹는 후보 생성 전용 설정.
@@ -48,9 +49,12 @@ export const CANDIDATE_GENERATION_ANALYSIS_REQUEST_OVERRIDES = Object.freeze({
 });
 
 /** 실제로 전송하는 본문. transport와 지문 계산이 같은 값을 쓴다. */
-export function buildCandidateGenerationAnalysisRequest(text: string): Record<string, unknown> {
+export function buildCandidateGenerationAnalysisRequest(
+  text: string,
+  manifest?: AnalyzerDomainManifest,
+): Record<string, unknown> {
   return {
-    ...buildOpenAIPayload(text),
+    ...(manifest ? buildOpenAIPayloadForManifest(text, manifest) : buildOpenAIPayload(text)),
     ...structuredClone(CANDIDATE_GENERATION_ANALYSIS_REQUEST_OVERRIDES),
   };
 }
@@ -67,6 +71,8 @@ export function projectAnalysisRequestForHash(body: Record<string, unknown>): Re
 }
 
 /** 지금 코드가 보내는 요청 설정의 지문. 인증 헤더·키·응답·토큰 사용량은 들어가지 않는다. */
-export async function computeCandidateGenerationAnalysisRequestHash(): Promise<string> {
-  return computeArtifactHash(projectAnalysisRequestForHash(buildCandidateGenerationAnalysisRequest('')));
+export async function computeCandidateGenerationAnalysisRequestHash(
+  manifest?: AnalyzerDomainManifest,
+): Promise<string> {
+  return computeArtifactHash(projectAnalysisRequestForHash(buildCandidateGenerationAnalysisRequest('', manifest)));
 }

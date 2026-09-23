@@ -40,7 +40,7 @@ export {
 };
 export type { ErrorCode, ErrorBody };
 
-export type SuccessBody = { ok: true; analysis: SituationAnalysis };
+export type SuccessBody = { ok: true; analysis: SituationAnalysis<string> };
 
 /** 기존 이름을 유지한다. 내용은 공용 EdgeDeps와 같다. */
 export type Handlerdeps = EdgeDeps;

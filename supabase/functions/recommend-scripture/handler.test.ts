@@ -13,6 +13,11 @@ import { MAX_SITUATION_LENGTH, handleRecommendScripture, type Handlerdeps } from
 import { runRecommendationGate, type GateResult } from '../_shared/recommendation-gate.ts';
 import { createSupabaseCoverageGapRecorder } from '../_shared/coverage-gap.ts';
 import type { SituationAnalysis } from '../_shared/situation-analysis.ts';
+import {
+  buildTestCatalogRuntime,
+  buildTestDynamicCatalogRuntime,
+} from '../_shared/automatic-scripture-catalog-runtime-test-fixtures.ts';
+import { SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION } from '../_shared/automatic-scripture-catalog-runtime.ts';
 
 const baseAnalysis: SituationAnalysis = {
   domainPriority: 'resolved',
@@ -42,20 +47,123 @@ const openAIResponse = (analysis: unknown) => ({
 });
 
 const allowQuota = async () => ({ status: 'allowed' }) as const;
+const baselineRuntime = await buildTestCatalogRuntime();
 
 const depsReturning = (analysis: unknown, overrides: Partial<Handlerdeps> = {}): Handlerdeps => ({
+  loadCatalogRuntime: async () => structuredClone(baselineRuntime),
   checkQuota: allowQuota,
   getApiKey: () => 'test-key-not-real',
   callOpenAI: async () => openAIResponse(analysis),
   ...overrides,
 });
 
-const post = (body: unknown) =>
+const rawPost = (body: unknown) =>
   new Request('http://localhost/recommend-scripture', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
+
+/** 현재 앱 요청. 객체 요청에는 동적 카탈로그 표시 capability를 붙인다. */
+const post = (body: unknown) => rawPost(
+  typeof body === 'object' && body !== null && !Array.isArray(body)
+    ? { ...(body as Record<string, unknown>), catalogRuntimeVersion: SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION }
+    : body,
+);
+
+describe('recommend-scripture · 활성 카탈로그 runtime', () => {
+  it('Analyzer와 Gate가 같은 새 영역 catalog 한 판을 써서 새 카드를 추천한다', async () => {
+    const runtime = await buildTestDynamicCatalogRuntime();
+    const targetDomainId = 'caregiving_strain';
+    const targetCard = runtime.catalog.cards.find((card) => card.domainId === targetDomainId)!;
+    const dynamicAnalysis: SituationAnalysis<string> = {
+      ...baseAnalysis,
+      primaryDomain: targetDomainId,
+      situationTags: [...targetCard.situationTags],
+      emotionTags: [...targetCard.emotionTags],
+      spiritualQuestionTags: [...targetCard.spiritualQuestionTags],
+      prayerModes: [...targetCard.prayerModes],
+      pastoralFunctions: [...targetCard.pastoralFunction],
+    };
+    let runtimeCalls = 0;
+    const logs: string[] = [];
+    const response = await handleRecommendScripture(post({ situation: '가족을 오래 돌보느라 지쳤어요.' }), {
+      ...depsReturning(dynamicAnalysis),
+      loadCatalogRuntime: async () => { runtimeCalls += 1; return runtime; },
+      log: (message) => logs.push(message),
+    });
+    assert.equal(response.status, 200, logs.join('\n'));
+    const body = (await response.json()) as { result: GateResult<string> };
+    assert.equal(runtimeCalls, 1);
+    assert.equal(body.result.route, 'recommend');
+    assert.equal(body.result.primaryDomain, targetDomainId);
+    assert.equal(body.result.eligibleCardIds.every((id) =>
+      runtime.catalog.cards.some((card) => card.domainId === targetDomainId && card.id === id)), true);
+  });
+
+  it('표시가 없는 구 앱은 활성판 조회 성공 뒤 정적 Analyzer·Gate와 옛 응답 모양을 쓴다', async () => {
+    const runtime = await buildTestDynamicCatalogRuntime();
+    const payloads: Record<string, unknown>[] = [];
+    let runtimeCalls = 0;
+    const response = await handleRecommendScripture(
+      rawPost({ situation: '앞일이 불안합니다.' }),
+      depsReturning(analysisOf({
+        primaryDomain: 'fear_uncertainty',
+        situationTags: ['두려운 일을 앞둠'],
+      }), {
+        loadCatalogRuntime: async () => { runtimeCalls += 1; return runtime; },
+        callOpenAI: async (payload) => {
+          payloads.push(payload);
+          return openAIResponse(analysisOf({
+            primaryDomain: 'fear_uncertainty',
+            situationTags: ['두려운 일을 앞둠'],
+          }));
+        },
+      }),
+    );
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as Record<string, unknown> & { result: GateResult<string> };
+    assert.equal(runtimeCalls, 1);
+    assert.deepEqual(Object.keys(body).sort(), ['ok', 'result']);
+    assert.equal(body.result.route, 'recommend');
+    assert.ok(body.result.selectedCardId?.startsWith('SC-'));
+    assert.equal(JSON.stringify(payloads[0]).includes('caregiving_strain'), false);
+  });
+
+  it('구 앱에서도 활성 카탈로그 조회 실패는 503이며 정적 처리로 우회하지 않는다', async () => {
+    let quotaCalls = 0;
+    let openAICalls = 0;
+    const response = await handleRecommendScripture(
+      rawPost({ situation: '앞일이 불안합니다.' }),
+      depsReturning(baseAnalysis, {
+        loadCatalogRuntime: async () => { throw new Error('private db detail'); },
+        checkQuota: async () => { quotaCalls += 1; return { status: 'allowed' }; },
+        callOpenAI: async () => { openAICalls += 1; return openAIResponse(baseAnalysis); },
+      }),
+    );
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { ok: false, error: 'CATALOG_UNAVAILABLE' });
+    assert.equal(quotaCalls, 0);
+    assert.equal(openAICalls, 0);
+  });
+
+  it('알 수 없는 catalogRuntimeVersion은 오타를 legacy로 숨기지 않고 호출 0회로 거절한다', async () => {
+    let runtimeCalls = 0;
+    let quotaCalls = 0;
+    let openAICalls = 0;
+    const response = await handleRecommendScripture(
+      rawPost({ situation: '앞일이 불안합니다.', catalogRuntimeVersion: 'unknown/v9' }),
+      depsReturning(baseAnalysis, {
+        loadCatalogRuntime: async () => { runtimeCalls += 1; return baselineRuntime; },
+        checkQuota: async () => { quotaCalls += 1; return { status: 'allowed' }; },
+        callOpenAI: async () => { openAICalls += 1; return openAIResponse(baseAnalysis); },
+      }),
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { ok: false, error: 'INVALID_INPUT' });
+    assert.deepEqual([runtimeCalls, quotaCalls, openAICalls], [0, 0, 0]);
+  });
+});
 
 async function gateFor(analysis: SituationAnalysis, situation = '지금 나의 상황입니다.') {
   const response = await handleRecommendScripture(post({ situation }), depsReturning(analysis));
@@ -231,9 +339,14 @@ describe('recommend-scripture · 응답 구조', () => {
       depsReturning(analysisOf({ primaryDomain: 'grief_loss', situationTags: ['사별'] })),
     );
     const body = (await response.json()) as Record<string, unknown>;
-    assert.deepEqual(Object.keys(body).sort(), ['ok', 'result']);
+    assert.deepEqual(Object.keys(body).sort(), ['cards', 'domains', 'ok', 'result']);
     assert.equal('usage' in body, false);
     assert.equal('output' in body, false);
+    const text = JSON.stringify(body.cards);
+    for (const internal of [
+      'contextSummary', 'theologicalInsight', 'misuseGuards', 'situationTags',
+      'emotionTags', 'spiritualQuestionTags', 'prayerModes', 'pastoralFunction',
+    ]) assert.equal(text.includes(internal), false, internal);
   });
 });
 
@@ -370,6 +483,7 @@ describe('recommend-scripture · CORS', () => {
     let openAICalled = false;
     let keyRead = false;
     const response = await handleRecommendScripture(options(), {
+      loadCatalogRuntime: async () => structuredClone(baselineRuntime),
       checkQuota: allowQuota,
       getApiKey: () => {
         keyRead = true;

@@ -28,6 +28,7 @@ import { useEffect } from 'react';
 
 import DomainChoiceScreen from '@/app/domain-choice';
 import { domainLabel } from '@/data/domain-labels';
+import { getScriptureCard } from '@/data/scripture-cards';
 import type { DomainChoiceOption } from '@/lib/request-recommendation';
 import { SituationProvider, useSituation } from '@/state/situation';
 
@@ -131,6 +132,22 @@ const AMBIGUOUS_OPTION: DomainChoiceOption = {
   resolution: 'ambiguous',
   selectedCardId: null,
 };
+const STATIC_CARD = getScriptureCard('SC-001');
+const DYNAMIC_CARD = {
+  id: 'SC-999',
+  domains: ['caregiving_strain'],
+  referenceLabel: STATIC_CARD.referenceLabel,
+  passages: STATIC_CARD.passages ?? [STATIC_CARD.passage],
+  userExplanation: '동적 카드 설명입니다.',
+  prayerDirection: '동적 카드 기도 방향입니다.',
+};
+const DYNAMIC_OPTION: DomainChoiceOption = {
+  domain: 'caregiving_strain',
+  displayName: '오래 돌보는 무게',
+  resolution: 'recommend',
+  selectedCardId: DYNAMIC_CARD.id,
+  selectedCard: DYNAMIC_CARD,
+};
 
 /** 화면 밖에서 앱 상태를 보고 바꾸기 위한 창. */
 let probe: ReturnType<typeof useSituation> | null = null;
@@ -224,6 +241,14 @@ describe('영역 선택 화면 · 그려 보기', () => {
     expect(screen.queryByText('financial_hardship')).toBeNull();
     expect(screen.queryByLabelText('fear_uncertainty')).toBeNull();
   });
+
+  it('새 영역은 서버가 검증해 보낸 한국어 이름으로 보이고 내부 id는 숨긴다', async () => {
+    await renderScreen([DYNAMIC_OPTION, NO_COVERAGE_OPTION]);
+
+    expect(screen.getByLabelText('오래 돌보는 무게')).toBeTruthy();
+    expect(screen.queryByText('caregiving_strain')).toBeNull();
+    expect(screen.queryByLabelText('caregiving_strain')).toBeNull();
+  });
 });
 
 /* ================================================================== */
@@ -244,6 +269,18 @@ describe('영역 선택 화면 · 고르면 push로 이동하고 option을 보�
     expect(probe!.selectedDomain).toBe(RECOMMEND_OPTION.domain);
     // setRecommendation과 달리 option을 비우지 않는다 — 뒤로 돌아와 다시 고를 수 있어야 한다.
     expect(probe!.domainChoiceOptions).toEqual([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
+  });
+
+  it('새 영역 후보를 고르면 공개 카드 객체도 말씀·기도 화면용 상태에 보존한다', async () => {
+    await renderScreen([DYNAMIC_OPTION, NO_COVERAGE_OPTION]);
+
+    await fireEvent.press(screen.getByLabelText('오래 돌보는 무게'));
+
+    expect(router.push).toHaveBeenCalledWith('/scripture');
+    expect(probe!.selectedCardId).toBe(DYNAMIC_CARD.id);
+    expect(probe!.selectedCard).toEqual(DYNAMIC_CARD);
+    expect(probe!.selectedDomain).toBe('caregiving_strain');
+    expect(probe!.domainChoiceOptions).toEqual([DYNAMIC_OPTION, NO_COVERAGE_OPTION]);
   });
 
   it('no_coverage 후보를 고르면 카드·영역만 비우고 push로 기존 no-coverage 화면으로 간다(option 보존)', async () => {

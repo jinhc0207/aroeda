@@ -12,7 +12,6 @@
 
 export type GenerationFailure =
   | 'input_invalid'
-  | 'new_domain_unsupported'
   | 'configuration_error'
   | 'provider_timeout'
   | 'provider_unavailable'

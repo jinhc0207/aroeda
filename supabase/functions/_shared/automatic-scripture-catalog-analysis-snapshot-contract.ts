@@ -45,9 +45,8 @@
  *     Git 커밋
  *   - `automatic-scripture-catalog-validator-executor.ts`의 DeterministicAdapters 구현과 연결
  *   - `validateAutomaticValidationRecord`가 이 스냅샷의 지문을 실제로 재확인하도록 강화
- *   - 새 영역(`new_domain_with_cards`) 후보를 위한 동적 Analyzer domain manifest
- *     (이 계약의 `analyzerDomainManifestHash`는 오늘의 정적 SituationDomain 목록만 가리킨다.
- *     동적 manifest가 생기기 전까지 새 영역 후보의 자동 활성화는 fail-closed로 막혀 있어야 한다.)
+ *   - 새 영역(`new_domain_with_cards`) 후보의 생성 증거는 별도 후보별 동적 manifest를 쓴다.
+ *     이 고정 스냅샷 계약은 기존 156개 회귀 사례와 정적 SituationDomain 목록만 표현한다.
  *   자동 producer profile과 독립성 attestation이 registry에 연결되기 전까지는, 이 계약이
  *   존재한다는 사실이 activation-ready를 뜻하지 않는다.
  */

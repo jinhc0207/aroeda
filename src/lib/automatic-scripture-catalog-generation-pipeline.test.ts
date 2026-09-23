@@ -579,11 +579,14 @@ describe('candidate generation · 취소 즉시 종료와 마감 원인 구분',
     // 그 사이 시계는 이미 예산을 넘긴다 — 원인은 타이머 순서가 아니라 시계가 정해야 한다.
     let clock = 0;
     let sent = 0;
-    const runner = createCandidateGenerationEvidenceRunner({ apiKey: KEY, fetchImpl: hangingFetch(() => { sent += 1; }) });
+    const runner = createCandidateGenerationEvidenceRunner({ apiKey: KEY, timeoutMs: 100, fetchImpl: hangingFetch(() => {
+      sent += 1;
+      // 후보·manifest 사전 검증이 끝나 실제 요청이 시작된 뒤 시계만 전체 마감 너머로 보낸다.
+      // transport의 100ms 요청 타이머가 5초짜리 전체 타이머보다 먼저 이 상태를 관측한다.
+      setTimeout(() => { clock = 5_001; }, 5);
+    }) });
     const startedAt = Date.now();
     const running = runner(candidate, base, { budgetMs: 5_000, now: () => clock });
-    clock = 4_900.25;
-    setTimeout(() => { clock = 5_001; }, 5);
     const result = await running;
     assert.equal(result.status, 'failed');
     if (result.status !== 'failed') throw new Error('failed expected');
@@ -1018,7 +1021,7 @@ describe('candidate generation · 증거 실행기', () => {
       if (mode === 'wrong_generator') candidate.generation.modelId = 'gpt-6-astra';
       let calls = 0;
       const result = await runCandidateGenerationEvidence(candidate, base, { author: async () => { calls++; }, analyze: async () => { calls++; } });
-      assert.deepEqual(result, { status: 'failed', reason: mode === 'new_domain' ? 'new_domain_unsupported' : 'input_invalid' });
+      assert.deepEqual(result, { status: 'failed', reason: 'input_invalid' });
       assert.equal(calls, 0);
     });
   }

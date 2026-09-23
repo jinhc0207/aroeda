@@ -16,8 +16,22 @@
 import { corsHeaders, handlePreflight } from './cors.ts';
 import { extractOutputText } from './openai-response.ts';
 import type { QuotaChecker } from './rate-limit.ts';
-import { INSTRUCTIONS, MODEL, SITUATION_ANALYSIS_SCHEMA } from './analyzer-contract.ts';
-import { validateSituationAnalysis, type SituationAnalysis } from './situation-analysis.ts';
+import {
+  INSTRUCTIONS,
+  MODEL,
+  SITUATION_ANALYSIS_SCHEMA,
+  buildAnalyzerInstructions,
+  buildSituationAnalysisSchema,
+} from './analyzer-contract.ts';
+import type { AnalyzerDomainManifest } from './automatic-scripture-catalog-analyzer-domain-manifest.ts';
+import type {
+  ScriptureCatalogRuntime,
+  ScriptureCatalogRuntimeLoader,
+} from './automatic-scripture-catalog-runtime.ts';
+import {
+  validateSituationAnalysisForDomains,
+  type SituationAnalysis,
+} from './situation-analysis.ts';
 
 export const MAX_SITUATION_LENGTH = 3000;
 
@@ -26,6 +40,7 @@ export type ErrorCode =
   | 'INVALID_JSON'
   | 'INVALID_INPUT'
   | 'SITUATION_TOO_LONG'
+  | 'CATALOG_UNAVAILABLE'
   | 'OPENAI_API_KEY_MISSING'
   | 'OPENAI_REQUEST_FAILED'
   | 'INVALID_ANALYSIS_RESPONSE'
@@ -36,6 +51,8 @@ export type ErrorCode =
 export type ErrorBody = { ok: false; error: ErrorCode };
 
 export type EdgeDeps = {
+  /** 활성 포인터와 카탈로그를 원자적으로 읽고 검증한다. 정적 fallback은 허용하지 않는다. */
+  loadCatalogRuntime: ScriptureCatalogRuntimeLoader;
   /**
    * OpenAI를 부르기 전에 사용량을 한 번 소비한다.
    * 두 Edge Function이 같은 quota를 쓰도록 같은 checker를 넘긴다.
@@ -98,8 +115,29 @@ export function buildOpenAIPayload(situation: string): Record<string, unknown> {
   };
 }
 
+/** 검증된 동적 manifest를 쓰는 payload. 후보 생성과 활성 카탈로그 운영 요청이 함께 쓴다. */
+export function buildOpenAIPayloadForManifest(
+  situation: string,
+  manifest: AnalyzerDomainManifest,
+): Record<string, unknown> {
+  return {
+    model: MODEL,
+    store: false,
+    instructions: buildAnalyzerInstructions(manifest),
+    input: situation,
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'situation_analysis',
+        strict: true,
+        schema: buildSituationAnalysisSchema(manifest),
+      },
+    },
+  };
+}
+
 export type AnalyzeStepResult =
-  | { ok: true; analysis: SituationAnalysis }
+  | { ok: true; analysis: SituationAnalysis<string>; runtime: ScriptureCatalogRuntime }
   | { ok: false; response: Response };
 
 /**
@@ -109,6 +147,7 @@ export type AnalyzeStepResult =
 export async function analyzeSituationRequest(
   request: Request,
   deps: EdgeDeps,
+  preloadedRuntime?: ScriptureCatalogRuntime,
 ): Promise<AnalyzeStepResult> {
   const log = deps.log ?? (() => {});
   const requestId = deps.requestId ? deps.requestId() : 'req';
@@ -152,6 +191,15 @@ export async function analyzeSituationRequest(
     return failWith('SITUATION_TOO_LONG', 400);
   }
 
+  // 사용자 입력이 유효한 뒤, quota와 OpenAI 호출 전에 활성 포인터 한 판을 읽는다.
+  // 읽기·지문·manifest 중 하나라도 실패하면 정적 카드와 조용히 섞지 않는다.
+  let runtime: ScriptureCatalogRuntime;
+  try {
+    runtime = preloadedRuntime ?? await deps.loadCatalogRuntime();
+  } catch {
+    return failWith('CATALOG_UNAVAILABLE', 503);
+  }
+
   // 사용량 확인은 OpenAI를 부르기 직전에 한다.
   // 잘못된 요청(형식 오류, 빈 입력, 길이 초과)은 여기까지 오지 않으므로 quota를 쓰지 않는다.
   let quota: Awaited<ReturnType<QuotaChecker>>;
@@ -179,7 +227,7 @@ export async function analyzeSituationRequest(
 
   let raw: unknown;
   try {
-    raw = await deps.callOpenAI(buildOpenAIPayload(situationValue), apiKey);
+    raw = await deps.callOpenAI(buildOpenAIPayloadForManifest(situationValue, runtime.manifest), apiKey);
   } catch {
     // OpenAI의 상세 오류 메시지는 사용자에게 전달하지 않는다.
     return failWith('OPENAI_REQUEST_FAILED', 502);
@@ -198,20 +246,31 @@ export async function analyzeSituationRequest(
   }
 
   // OpenAI가 JSON을 돌려줬다는 이유만으로 그대로 쓰지 않는다.
-  const validation = validateSituationAnalysis(parsed);
+  const validation = validateSituationAnalysisForDomains(
+    parsed,
+    [
+      ...runtime.manifest.coveredDomains.map((domain) => domain.id),
+      ...runtime.manifest.uncoveredDomains.map((domain) => domain.id),
+      runtime.manifest.fallbackDomain.id,
+    ],
+    runtime.manifest.fallbackDomain.id,
+    runtime.manifest.situationTags,
+  );
   if (!validation.valid) {
     // 원인은 남기되 사용자 문장은 남기지 않는다.
     return failWith('INVALID_ANALYSIS_RESPONSE', 502, validation.errors.join(' / '));
   }
 
-  return { ok: true, analysis: parsed as SituationAnalysis };
+  return { ok: true, analysis: parsed as SituationAnalysis<string>, runtime };
 }
 
 /**
  * 응답에 담을 분석 결과. OpenAI 원본과 usage, 사용자 문장은 포함하지 않는다.
  * 영역 우선순위 필드는 이름을 하나씩 적어 명시적으로 옮긴다.
  */
-export function toAnalysisPayload(analysis: SituationAnalysis): SituationAnalysis {
+export function toAnalysisPayload<TDomain extends string>(
+  analysis: SituationAnalysis<TDomain>,
+): SituationAnalysis<TDomain> {
   return {
     domainPriority: analysis.domainPriority,
     primaryDomain: analysis.primaryDomain,

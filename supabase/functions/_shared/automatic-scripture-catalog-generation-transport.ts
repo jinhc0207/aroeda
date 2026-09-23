@@ -26,6 +26,7 @@ import {
 } from './automatic-scripture-catalog-generation-deadline.ts';
 import { buildCandidateGenerationAnalysisRequest } from './automatic-scripture-catalog-generation-analysis-request.ts';
 import { MODEL } from './analyzer-contract.ts';
+import type { AnalyzerDomainManifest } from './automatic-scripture-catalog-analyzer-domain-manifest.ts';
 
 export const GENERATION_RESPONSE_MAX_BYTES = 262_144;
 export type GenerationTransportConfig = {
@@ -37,7 +38,7 @@ export type GenerationTransportConfig = {
 
 export type CandidateGenerationTransport = {
   author: (spec: CaseAuthorSpec, deadline?: RunDeadline) => Promise<unknown>;
-  analyze: (text: string, deadline?: RunDeadline) => Promise<unknown>;
+  analyze: (text: string, deadline?: RunDeadline, manifest?: AnalyzerDomainManifest) => Promise<unknown>;
 };
 
 export function createCandidateGenerationTransport(config: GenerationTransportConfig): CandidateGenerationTransport {
@@ -219,9 +220,13 @@ export function createCandidateGenerationTransport(config: GenerationTransportCo
     /** spec은 실행기가 검증된 후보에서 만든다. 외부 사용자 요청 본문을 받는 엔드포인트가 아니다. */
     author: (spec: CaseAuthorSpec, deadline?: RunDeadline) => request(spec?.body, spec?.timeoutMs, deadline),
     /** Analyzer에는 합성 문장만 전달한다. 목표 카드·영역·Astra 출력의 다른 필드는 보내지 않는다. */
-    analyze: async (text: string, deadline?: RunDeadline): Promise<unknown> => {
+    analyze: async (
+      text: string,
+      deadline?: RunDeadline,
+      manifest?: AnalyzerDomainManifest,
+    ): Promise<unknown> => {
       const raw = await request(
-        buildCandidateGenerationAnalysisRequest(text), CANDIDATE_GENERATION_REQUEST_MAX_MS, deadline);
+        buildCandidateGenerationAnalysisRequest(text, manifest), CANDIDATE_GENERATION_REQUEST_MAX_MS, deadline);
       return readGenerationResponse(raw, MODEL);
     },
   };

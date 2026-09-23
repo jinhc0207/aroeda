@@ -39,7 +39,22 @@ import { getScriptureCard, SCRIPTURE_CARDS } from '../../supabase/functions/_sha
 import { MODEL as ANALYZER_MODEL } from '../../supabase/functions/_shared/analyzer-contract.ts';
 import { runRecommendationGate } from '../../supabase/functions/_shared/recommendation-gate.ts';
 import type { SituationAnalysis } from '../../supabase/functions/_shared/situation-analysis.ts';
+import { buildCatalogAnalyzerDomainManifest } from '../../supabase/functions/_shared/automatic-scripture-catalog-analyzer-domain-manifest.ts';
+import {
+  applyCandidateToCatalog,
+  computeCatalogVersionHash,
+} from '../../supabase/functions/_shared/automatic-scripture-catalog-contract.ts';
+import {
+  SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
+  type ScriptureCatalogRuntime,
+} from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime.ts';
+import { catalogSnapshotToGateCards } from '../../supabase/functions/_shared/automatic-scripture-catalog-frozen-analysis-adapter.ts';
 import { requestPrayerGuidance, parsePrayerGuidanceResponse } from './request-prayer-guidance.ts';
+import {
+  buildBaselineCatalog,
+  finalizeCandidate,
+  makeNewDomainCandidate,
+} from './automatic-scripture-catalog-test-fixtures.ts';
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const stripComments = (source: string) =>
@@ -60,6 +75,14 @@ const CARD = getScriptureCard('SC-001');
 const SITUATION = '앞일이 어떻게 될지 몰라서 마음이 불안합니다.';
 /** 사용자가 이 말씀을 받은 영역. 내부 표준 domain 값이다. */
 const SELECTED_DOMAIN = CARD.domains[0];
+const baselineCatalog = buildBaselineCatalog();
+const baselineRuntime = {
+  activeVersionHash: await computeCatalogVersionHash(baselineCatalog),
+  pointerRevision: 1,
+  catalog: baselineCatalog,
+  manifest: buildCatalogAnalyzerDomainManifest(baselineCatalog),
+  cards: catalogSnapshotToGateCards(baselineCatalog),
+};
 
 /**
  * 기본 태그는 CARD(SC-001) 자신의 태그를 그대로 쓴다.
@@ -123,6 +146,8 @@ type Options = {
   fireDeadline?: boolean;
   /** 신호를 무시하고 끝내 답하지 않는 요청 */
   ignoresSignal?: boolean;
+  runtime?: ScriptureCatalogRuntime;
+  runtimeThrows?: boolean;
 };
 
 const makeDeps = (options: Options = {}) => {
@@ -137,6 +162,7 @@ const makeDeps = (options: Options = {}) => {
   const guidanceSignals: (AbortSignal | undefined)[] = [];
   let deadlineScheduledMs: number | null = null;
   let deadlineCancelled = false;
+  let runtimeCalls = 0;
 
   /**
    * 답하지 않는 가짜 요청.
@@ -154,6 +180,11 @@ const makeDeps = (options: Options = {}) => {
     });
 
   const deps: PrayerGuidanceDeps = {
+    loadCatalogRuntime: async () => {
+      runtimeCalls += 1;
+      if (options.runtimeThrows) throw new Error('private runtime failure');
+      return structuredClone(options.runtime ?? baselineRuntime);
+    },
     checkQuota: async (_request, quotaOptions) => {
       quotaSignals.push(quotaOptions?.signal);
       if (options.quotaHangs) return await hang<never>(quotaOptions?.signal);
@@ -213,6 +244,9 @@ const makeDeps = (options: Options = {}) => {
     get deadlineCancelled() {
       return deadlineCancelled;
     },
+    get runtimeCalls() {
+      return runtimeCalls;
+    },
   };
 };
 
@@ -225,6 +259,7 @@ const run = async (options: Options = {}) => {
           situation: SITUATION,
           cardId: options.cardId ?? CARD.id,
           selectedDomain: 'selectedDomain' in options ? options.selectedDomain : SELECTED_DOMAIN,
+          catalogRuntimeVersion: SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
         };
 
   const request = new Request('https://example.functions.supabase.co/generate-prayer-guidance', {
@@ -243,14 +278,42 @@ const run = async (options: Options = {}) => {
 /* ================================================================== */
 
 describe('기도 도움 · A. 요청 계약', () => {
-  it('보낼 수 있는 것은 세 가지뿐이다', () => {
-    assert.deepEqual([...PRAYER_GUIDANCE_REQUEST_FIELDS], ['situation', 'cardId', 'selectedDomain']);
+  it('사용자 자료 세 가지와 앱 capability만 보낼 수 있다', () => {
+    assert.deepEqual([...PRAYER_GUIDANCE_REQUEST_FIELDS], [
+      'situation', 'cardId', 'selectedDomain', 'catalogRuntimeVersion',
+    ]);
   });
 
   it('올바른 요청은 통과한다', () => {
     const parsed = parsePrayerGuidanceRequest({ situation: SITUATION, cardId: CARD.id, selectedDomain: SELECTED_DOMAIN });
     assert.equal(parsed.ok, true);
     assert.deepEqual(parsed.ok && parsed.input, { situation: SITUATION, cardId: CARD.id, selectedDomain: SELECTED_DOMAIN });
+  });
+
+  it('정확한 capability는 보존하고, 모르는 값은 외부 호출 전에 거절한다', async () => {
+    const parsed = parsePrayerGuidanceRequest({
+      situation: SITUATION,
+      cardId: CARD.id,
+      selectedDomain: SELECTED_DOMAIN,
+      catalogRuntimeVersion: SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
+    });
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.ok && parsed.input.catalogRuntimeVersion, SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION);
+
+    const outcome = await run({
+      body: {
+        situation: SITUATION,
+        cardId: CARD.id,
+        selectedDomain: SELECTED_DOMAIN,
+        catalogRuntimeVersion: 'unknown/v9',
+      },
+    });
+    assert.equal(outcome.response.status, 503);
+    assert.deepEqual(outcome.parsed, { ok: false, error: 'PRAYER_GUIDANCE_UNAVAILABLE' });
+    assert.equal(outcome.runtimeCalls, 0);
+    assert.equal(outcome.quotaSignals.length, 0);
+    assert.equal(outcome.analyzerCalls.length, 0);
+    assert.equal(outcome.guidanceCalls.length, 0);
   });
 
   it('모르는 항목이 붙으면 거절한다', async () => {
@@ -300,7 +363,7 @@ describe('기도 도움 · A. 요청 계약', () => {
     // 길이 한도를 여기서 새로 만들지 않는다.
     assert.equal(contract.includes('MAX_SITUATION_LENGTH'), false);
     const handler = stripComments(read(HANDLER));
-    assert.ok(handler.includes('analyzeSituationRequest(request, analysisDeps)'));
+    assert.ok(handler.includes('analyzeSituationRequest(request, analysisDeps, runtime)'));
   });
 });
 
@@ -473,9 +536,11 @@ describe('기도 도움 · C. 안전이 먼저다', () => {
 
   it('앱의 화면 순서를 믿지 않고 서버가 다시 살핀다', () => {
     const handler = stripComments(read(HANDLER));
-    assert.ok(handler.includes('analyzeSituationRequest(request, analysisDeps)'));
-    assert.ok(handler.includes('resolveAnalysisForChosenDomain(analyzed.analysis, parsed.input.selectedDomain)'));
-    assert.ok(handler.includes('runRecommendationGate(resolved, deps.cards)'));
+    assert.ok(handler.includes('analyzeSituationRequest(request, analysisDeps, runtime)'));
+    assert.ok(handler.includes('resolveAnalysisForChosenDomain('));
+    assert.ok(handler.includes('analyzed.analysis,'));
+    assert.ok(handler.includes('parsed.input.selectedDomain,'));
+    assert.ok(handler.includes('runRecommendationGate(resolved, gateCards)'));
     assert.ok(handler.includes("gate.route !== 'recommend'"));
     // 새 안전 규칙을 만들지 않는다.
     assert.equal(handler.includes('self_harm'), false);
@@ -522,9 +587,11 @@ describe('기도 도움 · D. 말씀 해설의 주인은 서버다', () => {
     for (const banned of ['userExplanation:', 'prayerDirection:', 'passage']) {
       assert.equal(helper.includes(banned), false, banned);
     }
-    assert.deepEqual([...PRAYER_GUIDANCE_REQUEST_FIELDS], ['situation', 'cardId', 'selectedDomain']);
+    assert.deepEqual([...PRAYER_GUIDANCE_REQUEST_FIELDS], [
+      'situation', 'cardId', 'selectedDomain', 'catalogRuntimeVersion',
+    ]);
     // 서버는 자기 카드를 읽는다.
-    assert.ok(stripComments(read(HANDLER)).includes('getScriptureCard(parsed.input.cardId)'));
+    assert.ok(stripComments(read(HANDLER)).includes('runtime.cards.find((item) => item.id === parsed.input.cardId)'));
     assert.ok(contract.includes('input.card.userExplanation'));
   });
 
@@ -721,7 +788,7 @@ describe('기도 도움 · G. 사용자가 적는 기도는 가지 않는다', (
     const requestBody = helper.split('invokePrayerGuidance({')[1]?.split('});')[0] ?? '';
     assert.notEqual(requestBody, '');
     assert.equal(requestBody.includes('prayerText'), false, requestBody);
-    // 보내는 값은 정확히 셋(situation, cardId, selectedDomain)이다.
+    // 사용자 자료는 정확히 셋이고, 나머지는 고정된 앱 capability뿐이다.
     assert.ok(helper.includes('situation: input.situation'));
     assert.ok(helper.includes('cardId: input.cardId'));
     assert.ok(requestBody.includes('selectedDomain'));
@@ -735,7 +802,7 @@ describe('기도 도움 · G. 사용자가 적는 기도는 가지 않는다', (
     assert.equal(call.includes('prayer'), false, call);
     assert.ok(call.includes('situation'));
     assert.ok(call.includes('cardId'));
-    // 일반 추천과 영역 선택 추천 모두 같은 세 필드를 보낸다.
+    // 일반 추천과 영역 선택 추천 모두 같은 사용자 자료 세 필드를 보낸다.
     assert.ok(call.includes('selectedDomain'));
   });
 
@@ -793,8 +860,8 @@ describe('기도 도움 · H. 실패해도 기도를 막지 않는다', () => {
     assert.deepEqual(outcome, { status: 'unavailable' });
   });
 
-  it('선택 영역이 없거나(null) 표준값이 아니거나 other_uncovered면 서버를 부르지 않는다', async () => {
-    for (const selectedDomain of [null, undefined, '', 42, '두려움과 불확실함', 'made_up_domain', 'other_uncovered']) {
+  it('선택 영역이 없거나 내부 id 형식이 아니거나 other_uncovered면 서버를 부르지 않는다', async () => {
+    for (const selectedDomain of [null, undefined, '', 42, '두려움과 불확실함', 'Made-Up', 'other_uncovered']) {
       let calls = 0;
       const outcome = await requestPrayerGuidance(
         { situation: SITUATION, cardId: CARD.id, selectedDomain },
@@ -808,6 +875,26 @@ describe('기도 도움 · H. 실패해도 기도를 막지 않는다', () => {
       assert.deepEqual(outcome, { status: 'unavailable' }, JSON.stringify(selectedDomain));
       assert.equal(calls, 0, JSON.stringify(selectedDomain));
     }
+  });
+
+  it('활성 카탈로그가 검증한 새 영역 id는 서버가 최종 검증하도록 그대로 보낸다', async () => {
+    let sent: unknown = null;
+    const outcome = await requestPrayerGuidance(
+      { situation: SITUATION, cardId: 'SC-999', selectedDomain: 'caregiving_strain' },
+      {
+        invokePrayerGuidance: async (body) => {
+          sent = body;
+          return { ok: true, data: { ok: true, guidance: goodGuidance() } };
+        },
+      },
+    );
+    assert.equal(outcome.status, 'guidance');
+    assert.deepEqual(sent, {
+      situation: SITUATION,
+      cardId: 'SC-999',
+      selectedDomain: 'caregiving_strain',
+      catalogRuntimeVersion: SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION,
+    });
   });
 
   it('약속과 다른 답은 쓰지 않는다', () => {
@@ -1269,6 +1356,73 @@ describe('기도 도움 · L. 선택 영역을 서버가 다시 확인한다', (
       }),
       'no_coverage',
     );
+  });
+
+  it('같은 활성 카탈로그의 새 영역 카드도 재분석·Gate·기도 생성까지 이어진다', async () => {
+    const base = buildBaselineCatalog();
+    const { candidate: raw } = await makeNewDomainCandidate(base);
+    const { baseVersionHash: _base, proposedVersionHash: _proposed, ...draft } = raw;
+    const { candidate } = await finalizeCandidate(base, draft);
+    const catalog = applyCandidateToCatalog(base, candidate);
+    for (const card of catalog.cards.filter((item) => item.domainId === candidate.targetDomainId)) {
+      card.situationTags = card.id === candidate.cards[0].id ? ['오래 아픔'] : ['생활비 부족'];
+    }
+    const runtime: ScriptureCatalogRuntime = {
+      activeVersionHash: await computeCatalogVersionHash(catalog),
+      pointerRevision: 2,
+      catalog,
+      manifest: buildCatalogAnalyzerDomainManifest(catalog),
+      cards: catalogSnapshotToGateCards(catalog),
+    };
+    const target = runtime.cards.find((card) => card.id === candidate.cards[0].id)!;
+    const outcome = await run({
+      runtime,
+      cardId: target.id,
+      selectedDomain: candidate.targetDomainId,
+      analysisOverrides: {
+        primaryDomain: candidate.targetDomainId,
+        situationTags: ['오래 아픔'],
+        emotionTags: [...target.emotionTags],
+        spiritualQuestionTags: [...target.spiritualQuestionTags],
+        prayerModes: [...target.prayerModes],
+        pastoralFunctions: [...target.pastoralFunction],
+      },
+    });
+    assert.equal(outcome.response.status, 200);
+    assert.equal(outcome.guidanceCalls.length, 1);
+  });
+
+  it('구 앱은 동적 활성판을 정상 조회한 뒤 정적 카드·Analyzer·Gate로 기도를 이어간다', async () => {
+    const base = buildBaselineCatalog();
+    const source = base.cards.find((card) => card.id === CARD.id)!;
+    const catalog = structuredClone(base);
+    // 활성판에 같은 영역·같은 태그의 카드가 추가되면 동적 Gate는 100점 동점으로 ambiguous다.
+    // 구 앱은 이 카드를 알지 못하므로 정적 Gate를 써서 기존 카드의 기도를 계속해야 한다.
+    catalog.cards.push({ ...structuredClone(source), id: 'SC-999' });
+    catalog.cards.sort((left, right) => left.id.localeCompare(right.id));
+    const runtime: ScriptureCatalogRuntime = {
+      activeVersionHash: await computeCatalogVersionHash(catalog),
+      pointerRevision: 2,
+      catalog,
+      manifest: buildCatalogAnalyzerDomainManifest(catalog),
+      cards: catalogSnapshotToGateCards(catalog),
+    };
+    const outcome = await run({
+      runtime,
+      body: { situation: SITUATION, cardId: CARD.id, selectedDomain: SELECTED_DOMAIN },
+    });
+    assert.equal(outcome.response.status, 200);
+    assert.equal(outcome.runtimeCalls, 1);
+    assert.equal(outcome.guidanceCalls.length, 1);
+    assert.equal(runRecommendationGate(analysis() as SituationAnalysis, runtime.cards).route, 'ambiguous');
+  });
+
+  it('활성 카탈로그를 읽지 못하면 정적 카드로 대체하지 않고 모델 호출 0회다', async () => {
+    const outcome = await run({ runtimeThrows: true });
+    assert.equal(outcome.response.status, 503);
+    assert.equal(outcome.parsed.error, 'PRAYER_GUIDANCE_UNAVAILABLE');
+    assert.equal(outcome.analyzerCalls.length, 0);
+    assert.equal(outcome.guidanceCalls.length, 0);
   });
 
   it('선택 영역을 받았다고 분석 결과에 억지로 넣지 않는다', () => {

@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '@/constants/aroeda-theme';
 import { getPassage, TRANSLATION_NAME, type BibleVerse } from '@/data/bible';
-import { getCardPassages, getScriptureCard } from '@/data/scripture-cards';
+import { getScriptureCard } from '@/data/scripture-cards';
 import { useSituation } from '@/state/situation';
 
 type DisplayVerse = BibleVerse & { chapter: number };
@@ -13,23 +13,25 @@ type DisplayVerse = BibleVerse & { chapter: number };
 export default function ScriptureScreen() {
   // 사용자가 입력한 상황은 화면에 다시 보여주지 않고 상태로만 유지합니다.
   // 보여줄 카드는 서버(Recommendation Gate)가 고른 것만 씁니다.
-  const { selectedCardId } = useSituation();
+  const { selectedCardId, selectedCard } = useSituation();
 
   // 추천이 없거나 모르는 카드 id면 다른 말씀으로 대체하지 않습니다. (SC-001 같은 기본값 금지)
   const card = useMemo(() => {
     if (!selectedCardId) return null;
+    if (selectedCard?.id === selectedCardId) return selectedCard;
     try {
       return getScriptureCard(selectedCardId);
     } catch {
       return null;
     }
-  }, [selectedCardId]);
+  }, [selectedCardId, selectedCard]);
 
   // 본문은 서버나 AI가 아니라 로컬 카드 위치 → 개역한글 성경 데이터에서 가져옵니다.
   const verses = useMemo<DisplayVerse[] | null>(() => {
     if (!card) return null;
     try {
-      return getCardPassages(card).flatMap((passage) =>
+      const passages = card.passages ?? ('passage' in card ? [card.passage] : []);
+      return passages.flatMap((passage) =>
         getPassage(passage).map((verse) => ({ ...verse, chapter: passage.chapter })),
       );
     } catch {

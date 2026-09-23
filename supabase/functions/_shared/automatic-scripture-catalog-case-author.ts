@@ -41,7 +41,6 @@ export async function buildCaseAuthorRequest(
     candidate = structuredClone(candidate);
     base = structuredClone(base);
     if (!(await validateCatalogCandidate(candidate, base)).valid) throw new CandidateGenerationError('input_invalid');
-    if (candidate.candidateKind !== 'existing_domain_card') throw new CandidateGenerationError('new_domain_unsupported');
     if (candidate.generation.modelId !== CANDIDATE_GENERATION_RUNTIME_CONFIG.model) {
       throw new CandidateGenerationError('input_invalid');
     }
@@ -52,7 +51,7 @@ export async function buildCaseAuthorRequest(
         model: PROFILE.modelId, instructions: CASE_AUTHOR_INSTRUCTIONS,
         input: canonicalJson({
           profileVersion: PROFILE.profileVersion, promptVersion: PROFILE.promptVersion, schemaVersion: PROFILE.schemaVersion,
-          domain: base.domains.find(d => d.id === candidate.targetDomainId),
+          domain: candidate.newDomain ?? base.domains.find(d => d.id === candidate.targetDomainId),
           candidateCards: candidate.cards.map(prose),
           competingCards: base.cards.filter(c => c.domainId === candidate.targetDomainId).map(prose),
         }),
@@ -106,7 +105,12 @@ export function interpretCaseAuthorResponse(
   if (!object(parsed) || !keysEqual(parsed, ['scenarios']) || !object(parsed.scenarios) || !keysEqual(parsed.scenarios, ids)) {
     throw new CandidateGenerationError('response_contract_invalid');
   }
-  const literals = [...base.domains.map(d => d.id), ...base.cards.map(c => c.referenceLabel), ...candidate.cards.map(c => c.referenceLabel)];
+  const literals = [
+    ...base.domains.map(d => d.id),
+    candidate.targetDomainId,
+    ...base.cards.map(c => c.referenceLabel),
+    ...candidate.cards.map(c => c.referenceLabel),
+  ];
   const seen = new Set<string>();
   const plan: AuthoredCase[] = [];
   for (const cardId of ids) {
