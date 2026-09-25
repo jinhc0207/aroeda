@@ -406,18 +406,57 @@ describe('recommend-scripture · 입력과 오류 처리', () => {
   });
 
   it('OpenAI 호출이 실패하면 502 OPENAI_REQUEST_FAILED', async () => {
+    let calls = 0;
     const response = await handleRecommendScripture(
       post({ situation: '어머니가 돌아가셨어요.' }),
       depsReturning(baseAnalysis, {
         callOpenAI: async () => {
+          calls += 1;
           throw new Error('rate limit exceeded for org-1234');
         },
       }),
     );
     assert.equal(response.status, 502);
+    assert.equal(calls, 2);
     const text = await response.text();
     assert.ok(text.includes('OPENAI_REQUEST_FAILED'));
     assert.equal(text.includes('rate limit'), false);
+  });
+
+  it('첫 OpenAI 호출이 실패해도 quota를 다시 소비하지 않고 한 번 재시도한다', async () => {
+    let quotaCalls = 0;
+    let openAICalls = 0;
+    const response = await handleRecommendScripture(
+      post({ situation: '동생과 사이가 좋지 않아요.' }),
+      depsReturning(baseAnalysis, {
+        checkQuota: async () => { quotaCalls += 1; return { status: 'allowed' }; },
+        callOpenAI: async () => {
+          openAICalls += 1;
+          if (openAICalls === 1) throw new Error('temporary provider failure');
+          return openAIResponse(baseAnalysis);
+        },
+      }),
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual([quotaCalls, openAICalls], [1, 2]);
+  });
+
+  it('첫 응답의 모양이 틀려도 같은 payload로 한 번 재시도한다', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    const response = await handleRecommendScripture(
+      post({ situation: '감기가 낫질 않네요.' }),
+      depsReturning(baseAnalysis, {
+        callOpenAI: async (payload) => {
+          payloads.push(structuredClone(payload));
+          return payloads.length === 1 ? openAIResponse({ hello: 'world' }) : openAIResponse(baseAnalysis);
+        },
+      }),
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(payloads.length, 2);
+    assert.deepEqual(payloads[1], payloads[0]);
   });
 
   it('규격을 어긴 AI 결과는 Gate로 넘어가지 않는다', async () => {

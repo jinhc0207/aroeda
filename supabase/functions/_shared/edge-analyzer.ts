@@ -35,6 +35,19 @@ import {
 
 export const MAX_SITUATION_LENGTH = 3000;
 
+/**
+ * 사용자 요청 한 번에서 허용하는 Analyzer 시도 수.
+ *
+ * quota는 요청당 한 번만 소비한다. 첫 제공자 호출이나 구조 검증이 일시적으로 실패했을 때
+ * 사용자가 버튼을 다시 눌러 quota를 연속으로 소진하지 않도록 같은 payload로 한 번만 재시도한다.
+ */
+export const ANALYZER_MAX_ATTEMPTS = 2;
+
+export type AnalyzeSituationOptions = {
+  /** 생략하면 기존과 같이 한 번만 호출한다. 사용자 추천 경로만 2를 명시한다. */
+  maxAttempts?: 1 | typeof ANALYZER_MAX_ATTEMPTS;
+};
+
 export type ErrorCode =
   | 'METHOD_NOT_ALLOWED'
   | 'INVALID_JSON'
@@ -148,6 +161,7 @@ export async function analyzeSituationRequest(
   request: Request,
   deps: EdgeDeps,
   preloadedRuntime?: ScriptureCatalogRuntime,
+  options?: AnalyzeSituationOptions,
 ): Promise<AnalyzeStepResult> {
   const log = deps.log ?? (() => {});
   const requestId = deps.requestId ? deps.requestId() : 'req';
@@ -225,43 +239,57 @@ export async function analyzeSituationRequest(
     return failWith('OPENAI_API_KEY_MISSING', 500);
   }
 
-  let raw: unknown;
-  try {
-    raw = await deps.callOpenAI(buildOpenAIPayloadForManifest(situationValue, runtime.manifest), apiKey);
-  } catch {
-    // OpenAI의 상세 오류 메시지는 사용자에게 전달하지 않는다.
-    return failWith('OPENAI_REQUEST_FAILED', 502);
-  }
+  const payload = buildOpenAIPayloadForManifest(situationValue, runtime.manifest);
+  let finalFailure: { code: 'OPENAI_REQUEST_FAILED' | 'INVALID_ANALYSIS_RESPONSE'; detail?: string } = {
+    code: 'OPENAI_REQUEST_FAILED',
+  };
 
-  const text = extractOutputText(raw);
-  if (!text) {
-    return failWith('INVALID_ANALYSIS_RESPONSE', 502, '빈 응답');
-  }
+  const maxAttempts = options?.maxAttempts ?? 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    let raw: unknown;
+    try {
+      raw = await deps.callOpenAI(payload, apiKey);
+    } catch {
+      // OpenAI의 상세 오류 메시지는 사용자에게 전달하거나 로그에 남기지 않는다.
+      finalFailure = { code: 'OPENAI_REQUEST_FAILED' };
+      continue;
+    }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return failWith('INVALID_ANALYSIS_RESPONSE', 502, 'JSON 아님');
-  }
+    const text = extractOutputText(raw);
+    if (!text) {
+      finalFailure = { code: 'INVALID_ANALYSIS_RESPONSE', detail: '빈 응답' };
+      continue;
+    }
 
-  // OpenAI가 JSON을 돌려줬다는 이유만으로 그대로 쓰지 않는다.
-  const validation = validateSituationAnalysisForDomains(
-    parsed,
-    [
-      ...runtime.manifest.coveredDomains.map((domain) => domain.id),
-      ...runtime.manifest.uncoveredDomains.map((domain) => domain.id),
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      finalFailure = { code: 'INVALID_ANALYSIS_RESPONSE', detail: 'JSON 아님' };
+      continue;
+    }
+
+    // OpenAI가 JSON을 돌려줬다는 이유만으로 그대로 쓰지 않는다.
+    const validation = validateSituationAnalysisForDomains(
+      parsed,
+      [
+        ...runtime.manifest.coveredDomains.map((domain) => domain.id),
+        ...runtime.manifest.uncoveredDomains.map((domain) => domain.id),
+        runtime.manifest.fallbackDomain.id,
+      ],
       runtime.manifest.fallbackDomain.id,
-    ],
-    runtime.manifest.fallbackDomain.id,
-    runtime.manifest.situationTags,
-  );
-  if (!validation.valid) {
-    // 원인은 남기되 사용자 문장은 남기지 않는다.
-    return failWith('INVALID_ANALYSIS_RESPONSE', 502, validation.errors.join(' / '));
+      runtime.manifest.situationTags,
+    );
+    if (!validation.valid) {
+      // 원인은 남기되 사용자 문장은 남기지 않는다.
+      finalFailure = { code: 'INVALID_ANALYSIS_RESPONSE', detail: validation.errors.join(' / ') };
+      continue;
+    }
+
+    return { ok: true, analysis: parsed as SituationAnalysis<string>, runtime };
   }
 
-  return { ok: true, analysis: parsed as SituationAnalysis<string>, runtime };
+  return failWith(finalFailure.code, 502, finalFailure.detail);
 }
 
 /**

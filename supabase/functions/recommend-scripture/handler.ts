@@ -104,7 +104,9 @@ export async function handleRecommendScripture(
           return scriptureCatalogRuntimeForClient(active, 'legacy');
         },
       };
-  const step = await analyzeSituationRequest(request, analysisDeps);
+  // 사용자가 버튼을 다시 눌러 quota를 연속 소진하지 않도록,
+  // 제공자 호출·응답 검증의 일시적 실패만 같은 quota 소비 안에서 한 번 재시도한다.
+  const step = await analyzeSituationRequest(request, analysisDeps, undefined, { maxAttempts: 2 });
   if (!step.ok) return step.response;
 
   // 분석 결과를 손대지 않고 그대로 Gate에 넘긴다. 태그를 보정하지 않는다.
