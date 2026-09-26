@@ -76,7 +76,7 @@ export type DevDiagnosticCode =
 /** 화면에서 서버 호출을 감싸 넘겨주는 결과. supabase 오류를 여기서 단순한 모양으로 바꾼다. */
 export type InvokeOutcome =
   | { ok: true; data: unknown }
-  | { ok: false; httpStatus?: number };
+  | { ok: false; httpStatus?: number; retryAfterSeconds?: number };
 
 export type RecommendationDeps = {
   ensureSession: () => Promise<SessionSummary>;
@@ -99,7 +99,39 @@ export type RecommendationOutcome =
    * auth: 세션 준비 실패 / rate_limited: 사용량 제한 / general: 그 밖의 실패
    * diagnostic은 개발 모드에서만 화면에 낸다. 사용자 문구(kind)는 바꾸지 않는다.
    */
-  | { status: 'error'; kind: 'auth' | 'rate_limited' | 'general'; diagnostic: DevDiagnosticCode };
+  | {
+      status: 'error';
+      kind: 'auth' | 'rate_limited' | 'general';
+      diagnostic: DevDiagnosticCode;
+      retryAfterSeconds?: number;
+    };
+
+const MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60;
+
+/** Retry-After의 delta-seconds 형식만 받는다. 날짜나 비정상 값은 화면에 쓰지 않는다. */
+export function parseRetryAfterSeconds(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) && seconds >= 1 && seconds <= MAX_RETRY_AFTER_SECONDS
+    ? seconds
+    : undefined;
+}
+
+/** 서버가 계산한 남은 시간을 사용자가 이해할 수 있는 분·시간 안내로 바꾼다. */
+export function formatRateLimitNotice(retryAfterSeconds: number | undefined): string {
+  if (!Number.isSafeInteger(retryAfterSeconds) || retryAfterSeconds === undefined || retryAfterSeconds < 1) {
+    return '잠시 쉬었다가 다시 말씀을 찾아주세요.';
+  }
+
+  const totalMinutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+  if (totalMinutes < 60) return `약 ${totalMinutes}분 후 다시 말씀을 찾아주세요.`;
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes === 0
+    ? `약 ${hours}시간 후 다시 말씀을 찾아주세요.`
+    : `약 ${hours}시간 ${minutes}분 후 다시 말씀을 찾아주세요.`;
+}
 
 const isGateRoute = (value: unknown): value is GateRouteName =>
   typeof value === 'string' && (GATE_ROUTES as readonly string[]).includes(value);
@@ -256,10 +288,14 @@ export async function requestRecommendation(
 
   if (!outcome.ok) {
     // 사용량 제한만 따로 구분한다. 나머지는 모두 일반 오류로 다룬다.
+    const rateLimited = outcome.httpStatus === 429;
     return {
       status: 'error',
-      kind: outcome.httpStatus === 429 ? 'rate_limited' : 'general',
+      kind: rateLimited ? 'rate_limited' : 'general',
       diagnostic: diagnosticForHttpFailure(outcome.httpStatus),
+      ...(rateLimited && outcome.retryAfterSeconds !== undefined
+        ? { retryAfterSeconds: outcome.retryAfterSeconds }
+        : {}),
     };
   }
 

@@ -15,6 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '@/constants/aroeda-theme';
 import { ensureAnonymousSession } from '@/lib/anonymous-session';
 import {
+  formatRateLimitNotice,
+  parseRetryAfterSeconds,
   formatDevDiagnostic,
   requestRecommendation,
   type DevDiagnosticCode,
@@ -45,8 +47,16 @@ async function invokeRecommendScripture(body: {
   const { data, error } = await supabase.functions.invoke('recommend-scripture', { body });
 
   if (error) {
-    const status = (error as { context?: { status?: unknown } }).context?.status;
-    return { ok: false as const, httpStatus: typeof status === 'number' ? status : undefined };
+    const context = (error as {
+      context?: { status?: unknown; headers?: { get?: (name: string) => unknown } };
+    }).context;
+    const status = context?.status;
+    const retryAfterSeconds = parseRetryAfterSeconds(context?.headers?.get?.('Retry-After'));
+    return {
+      ok: false as const,
+      httpStatus: typeof status === 'number' ? status : undefined,
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+    };
   }
 
   return { ok: true as const, data };
@@ -141,7 +151,7 @@ export default function SituationScreen() {
 
     setNotice(
       outcome.kind === 'rate_limited'
-        ? '잠시 쉬었다가 다시 말씀을 찾아주세요.'
+        ? formatRateLimitNotice(outcome.retryAfterSeconds)
         : '지금은 말씀을 찾지 못했어요. 잠시 후 다시 시도해주세요.',
     );
     setDevDiagnostic(outcome.diagnostic);

@@ -11,6 +11,8 @@ import { describe, it } from 'node:test';
 
 import type { SessionSummary } from './anonymous-session.ts';
 import {
+  formatRateLimitNotice,
+  parseRetryAfterSeconds,
   requestRecommendation,
   formatDevDiagnostic,
   type DomainChoiceOption,
@@ -244,14 +246,30 @@ describe('말씀 추천 요청', () => {
   });
 
   it('429는 사용량 제한으로 구분한다', async () => {
-    const { deps } = fakeDeps({ outcome: { ok: false, httpStatus: 429 } });
+    const { deps } = fakeDeps({ outcome: { ok: false, httpStatus: 429, retryAfterSeconds: 43200 } });
     const outcome = await requestRecommendation('두렵습니다.', deps);
 
     assert.deepEqual(outcome, {
       status: 'error',
       kind: 'rate_limited',
       diagnostic: 'FUNCTION_HTTP_429',
+      retryAfterSeconds: 43200,
     });
+  });
+
+  it('Retry-After는 안전한 초 단위 값만 받아 사용자 안내로 바꾼다', () => {
+    assert.equal(parseRetryAfterSeconds('1'), 1);
+    assert.equal(parseRetryAfterSeconds('1800'), 1800);
+    assert.equal(parseRetryAfterSeconds('86400'), 86400);
+    for (const value of [undefined, null, 30, '', '0', '-1', '1.5', '86401', 'Wed, 21 Oct 2015 07:28:00 GMT']) {
+      assert.equal(parseRetryAfterSeconds(value), undefined, String(value));
+    }
+
+    assert.equal(formatRateLimitNotice(undefined), '잠시 쉬었다가 다시 말씀을 찾아주세요.');
+    assert.equal(formatRateLimitNotice(1), '약 1분 후 다시 말씀을 찾아주세요.');
+    assert.equal(formatRateLimitNotice(1800), '약 30분 후 다시 말씀을 찾아주세요.');
+    assert.equal(formatRateLimitNotice(3600), '약 1시간 후 다시 말씀을 찾아주세요.');
+    assert.equal(formatRateLimitNotice(43260), '약 12시간 1분 후 다시 말씀을 찾아주세요.');
   });
 
   it('401은 일반 오류 문구를 쓰되 진단은 따로 구분한다', async () => {

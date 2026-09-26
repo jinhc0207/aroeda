@@ -84,8 +84,16 @@ const respondGate = (route: string, extra: Record<string, unknown> = {}) =>
     error: null,
   } as never);
 
-const respondHttpFailure = (status: number) =>
-  invoke.mockResolvedValue({ data: null, error: { context: { status } } } as never);
+const respondHttpFailure = (status: number, retryAfter?: string) =>
+  invoke.mockResolvedValue({
+    data: null,
+    error: {
+      context: {
+        status,
+        headers: { get: (name: string) => name.toLowerCase() === 'retry-after' ? retryAfter ?? null : null },
+      },
+    },
+  } as never);
 
 const respondNetworkFailure = () =>
   invoke.mockResolvedValue({ data: null, error: { message: 'network' } } as never);
@@ -139,14 +147,23 @@ describe('첫 화면 · 개발 진단 — function invoke 단계', () => {
     expect(screen.getByLabelText('개발 진단').props.children).toBe('개발 진단: FUNCTION_HTTP_401');
   });
 
-  it('429: 기존 사용량 제한 문구 그대로 + FUNCTION_HTTP_429', async () => {
-    respondHttpFailure(429);
+  it('429: 서버가 계산한 남은 시간 + FUNCTION_HTTP_429', async () => {
+    respondHttpFailure(429, '43200');
+    await renderScreen();
+
+    await submit();
+
+    expect(await screen.findByText('약 12시간 후 다시 말씀을 찾아주세요.')).toBeTruthy();
+    expect(screen.getByLabelText('개발 진단').props.children).toBe('개발 진단: FUNCTION_HTTP_429');
+  });
+
+  it('429에 안전한 대기시간이 없으면 기존 안내를 사용한다', async () => {
+    respondHttpFailure(429, 'not-a-number');
     await renderScreen();
 
     await submit();
 
     expect(await screen.findByText('잠시 쉬었다가 다시 말씀을 찾아주세요.')).toBeTruthy();
-    expect(screen.getByLabelText('개발 진단').props.children).toBe('개발 진단: FUNCTION_HTTP_429');
   });
 
   it('5xx: 일반 문구 + FUNCTION_HTTP_5XX', async () => {
