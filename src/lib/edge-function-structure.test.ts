@@ -45,7 +45,7 @@ import {
   isCoverageGapDomain,
   recordCoverageGapIfNeeded,
 } from '../../supabase/functions/_shared/coverage-gap.ts';
-import { UNCOVERED_DOMAINS, FALLBACK_DOMAIN } from '../data/situation-domains.ts';
+import { FALLBACK_DOMAIN } from '../data/situation-domains.ts';
 
 
 const projectRoot = path.resolve(import.meta.dirname, '../..');
@@ -485,9 +485,20 @@ describe('Coverage Gap Collector', () => {
     return files[0] as string;
   };
 
-  it('기록 가능한 영역은 기존 uncovered 정의 8개뿐이다', () => {
-    assert.deepEqual([...COVERAGE_GAP_DOMAINS].sort(), [...UNCOVERED_DOMAINS, FALLBACK_DOMAIN].sort());
-    assert.equal(COVERAGE_GAP_DOMAINS.length, 8);
+  const currentPolicyMigrationSql = () => {
+    const dir = path.join(projectRoot, 'supabase/migrations');
+    const files = readdirSync(dir)
+      .filter((name) => name.endsWith('.sql'))
+      .map((name) => readFileSync(path.join(dir, name), 'utf8'))
+      .filter((sql) => sql.includes('create or replace function public.record_coverage_gap(p_primary_domain text)'));
+
+    assert.equal(files.length, 1, '현재 Coverage Gap 기록 정책을 교체한 migration이 하나가 아닙니다.');
+    return files[0] as string;
+  };
+
+  it('현재 기록 가능한 영역은 분류 밖 fallback 하나뿐이다', () => {
+    assert.deepEqual(COVERAGE_GAP_DOMAINS, [FALLBACK_DOMAIN]);
+    assert.equal(COVERAGE_GAP_DOMAINS.length, 1);
 
     for (const covered of ['fear_uncertainty', 'grief_loss', 'decision_guidance']) {
       assert.equal(isCoverageGapDomain(covered), false, `${covered}가 허용되었습니다.`);
@@ -510,7 +521,10 @@ describe('Coverage Gap Collector', () => {
     assert.deepEqual(recorded, []);
 
     await recordCoverageGapIfNeeded({ route: 'no_coverage', primaryDomain: 'chronic_illness' }, recorder);
-    assert.deepEqual(recorded, ['chronic_illness']);
+    assert.deepEqual(recorded, []);
+
+    await recordCoverageGapIfNeeded({ route: 'no_coverage', primaryDomain: 'other_uncovered' }, recorder);
+    assert.deepEqual(recorded, ['other_uncovered']);
   });
 
   it('설정이 없으면 조용히 넘어가고 고정 메시지만 남긴다', async () => {
@@ -545,9 +559,9 @@ describe('Coverage Gap Collector', () => {
       serviceRoleKey: 'server-only-key',
       fetchImpl,
     });
-    await recorder('loneliness_isolation');
+    await recorder('other_uncovered');
 
-    assert.deepEqual(JSON.parse(sentBody ?? '{}'), { p_primary_domain: 'loneliness_isolation' });
+    assert.deepEqual(JSON.parse(sentBody ?? '{}'), { p_primary_domain: 'other_uncovered' });
   });
 
   it('recommend-scripture만 collector를 연결한다', () => {
@@ -631,6 +645,34 @@ describe('Coverage Gap Collector', () => {
     for (const banned of ['user_id uuid', 'auth.uid()', 'situation', 'raw_text', 'ip_address', 'session_id', 'device_id']) {
       const section = sqlWithoutComments.slice(sqlWithoutComments.indexOf('coverage_gap_daily'));
       assert.equal(section.includes(banned), false, `${banned}가 통계에 있습니다.`);
+    }
+  });
+
+  it('후속 migration은 과거 행을 보존하면서 앞으로 fallback만 기록한다', () => {
+    const sql = currentPolicyMigrationSql();
+    const body = stripComments(sql);
+
+    assert.ok(body.includes("p_primary_domain is distinct from 'other_uncovered'"));
+    assert.ok(body.includes("(now() at time zone 'Asia/Seoul')::date"));
+    assert.ok(body.includes('on conflict (bucket_date, primary_domain) do update'));
+    assert.ok(body.includes('gap_count = c.gap_count + 1'));
+    assert.ok(body.includes('security definer'));
+    assert.ok(body.includes('set search_path = private, pg_catalog'));
+    assert.ok(body.includes('revoke all on function public.record_coverage_gap(text) from public;'));
+    assert.ok(body.includes('from anon, authenticated, service_role;'));
+    assert.ok(body.includes('grant execute on function public.record_coverage_gap(text) to service_role;'));
+    assert.equal(body.includes('alter table private.coverage_gap_daily'), false, '과거 행의 CHECK 제약을 바꾸면 안 됩니다.');
+
+    for (const formerlyUncovered of [
+      'loneliness_isolation',
+      'family_parenting_conflict',
+      'burnout_exhaustion',
+      'spiritual_dryness',
+      'financial_hardship',
+      'chronic_illness',
+      'relationship_conflict_forgiveness',
+    ]) {
+      assert.equal(body.includes(formerlyUncovered), false, `${formerlyUncovered} 신규 기록이 다시 열렸습니다.`);
     }
   });
 });
@@ -824,7 +866,7 @@ describe('Research Queue v1 (SQL)', () => {
     );
   });
 
-  it('known uncovered 7개는 domain_expansion, other_uncovered는 taxonomy_discovery다', () => {
+  it('과거 확장 연구 7개는 domain_expansion, other_uncovered는 taxonomy_discovery다', () => {
     const sql = queueSql();
     const match = sql.slice(sql.indexOf('content_research_queue_domain_kind_match'));
 
@@ -994,7 +1036,7 @@ describe('Research Queue v1 · 갱신 규칙 (SQL)', () => {
       insert.includes("when g.primary_domain = 'other_uncovered' then 'blocked'"),
       'other_uncovered가 blocked로 생성되지 않습니다.',
     );
-    assert.ok(insert.includes("else 'queued'"), 'known uncovered가 queued로 생성되지 않습니다.');
+    assert.ok(insert.includes("else 'queued'"), '과거 확장 연구 영역이 queued로 생성되지 않습니다.');
     assert.ok(
       insert.includes("when g.primary_domain = 'other_uncovered' then 'taxonomy_discovery'"),
     );
@@ -1158,7 +1200,7 @@ describe('Prioritizer 읽기 전용 RPC (SQL)', () => {
     }
   });
 
-  it('queued + domain_expansion만, known uncovered 7개만 돌려준다', () => {
+  it('queued + domain_expansion만, 과거 확장 연구 7개만 돌려준다', () => {
     const sql = rpcSql();
     const where = sql.slice(sql.indexOf('where q.research_kind'), sql.indexOf('order by'));
 

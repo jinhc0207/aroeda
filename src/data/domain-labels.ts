@@ -7,13 +7,13 @@
  *
  * 지키는 것:
  *   - 내부 영문 domain 코드(fear_uncertainty 등)는 어떤 화면에도, 접근성 문구에도 노출하지 않는다.
- *   - 17개 covered + uncovered 영역을 모두 정의한다. other_uncovered는 사용자가 고를 수 없으므로 넣지 않는다.
+ *   - 카드가 있는 17개 영역을 모두 정의한다. other_uncovered는 사용자가 고를 수 없으므로 넣지 않는다.
  *   - 개발자용 설명(DOMAIN_DESCRIPTIONS)을 화면에 그대로 옮기지 않는다. 버튼에 쓸 만큼 짧게 줄인 이름이다.
  */
 
-import { COVERED_DOMAINS, UNCOVERED_DOMAINS, type CoveredDomain, type UncoveredDomain } from './situation-domains.ts';
+import { CARD_COVERED_DOMAINS, type CardCoveredDomain } from './situation-domains.ts';
 
-export type ChoosableDomain = CoveredDomain | UncoveredDomain;
+export type ChoosableDomain = CardCoveredDomain;
 
 export const DOMAIN_LABELS: Record<ChoosableDomain, string> = {
   fear_uncertainty: '두려움과 불확실함',
@@ -36,7 +36,7 @@ export const DOMAIN_LABELS: Record<ChoosableDomain, string> = {
   relationship_conflict_forgiveness: '관계의 갈등과 용서',
 };
 
-const choosableDomainSet = new Set<string>([...COVERED_DOMAINS, ...UNCOVERED_DOMAINS]);
+const choosableDomainSet = new Set<string>(CARD_COVERED_DOMAINS);
 
 /** other_uncovered를 포함한 모르는 값이 들어와도 예외를 던지지 않는다. */
 export function isLabeledDomain(value: unknown): value is ChoosableDomain {

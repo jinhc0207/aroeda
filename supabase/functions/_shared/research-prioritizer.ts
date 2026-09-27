@@ -15,7 +15,7 @@
  *          기도 내용, OpenAI 원본 응답은 이 파일 어디에도 들어오지 않는다.
  */
 
-import { DOMAIN_DESCRIPTIONS } from './situation-domains.ts';
+import { CARD_COVERED_DOMAINS, DOMAIN_DESCRIPTIONS } from './situation-domains.ts';
 import {
   DEMAND_INTERPRETATIONS,
   InvalidCoverageSnapshotError,
@@ -60,14 +60,17 @@ export type EvaluationCandidate = {
   firstDetectedDate: string;
   lastDetectedDate: string;
   evidenceVersion: number;
-  /** 이 영역을 다루는 활성 Scripture Card가 없다는 사실 (후보 검사로 보장된 값) */
-  hasActiveScriptureCard: false;
+  /** 현재 정적 카탈로그에서 이 영역을 다루는 활성 Scripture Card가 있는지 */
+  hasActiveScriptureCard: boolean;
 };
 
 export type EvaluationPayload = {
   snapshotId: string;
   candidates: EvaluationCandidate[];
-  coveredDomains: string[];
+  /** 기존 handoff·지문 계약이 비교하는 초기 연구 기준선 10개 */
+  initialResearchBaselineDomains: string[];
+  /** 현재 카드가 실제로 있는 17개 */
+  cardCoveredDomains: string[];
 };
 
 export type CandidateEvaluation = {
@@ -93,6 +96,7 @@ export type PrioritizerOutcome =
   | { status: 'stale_evidence'; recommendedDomain: null };
 
 const researchable = new Set(RESEARCHABLE_DOMAINS);
+const cardCovered = new Set<string>(CARD_COVERED_DOMAINS);
 const demandValues = new Set<string>(DEMAND_INTERPRETATIONS);
 
 const isPositiveInt = (value: unknown) =>
@@ -113,7 +117,8 @@ export function isValidQueueDate(value: unknown): value is string {
  * AI를 부르기 전에 코드가 후보를 정한다.
  *
  * other_uncovered, taxonomy_discovery, blocked/ready/researching/completed는 절대 후보가 되지 않는다.
- * 이미 카드가 있는 영역(activeCoveredDomains)도 제외한다.
+ * 초기 연구 기준선(activeCoveredDomains)에 포함된 영역도 제외한다.
+ * activeCoveredDomains라는 이름은 기존 handoff·저장 계약 때문에 유지한다.
  * 숫자와 날짜가 앞뒤가 맞지 않는 행도 제외한다. (DB 제약이 있어도 여기서 한 번 더 본다)
  */
 export function selectEligibleCandidates(
@@ -155,7 +160,7 @@ async function sha256Hex(value: string): Promise<string> {
  * 판단 시점을 식별하는 값.
  *
  * 후보의 근거 수치가 하나라도 달라지거나, 후보가 늘거나 줄거나,
- * 지금 다루는 영역 목록이 달라지면 값이 달라진다.
+ * 초기 연구 기준선 목록이 달라지면 값이 달라진다.
  * 입력 순서가 달라도 같은 상태면 같은 값이 나온다. 개인정보는 들어가지 않는다.
  */
 export async function computeSnapshotId(
@@ -190,15 +195,15 @@ export async function computeSnapshotId(
  */
 export async function buildEvaluationPayload(
   candidates: EligibleResearchQueueItem[],
-  activeCoveredDomains: readonly string[],
+  initialResearchBaselineDomains: readonly string[],
 ): Promise<EvaluationPayload> {
   // 모르는 값이 섞여 있으면 여기서 멈춘다.
-  const covered = sanitizeActiveCoveredDomains(activeCoveredDomains);
+  const baseline = sanitizeActiveCoveredDomains(initialResearchBaselineDomains);
   // 타입을 우회해 raw Queue가 들어와도 여기서 다시 막는다.
-  const safe = selectEligibleCandidates(candidates as ResearchQueueItem[], covered);
+  const safe = selectEligibleCandidates(candidates as ResearchQueueItem[], baseline);
 
   return {
-    snapshotId: await computeSnapshotId(safe, covered),
+    snapshotId: await computeSnapshotId(safe, baseline),
     candidates: safe.map((item) => ({
       targetDomain: item.targetDomain,
       domainDescription: DOMAIN_DESCRIPTIONS[item.targetDomain as never] ?? '',
@@ -208,10 +213,10 @@ export async function buildEvaluationPayload(
       firstDetectedDate: item.firstDetectedDate,
       lastDetectedDate: item.lastDetectedDate,
       evidenceVersion: item.evidenceVersion,
-      // 후보 검사에서 활성 카드가 있는 영역을 이미 제외했으므로 사실이다.
-      hasActiveScriptureCard: false,
+      hasActiveScriptureCard: cardCovered.has(item.targetDomain),
     })),
-    coveredDomains: covered,
+    initialResearchBaselineDomains: baseline,
+    cardCoveredDomains: sanitizeActiveCoveredDomains(CARD_COVERED_DOMAINS),
   };
 }
 

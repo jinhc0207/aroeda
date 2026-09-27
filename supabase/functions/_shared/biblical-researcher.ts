@@ -186,8 +186,8 @@ const riskCategories = new Set<string>(RISK_CATEGORIES);
 /**
  * 연구 의뢰서를 만든다.
  *
- * 지금 카드가 없는 7개 영역만 연구 대상이다.
- * other_uncovered, 이미 카드가 있는 영역, 모르는 값은 모두 거절한다.
+ * 추가 연구 정책에 포함된 7개 영역만 연구 대상이다.
+ * other_uncovered, 초기 연구 기준선 영역, 모르는 값은 모두 거절한다.
  * 영역 설명은 새로 쓰지 않고 기존 정의를 그대로 가져온다.
  */
 export function buildResearchBrief(input: {
@@ -202,7 +202,7 @@ export function buildResearchBrief(input: {
 
   const activeCoveredDomains = sanitizeActiveCoveredDomains(input.activeCoveredDomains);
   if (activeCoveredDomains.includes(input.targetDomain)) {
-    throw new InvalidResearchBriefError(`이미 카드가 있는 영역입니다: ${input.targetDomain}`);
+    throw new InvalidResearchBriefError(`초기 연구 기준선 영역이라 확장 연구 대상이 아닙니다: ${input.targetDomain}`);
   }
 
   if (!Number.isInteger(input.evidenceVersion) || input.evidenceVersion < 1) {

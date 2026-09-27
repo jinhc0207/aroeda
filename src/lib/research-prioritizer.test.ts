@@ -7,9 +7,14 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
-import { COVERED_DOMAINS } from '../../supabase/functions/_shared/situation-domains.ts';
+import {
+  CARD_COVERED_DOMAINS,
+  COVERED_DOMAINS,
+  FALLBACK_DOMAIN,
+} from '../../supabase/functions/_shared/situation-domains.ts';
 import {
   InvalidCoverageSnapshotError,
   PRIORITIZER_RESULT_SCHEMA,
@@ -29,8 +34,21 @@ import {
   type ResearchQueueItem,
 } from '../../supabase/functions/_shared/research-prioritizer.ts';
 
-/** 지금 카드가 있는 영역 (판단 시점의 snapshot으로 넘긴다) */
+/** 과거 저장 계약 이름은 activeCovered지만 실제 의미는 초기 연구 기준선이다. */
 const activeCovered = [...COVERED_DOMAINS];
+const prioritizerContractSource = readFileSync(
+  new URL('../../supabase/functions/_shared/research-prioritizer-contract.ts', import.meta.url),
+  'utf8',
+);
+
+const migrationSource = (name: string) =>
+  readFileSync(new URL(`../../supabase/migrations/${name}`, import.meta.url), 'utf8');
+
+const quotedValues = (source: string, pattern: RegExp, label: string): string[] => {
+  const body = source.match(pattern)?.[1];
+  assert.ok(body, `${label} 목록을 찾지 못했습니다.`);
+  return [...body.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+};
 
 const queueItem = (overrides: Partial<ResearchQueueItem> = {}): ResearchQueueItem => ({
   targetDomain: 'financial_hardship',
@@ -94,11 +112,11 @@ describe('Research Prioritizer · 후보 선별', () => {
     );
   });
 
-  it('이미 카드가 있는 영역은 후보에서 빠진다', () => {
-    const withCard = [...activeCovered, 'financial_hardship'];
-    assert.deepEqual(selectEligibleCandidates([queueItem()], withCard), []);
+  it('초기 연구 기준선에 편입된 영역은 후보에서 빠진다', () => {
+    const expandedBaseline = [...activeCovered, 'financial_hardship'];
+    assert.deepEqual(selectEligibleCandidates([queueItem()], expandedBaseline), []);
     assert.equal(
-      selectEligibleCandidates([queueItem({ targetDomain: 'burnout_exhaustion' })], withCard).length,
+      selectEligibleCandidates([queueItem({ targetDomain: 'burnout_exhaustion' })], expandedBaseline).length,
       1,
     );
   });
@@ -127,9 +145,10 @@ describe('Research Prioritizer · 후보 선별', () => {
     }
   });
 
-  it('알려진 uncovered 7개만 후보가 될 수 있다', () => {
+  it('확장 연구 7개만 후보가 될 수 있고 카드 coverage 분할 상수에서 파생하지 않는다', () => {
     assert.equal(RESEARCHABLE_DOMAINS.length, 7);
     assert.equal(RESEARCHABLE_DOMAINS.includes('other_uncovered'), false);
+    assert.equal(prioritizerContractSource.includes('UNCOVERED_DOMAINS'), false);
 
     for (const domain of RESEARCHABLE_DOMAINS) {
       assert.equal(selectEligibleCandidates([queueItem({ targetDomain: domain })], activeCovered).length, 1);
@@ -138,9 +157,45 @@ describe('Research Prioritizer · 후보 선별', () => {
       assert.deepEqual(selectEligibleCandidates([queueItem({ targetDomain: covered })], activeCovered), []);
     }
   });
+
+  it('연구 정책 7개가 Queue 입력과 네 SQL 계약에서 같은 값·순서를 쓴다', async () => {
+    const { QUEUE_ALLOWED_DOMAINS } = await import(
+      '../../supabase/functions/_shared/research-prioritizer-edge.ts'
+    );
+    const expected = [...RESEARCHABLE_DOMAINS];
+    assert.deepEqual(QUEUE_ALLOWED_DOMAINS, expected);
+
+    const coverage = quotedValues(
+      migrationSource('20260828162853_coverage_gap_daily.sql'),
+      /constraint coverage_gap_domain_allowed check \([\s\S]*?primary_domain in \(([\s\S]*?)\)\s*\)/,
+      'coverage_gap_domain_allowed',
+    );
+    assert.deepEqual(coverage, [...expected, FALLBACK_DOMAIN]);
+
+    const queue = quotedValues(
+      migrationSource('20260828223535_content_research_queue.sql'),
+      /research_kind = 'domain_expansion'[\s\S]*?target_domain in \(([\s\S]*?)\)/,
+      'content_research_queue domain_expansion',
+    );
+    assert.deepEqual(queue, expected);
+
+    const readRpc = quotedValues(
+      migrationSource('20260828231933_research_queue_prioritizer_read_rpc.sql'),
+      /and q\.target_domain in \(([\s\S]*?)\)/,
+      'prioritizer read RPC',
+    );
+    assert.deepEqual(readRpc, expected);
+
+    const decision = quotedValues(
+      migrationSource('20260902030000_prioritizer_decision.sql'),
+      /constraint prioritizer_decision_target_domain_allowed check \([\s\S]*?target_domain in \(([\s\S]*?)\)\s*\)/,
+      'prioritizer decision',
+    );
+    assert.deepEqual(decision, expected);
+  });
 });
 
-describe('Research Prioritizer · 활성 영역 목록 정리', () => {
+describe('Research Prioritizer · 초기 연구 기준선 목록 정리', () => {
   it('아는 영역만 남기고 중복을 없애고 정렬한다', () => {
     const cleaned = sanitizeActiveCoveredDomains(['grief_loss', 'fear_uncertainty', 'grief_loss']);
     assert.deepEqual(cleaned, ['fear_uncertainty', 'grief_loss']);
@@ -171,7 +226,12 @@ describe('Research Prioritizer · AI 입력', () => {
       activeCovered,
     );
 
-    assert.deepEqual(Object.keys(payload).sort(), ['candidates', 'coveredDomains', 'snapshotId']);
+    assert.deepEqual(Object.keys(payload).sort(), [
+      'candidates',
+      'cardCoveredDomains',
+      'initialResearchBaselineDomains',
+      'snapshotId',
+    ]);
     assert.deepEqual(Object.keys(payload.candidates[0]).sort(), [
       'domainDescription',
       'evidenceVersion',
@@ -183,8 +243,9 @@ describe('Research Prioritizer · AI 입력', () => {
       'targetDomain',
       'totalGapCount',
     ]);
-    assert.equal(payload.candidates[0].hasActiveScriptureCard, false);
-    assert.deepEqual(payload.coveredDomains, [...activeCovered].sort());
+    assert.equal(payload.candidates[0].hasActiveScriptureCard, true);
+    assert.deepEqual(payload.initialResearchBaselineDomains, [...activeCovered].sort());
+    assert.deepEqual(payload.cardCoveredDomains, [...CARD_COVERED_DOMAINS].sort());
   });
 
   it('후보 검사를 건너뛴 raw Queue를 넘겨도 걸러진다', async () => {
@@ -204,7 +265,7 @@ describe('Research Prioritizer · AI 입력', () => {
     assert.equal(JSON.stringify(payload).includes('other_uncovered'), false);
   });
 
-  it('모르는 활성 영역이 있으면 입력을 만들지 않는다', async () => {
+  it('모르는 기준선 영역이 있으면 입력을 만들지 않는다', async () => {
     await assert.rejects(
       () =>
         buildEvaluationPayload(selectEligibleCandidates([queueItem()], activeCovered), [
@@ -291,12 +352,16 @@ describe('Research Prioritizer · AI 입력', () => {
       '빈도가 높다는 이유만으로 순위를 정하지 마십시오',
       'coverageGapDistinctness',
       '실제 Scripture Card의 내용이 주어지지 않습니다',
+      '현재 카드 보유 여부를 뜻하지 않으며',
+      '현재 정적 기준 카탈로그에서 Scripture Card가 있는 영역(17개, 사실 확인용)',
+      '초기 연구 기준선 영역(10개, 비교용이며 현재 카드 coverage 전체가 아님)',
       'snapshotId를 그대로 돌려주십시오',
     ]) {
       assert.ok(instructions.includes(marker), `지시문에 없습니다: ${marker}`);
     }
 
     assert.ok(buildPrioritizerInstructions([]).includes('- (없음)'));
+    assert.ok(buildPrioritizerInstructions([]).includes('financial_hardship'));
   });
 
   it('응답 구조에 성경본문·카드·기도문 자리가 없다', () => {
@@ -369,7 +434,7 @@ describe('Research Prioritizer · 판단 시점(snapshotId)', () => {
     assert.notEqual(removed, before);
   });
 
-  it('다루는 영역이 바뀌면 값이 달라진다', async () => {
+  it('초기 연구 기준선이 바뀌면 값이 달라진다', async () => {
     const before = await computeSnapshotId(base, activeCovered);
     const after = await computeSnapshotId(base, [...activeCovered, 'loneliness_isolation']);
     assert.notEqual(before, after);
@@ -659,7 +724,7 @@ describe('Research Prioritizer · 합의', () => {
     assert.equal(outcome.recommendedDomain, null);
   });
 
-  it('모르는 활성 영역이 오면 판단하지 않는다', async () => {
+  it('모르는 기준선 영역이 오면 판단하지 않는다', async () => {
     const id = await snapshotIdOf();
     const outcome = await decidePriority({
       queue,
@@ -696,7 +761,7 @@ describe('Research Prioritizer · 합의', () => {
     assert.deepEqual(outcome, { status: 'stale_evidence', recommendedDomain: null });
   });
 
-  it('다루는 영역이 바뀌어도 stale_evidence다', async () => {
+  it('초기 연구 기준선이 바뀌어도 stale_evidence다', async () => {
     const id = await snapshotIdOf();
     const outcome = await decidePriority({
       queue,

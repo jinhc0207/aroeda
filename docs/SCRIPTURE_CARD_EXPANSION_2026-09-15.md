@@ -32,6 +32,25 @@
 확인되어 일부 기존 카드의 `situationTags`와 `pastoralFunction`도 좁게 보강했다. 이 보강은
 말씀 본문이나 사용자에게 보여 주는 해설을 바꾸지 않는다.
 
+### 현재 카드 coverage와 과거 연구 분할
+
+사용자 추천에서 실제 카드 보유 여부를 나타내는 단일 원본은 `CARD_COVERED_DOMAINS`이며,
+현재 17개 표준 영역을 모두 포함한다. `COVERED_DOMAINS` 10개와 `UNCOVERED_DOMAINS` 7개라는
+기존 이름은 frozen analysis 지문과 2026-09-15 연구 파이프라인의 기준을 보존하기 위한 과거
+분할이다. 따라서 `UNCOVERED_DOMAINS`의 일곱 영역도 현재 사용자 추천 관점에서는 uncovered가
+아니다.
+
+`RESEARCHABLE_DOMAINS`는 카드 보유 여부에서 파생하지 않는 별도 연구 정책 목록으로 유지한다.
+새로운 coverage gap 기록은 17개 영역 밖의 fallback인 `other_uncovered`만 받는다. 기존
+`coverage_gap_daily`에 저장된 일곱 영역의 과거 행과 CHECK 제약은 연구 이력 보존을 위해
+삭제하거나 다시 분류하지 않는다.
+
+Research Prioritizer가 모델에 보내는 입력도 두 의미를 분리한다. 후보에는 실제 활성 카드
+보유 여부를 담고, 현재 카드 보유 17개와 초기 연구 기준선 10개를 서로 다른 항목으로 전달한다.
+따라서 과거 7개 영역을 추가 연구 대상으로 유지하더라도 "현재 카드가 없다"는 거짓 전제를
+모델에 주지 않는다. 기존 handoff·지문 필드의 `activeCoveredDomains` 이름은 저장 계약 호환성을
+위해 유지하지만, 그 값의 실제 의미는 초기 연구 기준선 10개다.
+
 ## 2. 신규 20장 표
 
 | id | domain | referenceLabel | 대표 상황(focus) |

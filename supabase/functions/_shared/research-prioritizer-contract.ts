@@ -8,10 +8,29 @@
  * 아직 실제 AI를 부르지 않는다. 규격만 준비한 상태다.
  */
 
-import { DOMAIN_DESCRIPTIONS, FALLBACK_DOMAIN, UNCOVERED_DOMAINS, isSituationDomain } from './situation-domains.ts';
+import {
+  CARD_COVERED_DOMAINS,
+  DOMAIN_DESCRIPTIONS,
+  FALLBACK_DOMAIN,
+  isSituationDomain,
+} from './situation-domains.ts';
 
-/** 연구 대상이 될 수 있는 영역: 이미 알고 있지만 카드가 없는 7개 (other_uncovered 제외) */
-export const RESEARCHABLE_DOMAINS: readonly string[] = [...UNCOVERED_DOMAINS];
+/**
+ * 확장 연구 정책이 다루는 7개 영역(other_uncovered 제외).
+ *
+ * 카드 보유 여부와 독립된 정책 목록이다. 2026-09-15 확장 뒤 일곱 영역 모두 카드가 3장씩
+ * 있지만, 기존 연구 이력·스키마·게시 후보 계약을 읽을 수 있도록 명시적으로 유지한다.
+ * 현재 coverage-gap 경로에서는 새 근거가 생기지 않는다.
+ */
+export const RESEARCHABLE_DOMAINS: readonly string[] = [
+  'loneliness_isolation',
+  'family_parenting_conflict',
+  'burnout_exhaustion',
+  'spiritual_dryness',
+  'financial_hardship',
+  'chronic_illness',
+  'relationship_conflict_forgiveness',
+];
 
 export const DEMAND_INTERPRETATIONS = ['low', 'moderate', 'high'] as const;
 export type DemandInterpretation = (typeof DEMAND_INTERPRETATIONS)[number];
@@ -34,11 +53,14 @@ export class InvalidCoverageSnapshotError extends Error {
 }
 
 /**
- * 지금 다루는 영역 목록을 안전하게 정리한다.
+ * 연구 파이프라인이 보관하는 영역 snapshot을 안전하게 정리한다.
  *
  * - 아뢰다가 아는 영역만 허용한다. 모르는 문자열이 하나라도 있으면 실패한다(fail-closed).
  * - other_uncovered는 카드가 있는 영역이 아니므로 여기에 올 수 없다.
  * - 중복을 없애고 정렬한다.
+ *
+ * 함수 이름은 기존 저장·handoff 계약을 위해 유지한다. 현재 호출자가 넣는 값은
+ * 현재 카드 coverage 17개가 아니라 초기 연구 기준선 10개다.
  */
 export function sanitizeActiveCoveredDomains(domains: readonly string[]): string[] {
   if (!Array.isArray(domains)) {
@@ -62,8 +84,9 @@ export function sanitizeActiveCoveredDomains(domains: readonly string[]): string
  * 지금 다루고 있는 영역 목록은 상수로 굳히지 않고, 판단 시점의 snapshot을 받아서 넣는다.
  * 받은 목록은 그대로 쓰지 않고 아는 영역만 남긴다.
  */
-export function buildPrioritizerInstructions(activeCoveredDomains: readonly string[]): string {
-  const safeCovered = sanitizeActiveCoveredDomains(activeCoveredDomains);
+export function buildPrioritizerInstructions(initialResearchBaselineDomains: readonly string[]): string {
+  const safeBaseline = sanitizeActiveCoveredDomains(initialResearchBaselineDomains);
+  const currentCardCovered = sanitizeActiveCoveredDomains(CARD_COVERED_DOMAINS);
   return `당신은 아뢰다의 Research Prioritizer입니다.
 
 당신이 하는 일은 하나뿐입니다.
@@ -81,7 +104,8 @@ export function buildPrioritizerInstructions(activeCoveredDomains: readonly stri
 
 [숫자의 의미]
 
-gap_count는 "그 영역에서 지금 카드로 다룰 수 없다고 판정된 횟수"입니다.
+gap_count는 과거 coverage-gap 수집 시점에 "그 영역에서 카드로 다룰 수 없다고 판정된 횟수"입니다.
+현재 카드 보유 여부를 뜻하지 않으며, 후보 영역에는 지금 활성 Scripture Card가 있을 수 있습니다.
 고유 사용자 수가 아닙니다. 사용자 수, 사람 수, 몇 명이라고 표현하지 마십시오.
 
 숫자는 이미 계산되어 주어집니다. 다시 계산하거나 바꾸지 마십시오.
@@ -101,8 +125,8 @@ A. pastoralNeed (1~5)
 개별 사용자의 심각도를 추측하지 않습니다.
 
 B. coverageGapDistinctness (1~5)
-지금 다루고 있는 영역들의 핵심 삶의 문제와 견주어,
-이 영역이 따로 연구할 만큼 독립적인가.
+현재 카드 보유 영역들의 핵심 삶의 문제와 견주어,
+이 영역을 추가로 연구하는 일이 기존 카드와 구분되는 보강 가치를 갖는가.
 감정이 비슷하다는 이유만으로 같은 영역으로 묶지 마십시오.
 독립적일수록 점수가 높습니다.
 
@@ -132,9 +156,13 @@ recommendedRank는 1부터 시작하는 정수이며, 후보마다 서로 다른
 주어진 후보를 모두 평가하고, 정해진 항목만 채웁니다.
 성경 구절, 카드 문안, 기도문, 새 분류 이름을 출력에 넣지 마십시오.
 
-지금 아뢰다가 이미 다루고 있는 영역(참고용):
+현재 정적 기준 카탈로그에서 Scripture Card가 있는 영역(${currentCardCovered.length}개, 사실 확인용):
 
-${safeCovered.length > 0 ? domainList(safeCovered) : '- (없음)'}`;
+${domainList(currentCardCovered)}
+
+초기 연구 기준선 영역(10개, 비교용이며 현재 카드 coverage 전체가 아님):
+
+${safeBaseline.length > 0 ? domainList(safeBaseline) : '- (없음)'}`;
 }
 
 /**

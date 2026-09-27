@@ -4,7 +4,7 @@
  * 내부 전용 기능이다. 앱 사용자가 부르는 기능이 아니다.
  *
  * 흐름:
- *   POST 확인 → 내부 권한 확인 → Queue 읽기(RPC) → 지금 카드가 다루는 영역
+ *   POST 확인 → 내부 권한 확인 → Queue 읽기(RPC) → 초기 연구 기준선
  *   → 후보 선별 → snapshotId → Evaluator A/B 각각 독립 호출 → 검증 → 합의 판단
  *   → 합의가 났을 때만 그 판단을 표에 적고(RPC) 번호를 받아 함께 돌려준다
  *
@@ -82,7 +82,7 @@ export type Handlerdeps = {
   getApiKey: () => string | undefined;
   /** Evaluator 한 명분 호출. A/B를 각각 따로 부른다. */
   callOpenAI: (payload: Record<string, unknown>, apiKey: string) => Promise<unknown>;
-  /** 지금 카드가 다루는 영역 (기본값은 canonical 카드 데이터에서 뽑는다) */
+  /** 초기 연구 기준선. 기존 저장 계약 이름을 유지하며 canonical 카드 데이터로 존재를 확인한다. */
   getActiveCoveredDomains?: () => string[];
   /**
    * 합의된 판단을 표에 적고 번호를 돌려준다. 합의가 났을 때만, 최대 한 번 부른다.

@@ -31,7 +31,7 @@ import {
   validateCatalogSnapshot,
 } from '../../supabase/functions/_shared/automatic-scripture-catalog-contract.ts';
 import { SCRIPTURE_CARDS } from '../../supabase/functions/_shared/scripture-cards.ts';
-import { COVERED_DOMAINS, UNCOVERED_DOMAINS } from '../../supabase/functions/_shared/situation-domains.ts';
+import { CARD_COVERED_DOMAINS } from '../../supabase/functions/_shared/situation-domains.ts';
 import {
   APP_DOMAIN_LABELS,
   buildBaselineCatalog,
@@ -63,7 +63,7 @@ describe('자동 카탈로그 계약 · 기준 카탈로그', () => {
     assert.equal(base.cards.length, 51);
     assert.deepEqual(
       base.domains.map((domain) => domain.id),
-      [...COVERED_DOMAINS, ...UNCOVERED_DOMAINS].sort(),
+      [...CARD_COVERED_DOMAINS].sort(),
     );
     for (const domain of base.domains) assert.equal(domain.displayName, APP_DOMAIN_LABELS[domain.id]);
   });

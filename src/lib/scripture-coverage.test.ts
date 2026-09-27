@@ -12,11 +12,13 @@ import { describe, it } from 'node:test';
 
 import { SCRIPTURE_CARDS } from '../data/scripture-cards.ts';
 import {
+  CARD_COVERED_DOMAINS,
   COVERED_DOMAINS,
   DOMAIN_DESCRIPTIONS,
   FALLBACK_DOMAIN,
   SITUATION_DOMAINS,
   UNCOVERED_DOMAINS,
+  isCoveredDomainName,
   isSituationDomain,
 } from '../data/situation-domains.ts';
 import { coveredDomainsInCards, getCoverage } from './scripture-coverage.ts';
@@ -27,6 +29,8 @@ describe('Situation Domain 사전', () => {
   it('domain 값에 중복이 없다', () => {
     assert.equal(new Set(SITUATION_DOMAINS).size, SITUATION_DOMAINS.length);
     assert.equal(SITUATION_DOMAINS.length, COVERED_DOMAINS.length + UNCOVERED_DOMAINS.length + 1);
+    assert.equal(CARD_COVERED_DOMAINS.length, 17);
+    assert.deepEqual(CARD_COVERED_DOMAINS, [...COVERED_DOMAINS, ...UNCOVERED_DOMAINS]);
   });
 
   it('covered와 uncovered가 겹치지 않는다', () => {
@@ -48,6 +52,13 @@ describe('Situation Domain 사전', () => {
     assert.equal(isSituationDomain('other_uncovered'), true);
     assert.equal(isSituationDomain('made_up_domain'), false);
     assert.equal(isSituationDomain(undefined), false);
+  });
+
+  it('카드 보유 판정은 과거 연구 분할과 무관하게 17개 전체를 인정한다', () => {
+    assert.equal(isCoveredDomainName('fear_uncertainty'), true);
+    assert.equal(isCoveredDomainName('financial_hardship'), true);
+    assert.equal(isCoveredDomainName(FALLBACK_DOMAIN), false);
+    assert.equal(isCoveredDomainName('made_up_domain'), false);
   });
 });
 
@@ -72,18 +83,14 @@ describe('Scripture Card domain', () => {
 
   it('covered domain이 모두 카드 3장씩 연결되어 있다', () => {
     // Scripture Card Expansion v2(2026-09-15): 카드가 1장뿐이던 10개 영역에 정확히 2장씩 추가해,
-    // 이제 COVERED_DOMAINS(원래 10개)와 UNCOVERED_DOMAINS(이전 확장 7개) 17개 모두 카드 3장이다.
+    // 현재 카드 보유 단일 원본의 17개 영역 모두 카드 3장이다.
     const inCards = coveredDomainsInCards();
     assert.equal(inCards.length, SITUATION_DOMAINS.length - 1);
-    for (const domain of COVERED_DOMAINS) {
+    assert.deepEqual([...inCards].sort(), [...CARD_COVERED_DOMAINS].sort());
+    for (const domain of CARD_COVERED_DOMAINS) {
       const result = getCoverage(domain);
       assert.equal(result.covered, true, `${domain}을 다루는 카드가 없습니다.`);
       assert.equal(result.cardIds.length, 3, `${domain}에 카드 3개가 연결되어야 합니다.`);
-    }
-    for (const domain of UNCOVERED_DOMAINS) {
-      const result = getCoverage(domain);
-      assert.equal(result.covered, true, `${domain} 확장 카드가 없습니다.`);
-      assert.equal(result.cardIds.length, 3, `${domain}에 확장 카드 3개가 연결되어야 합니다.`);
     }
   });
 });

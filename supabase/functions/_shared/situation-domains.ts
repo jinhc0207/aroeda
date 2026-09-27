@@ -10,7 +10,12 @@
  * 새 Domain을 임의로 추가하지 않는다.
  */
 
-/** 현재 Scripture Card로 다룰 수 있는 상황 */
+/**
+ * 초기 연구 기준으로 먼저 다룬 10개 영역.
+ *
+ * 이름은 기존 frozen analysis 계약을 위해 유지한다. 현재 카드 보유 영역 전체를 뜻하지 않는다.
+ * 현재 카드로 다루는 17개 전체는 CARD_COVERED_DOMAINS를 사용한다.
+ */
 export const COVERED_DOMAINS = [
   'fear_uncertainty',
   'decision_guidance',
@@ -24,7 +29,11 @@ export const COVERED_DOMAINS = [
   'wisdom_discernment',
 ] as const;
 
-/** 아뢰다가 분류는 하지만 대표 카드가 아직 충분하지 않은 상황 */
+/**
+ * 2026-09-15 확장 연구 대상으로 분리했던 7개 영역.
+ * 현재는 모두 카드가 3장씩 있으므로 사용자 추천 관점에서는 uncovered가 아니다.
+ * 이름은 기존 frozen analysis·연구 계약의 호환성을 위해 유지한다.
+ */
 export const UNCOVERED_DOMAINS = [
   'loneliness_isolation',
   'family_parenting_conflict',
@@ -35,17 +44,23 @@ export const UNCOVERED_DOMAINS = [
   'relationship_conflict_forgiveness',
 ] as const;
 
+/** 현재 정적 Scripture Card가 실제로 다루는 17개 영역. 카드 보유 여부의 단일 원본이다. */
+export const CARD_COVERED_DOMAINS = [
+  ...COVERED_DOMAINS,
+  ...UNCOVERED_DOMAINS,
+] as const;
+
 /** 현재 분류체계 어디에도 들어가지 않는 상황 */
 export const FALLBACK_DOMAIN = 'other_uncovered';
 
 export const SITUATION_DOMAINS = [
-  ...COVERED_DOMAINS,
-  ...UNCOVERED_DOMAINS,
+  ...CARD_COVERED_DOMAINS,
   FALLBACK_DOMAIN,
 ] as const;
 
 export type CoveredDomain = (typeof COVERED_DOMAINS)[number];
 export type UncoveredDomain = (typeof UNCOVERED_DOMAINS)[number];
+export type CardCoveredDomain = (typeof CARD_COVERED_DOMAINS)[number];
 export type SituationDomain = (typeof SITUATION_DOMAINS)[number];
 
 /** 개발자가 읽기 위한 설명. 사용자 화면에는 쓰지 않는다. */
@@ -73,13 +88,13 @@ export const DOMAIN_DESCRIPTIONS: Record<SituationDomain, string> = {
 };
 
 const domainSet = new Set<string>(SITUATION_DOMAINS);
-const coveredSet = new Set<string>(COVERED_DOMAINS);
+const cardCoveredSet = new Set<string>(CARD_COVERED_DOMAINS);
 
 export function isSituationDomain(value: unknown): value is SituationDomain {
   return typeof value === 'string' && domainSet.has(value);
 }
 
-/** 분류체계에는 있지만 아직 카드가 없는 domain인지 여부는 여기서 판단하지 않는다. */
-export function isCoveredDomainName(value: string): value is CoveredDomain {
-  return coveredSet.has(value);
+/** 현재 정적 Scripture Card가 하나 이상 있는 17개 영역인지 판정한다. */
+export function isCoveredDomainName(value: string): value is CardCoveredDomain {
+  return cardCoveredSet.has(value);
 }

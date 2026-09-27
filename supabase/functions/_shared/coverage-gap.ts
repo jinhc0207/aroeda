@@ -12,10 +12,10 @@
  *     Rate Limit의 fail-closed 정책과는 다르다. 섞지 않는다.
  */
 
-import { FALLBACK_DOMAIN, UNCOVERED_DOMAINS } from './situation-domains.ts';
+import { FALLBACK_DOMAIN } from './situation-domains.ts';
 
-/** 기록할 수 있는 영역: 지금 카드가 없는 8개 (기존 domain 정의를 그대로 쓴다) */
-export const COVERAGE_GAP_DOMAINS: readonly string[] = [...UNCOVERED_DOMAINS, FALLBACK_DOMAIN];
+/** 17개 표준 영역에는 모두 카드가 있으므로 실제 no_coverage 기록 대상은 fallback 하나뿐이다. */
+export const COVERAGE_GAP_DOMAINS: readonly string[] = [FALLBACK_DOMAIN];
 
 const allowedDomains = new Set(COVERAGE_GAP_DOMAINS);
 

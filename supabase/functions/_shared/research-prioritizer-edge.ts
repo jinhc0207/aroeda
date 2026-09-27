@@ -3,7 +3,7 @@
  *
  * 판단 규칙 자체는 research-prioritizer.ts에 있다. 여기서는
  *   1) DB RPC가 준 줄을 안전하게 우리 구조로 옮기고
- *   2) 지금 카드가 다루는 영역 목록을 만들고
+ *   2) 과거 저장 계약이 쓰는 초기 연구 기준선 목록을 만들고
  *   3) Evaluator A/B에게 보낼 요청 본문을 만든다.
  *
  * 실행 환경에 묶인 코드(Deno.env, 네트워크 호출)는 넣지 않는다.
@@ -14,6 +14,7 @@ import { MODEL } from './analyzer-contract.ts';
 import { extractOutputText } from './edge-analyzer.ts';
 import {
   PRIORITIZER_RESULT_SCHEMA,
+  RESEARCHABLE_DOMAINS,
   buildPrioritizerInstructions,
 } from './research-prioritizer-contract.ts';
 import { isValidQueueDate } from './research-prioritizer.ts';
@@ -28,22 +29,15 @@ import { COVERED_DOMAINS } from './situation-domains.ts';
  * 나중에 카드 공개 상태(release status) 시스템이 생기면 이 함수만 바꾸면 된다.
  */
 export function getActiveCoveredDomains(cards = SCRIPTURE_CARDS): string[] {
-  // 확장 카드는 사용자 추천에 먼저 반영하되, 연구 큐의 기존 10개 기준은 유지한다.
-  // 확장 영역은 대표 카드가 생겼어도 추가 자료 연구 대상으로 계속 남겨 둔다.
+  // 이름은 기존 저장·지문 계약을 위해 유지한다. 이 값은 사용자 추천의 현재 카드 보유 목록이
+  // 아니라 확장 연구 판단이 비교하는 초기 10개 연구 기준선이다. 현재 카드 보유 17개는
+  // CARD_COVERED_DOMAINS/coveredDomainsInCards가 소유한다.
   const available = new Set(cards.flatMap((card) => card.domains));
   return COVERED_DOMAINS.filter((domain) => available.has(domain)).sort();
 }
 
-/** RPC가 돌려줄 수 있는 영역 (읽기 전용 RPC의 필터와 같은 목록) */
-export const QUEUE_ALLOWED_DOMAINS: readonly string[] = [
-  'loneliness_isolation',
-  'family_parenting_conflict',
-  'burnout_exhaustion',
-  'spiritual_dryness',
-  'financial_hardship',
-  'chronic_illness',
-  'relationship_conflict_forgiveness',
-];
+/** RPC가 돌려줄 수 있는 영역. TypeScript에서는 연구 정책 목록 하나만 사용한다. */
+export const QUEUE_ALLOWED_DOMAINS: readonly string[] = RESEARCHABLE_DOMAINS;
 
 /**
  * bigint 열은 문자열로 올 수 있다.
@@ -219,13 +213,13 @@ export function parseEvaluatorResult(raw: unknown): unknown | null {
 export function buildEvaluatorRequest(
   evaluator: EvaluatorName,
   payload: EvaluationPayload,
-  activeCoveredDomains: readonly string[],
+  initialResearchBaselineDomains: readonly string[],
 ): Record<string, unknown> {
   return {
     model: MODEL,
     store: false,
     max_output_tokens: EVALUATOR_MAX_OUTPUT_TOKENS,
-    instructions: `${buildPrioritizerInstructions(activeCoveredDomains)}\n\n${EVALUATOR_LENSES[evaluator]}`,
+    instructions: `${buildPrioritizerInstructions(initialResearchBaselineDomains)}\n\n${EVALUATOR_LENSES[evaluator]}`,
     input: JSON.stringify(payload),
     text: {
       format: {

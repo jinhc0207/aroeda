@@ -469,7 +469,7 @@ describe('research-prioritizer · 판단 결과', () => {
 });
 
 describe('research-prioritizer · 안전 장치', () => {
-  it('지금 카드가 다루는 영역은 카드 데이터에서 뽑는다', () => {
+  it('초기 연구 기준선은 canonical 카드 데이터에 실제로 있는 10개만 쓴다', () => {
     assert.deepEqual(getActiveCoveredDomains(), [...COVERED_DOMAINS].sort());
     assert.equal(getActiveCoveredDomains().length, 10);
   });
@@ -569,15 +569,15 @@ describe('research-prioritizer · Queue 값 검증', () => {
     await expectInvalid([queueRow({ research_kind: 'taxonomy_discovery' })], '종류');
     await expectInvalid([queueRow({ status: 'blocked' })], '상태');
     await expectInvalid([queueRow({ target_domain: 'other_uncovered' })], 'other_uncovered');
-    await expectInvalid([queueRow({ target_domain: 'grief_loss' })], '이미 카드가 있는 영역');
+    await expectInvalid([queueRow({ target_domain: 'grief_loss' })], '초기 연구 기준선 영역');
     await expectInvalid([queueRow({ target_domain: 'made_up_domain' })], '모르는 영역');
   });
 
-  it('카드가 생겨 후보에서 빠지는 것은 오류가 아니다', async () => {
+  it('후보가 초기 연구 기준선에 편입되어 빠지는 것은 오류가 아니다', async () => {
     const { deps, calls } = makeDeps();
     const response = await handleResearchPrioritizer(post(), {
       ...deps,
-      // financial_hardship 카드가 생겼다고 가정한다.
+      // financial_hardship가 초기 연구 기준선에 편입됐다고 가정한다.
       getActiveCoveredDomains: () => [...getActiveCoveredDomains(), 'financial_hardship'].sort(),
     });
 

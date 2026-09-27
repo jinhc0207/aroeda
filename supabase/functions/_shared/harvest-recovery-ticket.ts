@@ -593,7 +593,7 @@ export function validateHarvestRecoveryTicketInput(value: unknown): TicketValida
   scanBannedFields(value, errors);
 
   // 연구 대상 영역은 canonical 목록 안에 있어야 한다.
-  // 이미 카드가 있는 영역(fear_uncertainty 등)과 other_uncovered는 연구 대상이 아니다.
+  // 초기 연구 기준선 영역(fear_uncertainty 등)과 other_uncovered는 연구 대상이 아니다.
   if (typeof value.targetDomain !== 'string' || !researchableDomains.has(value.targetDomain)) {
     errors.push('targetDomain이 연구 대상 영역이 아닙니다.');
   }

@@ -180,7 +180,7 @@ const result = (overrides: Partial<BiblicalResearchResult> = {}): BiblicalResear
 };
 
 describe('Biblical Researcher · 연구 의뢰서', () => {
-  it('카드가 없는 7개 영역만 연구 대상이 된다', () => {
+  it('추가 연구 정책 7개 영역만 연구 대상이 된다', () => {
     for (const domain of RESEARCHABLE_DOMAINS) {
       const made = buildResearchBrief({
         targetDomain: domain,
@@ -193,7 +193,7 @@ describe('Biblical Researcher · 연구 의뢰서', () => {
     }
   });
 
-  it('other_uncovered와 이미 카드가 있는 영역은 거절한다', () => {
+  it('other_uncovered와 초기 연구 기준선 영역은 거절한다', () => {
     for (const domain of ['other_uncovered', 'grief_loss', 'fear_uncertainty', 'made_up']) {
       assert.throws(
         () =>
@@ -209,7 +209,7 @@ describe('Biblical Researcher · 연구 의뢰서', () => {
     }
   });
 
-  it('카드가 새로 생긴 영역도 연구 대상에서 빠진다', () => {
+  it('초기 연구 기준선에 편입된 영역은 연구 대상에서 빠진다', () => {
     assert.throws(
       () =>
         buildResearchBrief({
@@ -222,7 +222,7 @@ describe('Biblical Researcher · 연구 의뢰서', () => {
     );
   });
 
-  it('모르는 활성 영역이 섞이면 의뢰서를 만들지 않는다', () => {
+  it('모르는 기준선 영역이 섞이면 의뢰서를 만들지 않는다', () => {
     assert.throws(
       () =>
         buildResearchBrief({
@@ -235,11 +235,11 @@ describe('Biblical Researcher · 연구 의뢰서', () => {
     );
   });
 
-  it('영역 설명과 활성 영역은 기존 데이터를 그대로 쓴다', () => {
+  it('영역 설명과 초기 연구 기준선은 기존 데이터를 그대로 쓴다', () => {
     const made = brief();
     assert.equal(made.domainDescription, '생계와 경제적 어려움');
 
-    // 활성 영역은 새로 쓰지 않고 Scripture Card 데이터에서 뽑은 목록을 쓴다.
+    // 초기 연구 기준선은 새로 쓰지 않고 canonical 카드 데이터에서 존재를 확인한 목록을 쓴다.
     assert.deepEqual(made.activeCoveredDomains, getActiveCoveredDomains());
     assert.ok(made.activeCoveredDomains.length > 0);
     for (const domain of made.activeCoveredDomains) {
