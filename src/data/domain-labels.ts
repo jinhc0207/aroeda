@@ -11,7 +11,7 @@
  *   - 개발자용 설명(DOMAIN_DESCRIPTIONS)을 화면에 그대로 옮기지 않는다. 버튼에 쓸 만큼 짧게 줄인 이름이다.
  */
 
-import { COVERED_DOMAINS, UNCOVERED_DOMAINS, type CoveredDomain, type UncoveredDomain } from './situation-domains';
+import { COVERED_DOMAINS, UNCOVERED_DOMAINS, type CoveredDomain, type UncoveredDomain } from './situation-domains.ts';
 
 export type ChoosableDomain = CoveredDomain | UncoveredDomain;
 

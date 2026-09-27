@@ -13,54 +13,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '@/constants/aroeda-theme';
-import { ensureAnonymousSession } from '@/lib/anonymous-session';
+import { APP_RECOMMENDATION_DEPS } from '@/lib/app-recommendation-deps';
 import {
   formatRateLimitNotice,
-  parseRetryAfterSeconds,
   formatDevDiagnostic,
   requestRecommendation,
   type DevDiagnosticCode,
 } from '@/lib/request-recommendation';
-import { supabase } from '@/lib/supabase';
-import { SCRIPTURE_CARDS } from '@/data/scripture-cards';
-import type { SituationDomain } from '@/data/situation-domains';
-import { SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION } from '../../supabase/functions/_shared/automatic-scripture-catalog-runtime';
 import { useSituation } from '@/state/situation';
-
-/** 서버가 준 카드 id가 실제로 우리가 가진 카드인지 확인한다. */
-const cardExists = (cardId: string) => SCRIPTURE_CARDS.some((card) => card.id === cardId);
-
-/** 그 카드가 실제로 그 영역을 다루는지 확인한다. 서버가 준 카드·영역 짝을 그대로 믿지 않는다. */
-const cardBelongsToDomain = (cardId: string, domain: SituationDomain) => {
-  const card = SCRIPTURE_CARDS.find((item) => item.id === cardId);
-  return card ? card.domains.includes(domain) : false;
-};
-
-/**
- * supabase.functions.invoke 결과를 단순한 모양으로 바꾼다.
- * 사용량 제한(429)만 구분할 수 있으면 된다. 원본 오류는 남기지 않는다.
- */
-async function invokeRecommendScripture(body: {
-  situation: string;
-  catalogRuntimeVersion: typeof SCRIPTURE_CATALOG_RUNTIME_CLIENT_VERSION;
-}) {
-  const { data, error } = await supabase.functions.invoke('recommend-scripture', { body });
-
-  if (error) {
-    const context = (error as {
-      context?: { status?: unknown; headers?: { get?: (name: string) => unknown } };
-    }).context;
-    const status = context?.status;
-    const retryAfterSeconds = parseRetryAfterSeconds(context?.headers?.get?.('Retry-After'));
-    return {
-      ok: false as const,
-      httpStatus: typeof status === 'number' ? status : undefined,
-      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
-    };
-  }
-
-  return { ok: true as const, data };
-}
 
 export default function SituationScreen() {
   const {
@@ -113,12 +73,7 @@ export default function SituationScreen() {
     const resetCountAtStart = getResetCount();
 
     // 결과가 어떻든(예외 포함) 기다림 표시와 추천 잠금을 반드시 푼다.
-    const outcome = await requestRecommendation(situation, {
-      ensureSession: () => ensureAnonymousSession(supabase.auth),
-      invokeRecommendScripture,
-      cardExists,
-      cardBelongsToDomain,
-    }).finally(() => {
+    const outcome = await requestRecommendation(situation, APP_RECOMMENDATION_DEPS).finally(() => {
       setIsSubmitting(false);
       endRecommendation();
     });

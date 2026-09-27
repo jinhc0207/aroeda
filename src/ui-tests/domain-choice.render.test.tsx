@@ -14,7 +14,9 @@
  *     4. 화면이 포커스되지 않은 동안(다른 화면이 앞에 있는 동안) 삭제 등으로 option이 비워져도
  *        지금 앞에 있는 화면을 잘못 바꾸지 않는다. 이 화면이 다시 포커스됐을 때만 홈으로 보낸다.
  *     5. 내부 영문 domain 코드는 화면 어디에도, 접근성 문구에도 보이지 않는다.
- *     6. 선택 동작은 네트워크 호출이 없다.
+ *     6. 두 후보를 직접 고르는 동작은 네트워크 호출이 없다.
+ *     7. 추가 설명은 최대 3번 다시 분석하고, 그 전에 말씀이 정해지면 즉시 끝난다.
+ *     8. 추가 분석에서 안전 경로가 나오면 후속 질문보다 안전 안내를 우선한다.
  *
  * expo-router 전체를 가짜로 바꾸므로, useFocusEffect도 실제 React Navigation과 같은 계약
  * (현재 포커스면 즉시 실행, focus/blur 이벤트에 반응, effect 참조가 바뀌면 포커스 중에는 다시 실행)을
@@ -22,8 +24,8 @@
  * "뒤로 갔다가 돌아오는 것"을 직접 흉내 낸다.
  */
 
-import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { useEffect } from 'react';
 
 import DomainChoiceScreen from '@/app/domain-choice';
@@ -31,6 +33,13 @@ import { domainLabel } from '@/data/domain-labels';
 import { getScriptureCard } from '@/data/scripture-cards';
 import type { DomainChoiceOption } from '@/lib/request-recommendation';
 import { SituationProvider, useSituation } from '@/state/situation';
+
+jest.mock('@/lib/supabase', () => ({
+  supabase: {
+    functions: { invoke: jest.fn() },
+    auth: { getSession: jest.fn(), signInAnonymously: jest.fn() },
+  },
+}));
 
 /**
  * React Navigation의 useFocusEffect 계약을 최소한으로 재현한 가짜 내비게이션.
@@ -109,6 +118,14 @@ jest.mock('expo-router', () => {
 const { router } = require('expo-router') as {
   router: { push: jest.Mock; replace: jest.Mock; back: jest.Mock; canGoBack: jest.Mock };
 };
+const { supabase } = require('@/lib/supabase') as {
+  supabase: {
+    functions: { invoke: jest.Mock };
+    auth: { getSession: jest.Mock; signInAnonymously: jest.Mock };
+  };
+};
+const invoke = supabase.functions.invoke;
+const getSession = supabase.auth.getSession;
 
 /** 테스트 fixture의 domain은 언제나 이름이 있는 선택 가능한 영역이다. */
 const label = (domain: DomainChoiceOption['domain']) => {
@@ -209,27 +226,29 @@ const renderKeepMounted = (options: DomainChoiceOption[]) =>
     </SituationProvider>,
   );
 
-beforeAll(() => {
-  // 이 화면이 바깥으로 나가려 하면 테스트가 그 자리에서 실패해야 한다.
-  global.fetch = (() => {
-    throw new Error('영역 선택 화면은 서버를 부르지 않아야 합니다.');
-  }) as unknown as typeof fetch;
-});
-
 beforeEach(() => {
   router.push.mockReset();
   router.replace.mockReset();
+  invoke.mockReset();
+  getSession.mockReset();
+  getSession.mockResolvedValue({
+    data: { session: { user: { is_anonymous: true } } },
+    error: null,
+  } as never);
   mockNav = new FakeNavigation();
 });
 
 describe('영역 선택 화면 · 그려 보기', () => {
-  it('제목과 안내가 보인다', async () => {
+  it('두 후보를 반영한 첫 추가 질문과 안내가 보인다', async () => {
     await renderScreen([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
 
-    expect(screen.getByText('어느 쪽부터 말씀을 볼까요?')).toBeTruthy();
+    expect(screen.getByText('조금만 더 들려주세요')).toBeTruthy();
     expect(
-      screen.getByText('두 상황이 함께 보여요. 지금 먼저 말씀으로 살펴보고 싶은 쪽을 골라주세요.'),
+      screen.getByText(
+        '‘두려움과 불확실함’, ‘생계와 경제적 어려움’ 두 주제가 함께 느껴지는 상황에서, 지금 가장 마음에 걸리는 장면은 무엇인가요?',
+      ),
     ).toBeTruthy();
+    expect(screen.getByLabelText('추가 상황 설명')).toBeTruthy();
   });
 
   it('두 후보가 한국어 이름으로 보이고, 내부 영문 domain 코드는 보이지 않는다', async () => {
@@ -252,6 +271,165 @@ describe('영역 선택 화면 · 그려 보기', () => {
 });
 
 /* ================================================================== */
+/* 추가 설명으로 다시 분석                                               */
+/* ================================================================== */
+
+const gateResponse = (result: Record<string, unknown>) => ({
+  data: { ok: true, result },
+  error: null,
+});
+
+const repeatDomainChoiceResponse = () =>
+  gateResponse({
+    route: 'domain_choice',
+    primaryDomain: null,
+    selectedCardId: null,
+    domainChoiceCandidates: [RECOMMEND_OPTION.domain, NO_COVERAGE_OPTION.domain],
+    domainChoiceOptions: [RECOMMEND_OPTION, NO_COVERAGE_OPTION],
+  });
+
+describe('영역 선택 화면 · 추가 설명', () => {
+  it('빈 추가 설명은 서버를 부르지 않고 안내한다', async () => {
+    await renderKeepMounted([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
+    expect(await screen.findByLabelText('추가 상황 설명')).toBeTruthy();
+    router.replace.mockReset();
+    await act(async () => probe!.setSituation('요즘 여러 일이 겹쳐 힘들어요.'));
+
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    expect(screen.getByText('조금 더 들려주고 싶은 내용을 먼저 적어주세요.')).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('첫 상황과 추가 설명을 줄바꿈으로 이어 기존 추천 절차를 다시 실행한다', async () => {
+    invoke.mockResolvedValue(
+      gateResponse({
+        route: 'recommend',
+        primaryDomain: 'fear_uncertainty',
+        selectedCardId: 'SC-001',
+      }) as never,
+    );
+    await renderScreen([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
+    await act(async () => probe!.setSituation('요즘 여러 일이 겹쳐 힘들어요.'));
+
+    await fireEvent.changeText(
+      screen.getByLabelText('추가 상황 설명'),
+      '앞으로 무슨 일이 생길지 몰라 두려운 마음이 가장 커요.',
+    );
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith('/scripture'));
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith('recommend-scripture', {
+      body: {
+        situation:
+          '요즘 여러 일이 겹쳐 힘들어요.\n앞으로 무슨 일이 생길지 몰라 두려운 마음이 가장 커요.',
+        catalogRuntimeVersion: 'scripture-catalog-runtime/v1',
+      },
+    });
+    expect(probe!.situation).toBe(
+      '요즘 여러 일이 겹쳐 힘들어요.\n앞으로 무슨 일이 생길지 몰라 두려운 마음이 가장 커요.',
+    );
+    expect(probe!.selectedCardId).toBe('SC-001');
+  });
+
+  it('답이 여전히 넓으면 구체적 장면의 마음과 현재 영향 질문으로 이어지고 세 번 뒤 멈춘다', async () => {
+    invoke.mockResolvedValue(repeatDomainChoiceResponse() as never);
+    await renderKeepMounted([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
+    expect(await screen.findByLabelText('추가 상황 설명')).toBeTruthy();
+    router.replace.mockReset();
+    await act(async () => probe!.setSituation('요즘 여러 일이 겹쳐 힘들어요.'));
+
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '회사와 집에서 모두 힘들어요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+    expect(await screen.findByText('그 장면에서 마음이 가장 힘들었던 순간은 언제였나요?')).toBeTruthy();
+
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '가족이 제 말을 듣지 않았을 때였어요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+    expect(
+      await screen.findByText('그 일이 지금 나에게 어떤 영향을 주고 있으며, 가장 바라는 도움은 무엇인가요?'),
+    ).toBeTruthy();
+
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '관계가 회복될 용기와 지혜가 필요해요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    expect(
+      await screen.findByText(
+        '여전히 두 상황이 함께 보여요. 계속 질문하지 않고, 아래에서 지금 더 가까운 쪽을 골라주세요.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText('추가 상황 설명')).toBeNull();
+    expect(screen.getByLabelText(label(RECOMMEND_OPTION.domain))).toBeTruthy();
+    expect(screen.getByLabelText(label(NO_COVERAGE_OPTION.domain))).toBeTruthy();
+    expect(invoke).toHaveBeenCalledTimes(3);
+  });
+
+  it('추가 분석이 안전 안내를 고르면 질문을 멈추고 즉시 안전 화면으로 간다', async () => {
+    invoke.mockResolvedValue(
+      gateResponse({ route: 'safety', primaryDomain: null, selectedCardId: null }) as never,
+    );
+    await renderScreen([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
+    await act(async () => probe!.setSituation('처음에는 자세히 말하지 못했어요.'));
+
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '지금은 제 안전이 걱정돼요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith('/safety'));
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('추가 분석도 사용량 제한 남은 시간을 그대로 안내한다', async () => {
+    invoke.mockResolvedValue({
+      data: null,
+      error: { context: { status: 429, headers: { get: () => '3600' } } },
+    } as never);
+    await renderScreen([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
+    await act(async () => probe!.setSituation('요즘 여러 일이 겹쳐 힘들어요.'));
+
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '두려운 마음이 가장 커요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    expect(await screen.findByText('약 1시간 후 다시 말씀을 찾아주세요.')).toBeTruthy();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('내 정보 삭제 중에는 추가 분석을 시작하지 않는다', async () => {
+    await renderScreen([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
+    await act(async () => probe!.setSituation('요즘 여러 일이 겹쳐 힘들어요.'));
+    let finish: (value: 'unconfirmed') => void = () => {};
+    await act(async () => {
+      void probe!.runDeletionTask(
+        'deleting',
+        () => new Promise<'unconfirmed'>((resolve) => (finish = resolve)),
+      );
+    });
+
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '조금 더 설명할게요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    expect(screen.getByText('내 정보 삭제가 끝난 뒤에 다시 시도해주세요.')).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalled();
+    await act(async () => finish('unconfirmed'));
+  });
+
+  it('첫 입력이 길이 한도에 차면 추가 입력을 막고 직접 선택을 남긴다', async () => {
+    await renderScreen([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
+    await act(async () => probe!.setSituation('가'.repeat(3000)));
+
+    expect(
+      screen.getByText(
+        '처음 입력한 내용이 길어서 설명을 더 붙일 수 없어요. 아래에서 가까운 쪽을 골라주세요.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByLabelText('추가 설명으로 다시 말씀 찾기').props.accessibilityState).toMatchObject({
+      disabled: true,
+    });
+    expect(screen.getByLabelText(label(RECOMMEND_OPTION.domain))).toBeTruthy();
+  });
+});
+
+/* ================================================================== */
 /* 고르면 push로 이동하고, option은 그대로 남는다                        */
 /* ================================================================== */
 
@@ -264,6 +442,7 @@ describe('영역 선택 화면 · 고르면 push로 이동하고 option을 보�
     expect(router.push).toHaveBeenCalledWith('/scripture');
     expect(router.push).toHaveBeenCalledTimes(1);
     expect(router.replace).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
 
     expect(probe!.selectedCardId).toBe(RECOMMEND_OPTION.selectedCardId);
     expect(probe!.selectedDomain).toBe(RECOMMEND_OPTION.domain);

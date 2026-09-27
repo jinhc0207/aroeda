@@ -277,9 +277,12 @@ describe('기도 경험 · G. 앞의 흐름은 그대로', () => {
     }
   });
 
-  it('추천 흐름과 안전 경로를 건드리지 않았다', () => {
+  it('추천 흐름과 안전 경로가 유지된다', () => {
     const index = stripComments(read('../app/index.tsx'));
-    assert.ok(index.includes("supabase.functions.invoke('recommend-scripture'"));
+    const client = stripComments(read('./app-recommendation-deps.ts'));
+    // 첫 입력과 추가 설명이 같은 호출 규칙을 쓰도록 실제 invoke는 공용 모듈에 한 번만 둔다.
+    assert.ok(client.includes("supabase.functions.invoke('recommend-scripture'"));
+    assert.ok(index.includes('requestRecommendation(situation, APP_RECOMMENDATION_DEPS)'));
     assert.ok(index.includes("router.push('/scripture')"));
 
     // 안전·미다룸·모호는 gate가 준 이름으로 그대로 옮겨 간다.

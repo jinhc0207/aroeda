@@ -201,7 +201,7 @@ Matcher에는 Situation Analysis 전체를 그대로 넘기고, Gate는 그 결�
 서버 로그에는 고정된 내부 코드(`prayer_guidance_safety_first`, `prayer_guidance_domain_not_detected` 등)만 남기고
 사용자 문장·선택 영역·카드 번호는 남기지 않는다. `selectedDomain`은 저장하지 않는다.
 
-### 앱(client)의 domain_choice 처리 (2026-09-14 구현, 2026-09-15 뒤로가기 수정)
+### 앱(client)의 domain_choice 처리 (2026-09-14 구현, 2026-09-27 단계형 추가 질문)
 
 서버 계약과 별개로 미뤄져 있던 앱 쪽 연결이 이제 구현되어 있다.
 
@@ -227,8 +227,12 @@ Matcher에는 Situation Analysis 전체를 그대로 넘기고, Gate는 그 결�
   정리하면 `domainChoiceOptions`(선택지)가 유지되는 범위는 **영역 선택 화면에 머무는 동안뿐**이다.
   그 흐름을 벗어나는 순간 — 새 추천을 시작하거나, 기도를 마치고 처음으로 돌아가거나, 내 정보를
   삭제하면 — 예외 없이 비워진다.
-- `src/app/domain-choice.tsx`: 영역 선택 화면. 이미 받아 둔 `domainChoiceOptions`만 보여주고 고르게 하며,
-  고를 때 네트워크 호출이 없다.
+- `src/app/domain-choice.tsx`: 영역 선택 화면. 이미 받아 둔 `domainChoiceOptions`로 한국어 추가 질문을
+  만들고, 사용자가 답하면 첫 상황과 줄바꿈으로 결합해 기존 추천 절차를 다시 실행한다.
+  - 질문은 한 번에 하나씩 두 주제 구분 → 구체적인 장면과 마음 → 현재 영향과 바라는 도움 순서다.
+    매 단계에서 `recommend`·`no_coverage`·`safety`·`ambiguous`가 나오면 질문을 끝내고 해당 경로로 간다.
+    계속 `domain_choice`이면 다음 질문으로 넘어가되 최대 3번 뒤에는 질문을 멈추고 직접 선택만 남긴다.
+  - 질문에 답하지 않고 두 후보 중 하나를 바로 고를 수 있다. 이때는 네트워크 호출이 없다.
   - 고를 때 `router.replace`가 아니라 `router.push`를 쓴다. `recommend`는 `/scripture`로,
     `ambiguous`는 `/ambiguous`로, `no_coverage`는 `/no-coverage`로 이동하되, 이 선택 화면은
     스택에 그대로 남는다. 그래서 그 화면들에서 뒤로 가면 같은 영역 선택 화면으로 돌아오고,
