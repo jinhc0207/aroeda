@@ -378,6 +378,24 @@ describe('영역 선택 화면 · 추가 설명', () => {
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
+  it('추가 분석이 카드 동점이면 사용한 질문 횟수를 넘겨 ambiguous 추가 질문으로 간다', async () => {
+    invoke.mockResolvedValue(
+      gateResponse({
+        route: 'ambiguous',
+        primaryDomain: 'financial_hardship',
+        selectedCardId: null,
+      }) as never,
+    );
+    await renderScreen([RECOMMEND_OPTION, NO_COVERAGE_OPTION]);
+    await act(async () => probe!.setSituation('두 문제가 함께 있어 무엇부터 말해야 할지 모르겠어요.'));
+
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '생활비 문제가 더 시급해요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith('/ambiguous'));
+    expect(probe!.clarificationRound).toBe(1);
+  });
+
   it('추가 분석도 사용량 제한 남은 시간을 그대로 안내한다', async () => {
     invoke.mockResolvedValue({
       data: null,

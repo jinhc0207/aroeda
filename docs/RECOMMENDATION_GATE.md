@@ -201,7 +201,7 @@ Matcher에는 Situation Analysis 전체를 그대로 넘기고, Gate는 그 결�
 서버 로그에는 고정된 내부 코드(`prayer_guidance_safety_first`, `prayer_guidance_domain_not_detected` 등)만 남기고
 사용자 문장·선택 영역·카드 번호는 남기지 않는다. `selectedDomain`은 저장하지 않는다.
 
-### 앱(client)의 domain_choice 처리 (2026-09-14 구현, 2026-09-27 단계형 추가 질문)
+### 앱(client)의 domain_choice·ambiguous 처리 (2026-09-14 구현, 2026-09-27 단계형 추가 질문)
 
 서버 계약과 별개로 미뤄져 있던 앱 쪽 연결이 이제 구현되어 있다.
 
@@ -210,7 +210,8 @@ Matcher에는 Situation Analysis 전체를 그대로 넘기고, Gate는 그 결�
   일반 `recommend`도 `primaryDomain`을 함께 검증해 `cardId`와 `selectedDomain`을 함께 돌려준다.
 - `src/lib/request-prayer-guidance.ts`: 요청 본문이 정확히 `{ situation, cardId, selectedDomain }`이고,
   선택 영역이 표준값이 아니거나 없으면 서버를 부르지 않는다.
-- `src/state/situation.tsx`: `selectedDomain`, `domainChoiceOptions`를 들고 있다. 카드·영역·선택지를
+- `src/state/situation.tsx`: `selectedDomain`, `domainChoiceOptions`, 두 경로가 공유하는
+  `clarificationRound`를 들고 있다. 카드·영역·선택지를
   다루는 함수는 넷이고, 서로 다른 계약을 갖는다.
   - `setRecommendation({ cardId, selectedDomain })`: 첫 화면의 일반 `recommend` 결과를 저장한다.
     카드·영역을 채우고, 남아 있던 `domainChoiceOptions`는 비운다.
@@ -230,8 +231,9 @@ Matcher에는 Situation Analysis 전체를 그대로 넘기고, Gate는 그 결�
 - `src/app/domain-choice.tsx`: 영역 선택 화면. 이미 받아 둔 `domainChoiceOptions`로 한국어 추가 질문을
   만들고, 사용자가 답하면 첫 상황과 줄바꿈으로 결합해 기존 추천 절차를 다시 실행한다.
   - 질문은 한 번에 하나씩 두 주제 구분 → 구체적인 장면과 마음 → 현재 영향과 바라는 도움 순서다.
-    매 단계에서 `recommend`·`no_coverage`·`safety`·`ambiguous`가 나오면 질문을 끝내고 해당 경로로 간다.
-    계속 `domain_choice`이면 다음 질문으로 넘어가되 최대 3번 뒤에는 질문을 멈추고 직접 선택만 남긴다.
+    매 단계에서 `recommend`·`no_coverage`·`safety`가 나오면 질문을 끝내고 해당 경로로 간다.
+    계속 `domain_choice`이면 다음 질문으로 넘어가고, `ambiguous`로 바뀌면 그 화면에서 남은 질문을 잇는다.
+    두 경로를 합쳐 최대 3번 뒤에는 질문을 멈춘다.
   - 질문에 답하지 않고 두 후보 중 하나를 바로 고를 수 있다. 이때는 네트워크 호출이 없다.
   - 고를 때 `router.replace`가 아니라 `router.push`를 쓴다. `recommend`는 `/scripture`로,
     `ambiguous`는 `/ambiguous`로, `no_coverage`는 `/no-coverage`로 이동하되, 이 선택 화면은
@@ -242,6 +244,10 @@ Matcher에는 Situation Analysis 전체를 그대로 넘기고, Gate는 그 결�
     가드가 풀린다. 포커스되지 않은 동안(다른 화면이 앞에 있는 동안) 내 정보 삭제 등으로
     `domainChoiceOptions`가 비워져도 지금 앞에 있는 화면을 갑자기 바꾸지 않고, 이 화면이 다시
     포커스됐을 때만 옵션이 없다는 것을 보고 홈(`/`)으로 보낸다. 옵션 없이 직접 들어온 경우도 같다.
+- `src/app/ambiguous.tsx`: 영역은 정해졌지만 카드가 동점이면 곧바로 추가 질문과 입력칸을 보여준다.
+  사용자가 답하면 같은 추천 절차를 다시 실행하고, 말씀이 정해지면 즉시 `/scripture`로 간다.
+  계속 동점이면 핵심 어려움 → 구체적인 순간 → 현재 영향과 바라는 도움을 차례로 묻고, 합계 3번 뒤에는
+  임의로 카드를 고르지 않은 채 멈춘다. 중간에 `domain_choice`로 바뀌어도 공유 횟수를 유지한다.
 - `src/app/index.tsx`, `src/app/prayer.tsx`: 위 함수들과 화면을 실제로 연결했다. 첫 화면에서
   `/scripture`·`/domain-choice` 어느 쪽으로 가든 모두 `router.push`다.
 - 사용자용 영역 이름은 `src/data/domain-labels.ts`에 있다. 내부 영문 domain 코드는 화면에 쓰지 않는다.

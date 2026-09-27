@@ -59,6 +59,8 @@ export default function DomainChoiceScreen() {
     situation,
     setSituation,
     domainChoiceOptions,
+    clarificationRound,
+    setClarificationRound,
     setDomainChoiceOptions,
     applyDomainChoiceOption,
     getResetCount,
@@ -69,7 +71,6 @@ export default function DomainChoiceScreen() {
   const [detail, setDetail] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [clarificationRound, setClarificationRound] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [devDiagnostic, setDevDiagnostic] = useState<DevDiagnosticCode | null>(null);
 
@@ -180,6 +181,9 @@ export default function DomainChoiceScreen() {
     }
 
     if (outcome.status === 'route') {
+      if (outcome.route === 'ambiguous') {
+        setClarificationRound(clarificationRound + 1);
+      }
       // 카드는 비우되 두 option은 보존해 뒤로 돌아올 수 있게 한다.
       applyDomainChoiceOption({
         domain: domainChoiceOptions[0].domain,

@@ -466,6 +466,7 @@ describe('첫 화면 · 영역 선택(domain_choice)', () => {
     await submit();
     expect(probe!.selectedCardId).toBe('SC-001');
     expect(probe!.selectedDomain).toBe('fear_uncertainty');
+    await act(async () => probe!.setClarificationRound(2));
 
     respondGate('domain_choice', {
       primaryDomain: null,
@@ -477,6 +478,7 @@ describe('첫 화면 · 영역 선택(domain_choice)', () => {
     expect(probe!.selectedCardId).toBeNull();
     expect(probe!.selectedDomain).toBeNull();
     expect(probe!.domainChoiceOptions).toEqual(DOMAIN_CHOICE_OPTIONS);
+    expect(probe!.clarificationRound).toBe(0);
   });
 
   it('영역이나 카드 관계가 이상한 domain_choice 응답은 일반 오류로 처리하고 옮기지 않는다', async () => {

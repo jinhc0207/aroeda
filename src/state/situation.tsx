@@ -49,6 +49,9 @@ type SituationContextValue = {
    * 그 밖에는 빈 배열이다.
    */
   domainChoiceOptions: DomainChoiceOption[];
+  /** domain_choice와 ambiguous가 함께 공유하는 추가 질문 횟수. 새 추천을 시작하면 0으로 돌아간다. */
+  clarificationRound: number;
+  setClarificationRound: (value: number) => void;
   /**
    * 카드와 그 카드가 속한 영역을 함께 저장한다.
    * 일반 추천과 영역 선택 뒤의 추천 모두 이 함수 하나로 저장한다. 남아 있던 domainChoiceOptions는 비운다.
@@ -57,7 +60,7 @@ type SituationContextValue = {
   /** route가 domain_choice일 때 두 option을 저장한다. 남아 있던 카드·영역은 비운다. */
   setDomainChoiceOptions: (options: DomainChoiceOption[]) => void;
   /**
-   * 카드·영역·domainChoiceOptions를 모두 비운다.
+   * 카드·영역·domainChoiceOptions를 모두 비우고 추가 질문 횟수를 0으로 돌린다.
    * 새 추천을 시작하기 전(이전 추천이 남아 있지 않게)과, 기도를 마치고 처음으로 돌아갈 때 쓴다.
    */
   clearRecommendation: () => void;
@@ -118,6 +121,7 @@ export function SituationProvider({ children }: { children: ReactNode }) {
   const [selectedCard, setSelectedCard] = useState<RuntimeCardView | null>(null);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
   const [domainChoiceOptions, setDomainChoiceOptionsState] = useState<DomainChoiceOption[]>([]);
+  const [clarificationRound, setClarificationRound] = useState(0);
   const [resetCount, setResetCount] = useState(0);
   const resetCountRef = useRef(0);
 
@@ -144,6 +148,7 @@ export function SituationProvider({ children }: { children: ReactNode }) {
     setSelectedCard(null);
     setSelectedDomain(null);
     setDomainChoiceOptionsState([]);
+    setClarificationRound(0);
   }, []);
 
   /**
@@ -171,6 +176,7 @@ export function SituationProvider({ children }: { children: ReactNode }) {
     setSelectedCard(null);
     setSelectedDomain(null);
     setDomainChoiceOptionsState([]);
+    setClarificationRound(0);
   }, []);
 
   /**
@@ -247,6 +253,8 @@ export function SituationProvider({ children }: { children: ReactNode }) {
       selectedCard,
       selectedDomain,
       domainChoiceOptions,
+      clarificationRound,
+      setClarificationRound,
       setRecommendation,
       setDomainChoiceOptions,
       clearRecommendation,
@@ -268,6 +276,7 @@ export function SituationProvider({ children }: { children: ReactNode }) {
       selectedCard,
       selectedDomain,
       domainChoiceOptions,
+      clarificationRound,
       setRecommendation,
       setDomainChoiceOptions,
       clearRecommendation,

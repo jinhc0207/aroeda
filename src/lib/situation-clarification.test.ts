@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { DomainChoiceOption } from './request-recommendation.ts';
 import {
+  buildAmbiguousClarificationPrompt,
   buildSituationClarificationPrompt,
   combineSituationWithClarification,
   MAX_CLARIFICATION_ROUNDS,
@@ -19,6 +20,24 @@ const staticOptions: [DomainChoiceOption, DomainChoiceOption] = [
 ];
 
 describe('상황 추가 질문', () => {
+  it('말씀 카드 동점도 세 단계의 구체화 질문을 제공하고 최대 횟수 뒤 멈춘다', () => {
+    assert.deepEqual(buildAmbiguousClarificationPrompt(0), {
+      question: '지금 말씀해주신 상황에서, 가장 시급하거나 마음을 무겁게 하는 어려움은 무엇인가요?',
+      guide: '문제 자체, 앞으로의 걱정, 마음과 몸에 미치는 영향 가운데 지금 가장 큰 부분을 적어주세요.',
+    });
+    assert.equal(
+      buildAmbiguousClarificationPrompt(1)?.question,
+      '그 어려움이 가장 크게 느껴지는 구체적인 순간은 언제인가요?',
+    );
+    assert.equal(
+      buildAmbiguousClarificationPrompt(2)?.question,
+      '그 일이 지금 나에게 어떤 영향을 주고 있으며, 가장 바라는 도움은 무엇인가요?',
+    );
+    assert.equal(buildAmbiguousClarificationPrompt(MAX_CLARIFICATION_ROUNDS), null);
+    assert.equal(buildAmbiguousClarificationPrompt(-1), null);
+    assert.equal(buildAmbiguousClarificationPrompt(0.5), null);
+  });
+
   it('첫 분석의 두 후보를 한국어 질문으로 만들고 내부 id는 노출하지 않는다', () => {
     const prompt = buildSituationClarificationPrompt(staticOptions);
     assert.deepEqual(prompt, {

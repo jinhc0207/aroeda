@@ -4,7 +4,7 @@ import type { DomainChoiceOption } from './request-recommendation';
 /** 추가 설명 한 번에 받는 최대 길이. 첫 입력과 합친 전체 길이는 서버 계약(3000자)을 따른다. */
 export const MAX_CLARIFICATION_DETAIL_LENGTH = 600;
 export const MAX_RECOMMENDATION_SITUATION_LENGTH = 3000;
-/** 같은 상황에서 추가 분석을 반복하는 최대 횟수. 그 뒤에는 두 주제를 직접 고르게 한다. */
+/** 같은 상황에서 추가 분석을 반복하는 최대 횟수. 두 unresolved 경로가 이 횟수를 공유한다. */
 export const MAX_CLARIFICATION_ROUNDS = 3;
 
 export type SituationClarificationPrompt = {
@@ -12,6 +12,37 @@ export type SituationClarificationPrompt = {
   guide: string;
   labels: [string, string];
 };
+
+export type AmbiguousClarificationPrompt = {
+  question: string;
+  guide: string;
+};
+
+/**
+ * 영역은 정해졌지만 카드가 동점인 상황을 더 구체화하는 질문이다.
+ * 카드 이름·점수·내부 id를 노출하지 않고, 같은 3단계 상담형 흐름을 사용한다.
+ */
+export function buildAmbiguousClarificationPrompt(
+  round = 0,
+): AmbiguousClarificationPrompt | null {
+  if (!Number.isInteger(round) || round < 0 || round >= MAX_CLARIFICATION_ROUNDS) return null;
+  if (round === 0) {
+    return {
+      question: '지금 말씀해주신 상황에서, 가장 시급하거나 마음을 무겁게 하는 어려움은 무엇인가요?',
+      guide: '문제 자체, 앞으로의 걱정, 마음과 몸에 미치는 영향 가운데 지금 가장 큰 부분을 적어주세요.',
+    };
+  }
+  if (round === 1) {
+    return {
+      question: '그 어려움이 가장 크게 느껴지는 구체적인 순간은 언제인가요?',
+      guide: '최근 있었던 장면과 그때 들었던 감정이나 생각을 한두 문장으로 적어주세요.',
+    };
+  }
+  return {
+    question: '그 일이 지금 나에게 어떤 영향을 주고 있으며, 가장 바라는 도움은 무엇인가요?',
+    guide: '위로, 용기, 회복, 결정의 지혜처럼 말씀으로 붙들고 싶은 부분을 적어주세요.',
+  };
+}
 
 const optionLabel = (option: DomainChoiceOption): string | null => {
   const displayName = option.displayName?.trim();
