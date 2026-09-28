@@ -1,0 +1,34 @@
+# Edge Function 인증 설정의 단일 원본.
+#
+# 사용자 앱이 직접 호출하는 함수는 Supabase JWT 검증을 사용한다.
+# 서버끼리 호출하는 내부 함수는 JWT 검증 대신 각 함수 전용 내부 토큰을
+# `_shared/internal-auth.ts`에서 확인한다.
+# 기존 로컬 검증 스택과 같은 식별자를 사용해 중복 스택 생성을 막는다.
+project_id = "aroeda-local-validation-20260911"
+
+[functions.analyze-situation]
+verify_jwt = true
+
+[functions.recommend-scripture]
+verify_jwt = true
+
+[functions.generate-prayer-guidance]
+verify_jwt = true
+
+[functions.delete-my-data]
+verify_jwt = true
+
+[functions.research-prioritizer]
+verify_jwt = false
+
+[functions.source-harvester]
+verify_jwt = false
+
+[functions.biblical-researcher]
+verify_jwt = false
+
+[functions.candidate-generator]
+verify_jwt = false
+
+[functions.research-queue-refresh]
+verify_jwt = false
