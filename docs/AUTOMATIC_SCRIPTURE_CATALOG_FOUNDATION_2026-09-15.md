@@ -2464,3 +2464,17 @@ JSON snapshot은 정확한 전용 디렉터리만 `.gitignore`로 제외하며, 
 고위험 비밀값 패턴 0건이다. 로컬 JSON과 Git 고정 v3 상수도 canonical JSON으로 동일하다.
 EVAL-059 지시문 블록을 임시 제거한 mutation에서는 정적 프롬프트 검사와 현재 환경 결속 검사가
 실패했고, 같은 실행에서 원본을 바이트 단위로 복원한 뒤 전체 검증을 다시 통과했다.
+
+### 운영 적용과 내부 테스트 smoke 확인 (2026-09-29)
+
+코드 커밋 `1dde520bec4b958acd5ee895924fadb540eeb99d`를 기준으로 Analyzer 계약을 함께 쓰는 세 Edge
+Function을 같은 CLI 명령으로 운영 프로젝트에 배포했다. 배포 후 버전은 `analyze-situation` 32,
+`recommend-scripture` 39, `generate-prayer-guidance` 12이며 모두 ACTIVE·`verify_jwt=true`를
+확인했다. migration·DB 쓰기·앱 바이너리 재빌드는 없었다.
+
+기존 내부 테스트 앱에서 실제 사용자 제보 문장을 다시 입력해 다음 결과를 확인했다.
+
+- `감기가 오래가서 힘들다.` → 로마서 8:22–26(SC-029)
+- `동생과 말다툼 후 서로 연락안함. 먼저 사과할지 고민중` → 추가 질문 없이 마태복음 18:15–17(SC-031)
+
+두 결과 모두 고정 분석 v3의 기대값과 일치한다.
