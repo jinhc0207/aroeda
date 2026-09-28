@@ -231,6 +231,33 @@ describe('첫 화면 · 개발 진단 — 성공/정상 경로', () => {
     expect(router.push).toHaveBeenCalledWith('/no-coverage');
     expect(screen.queryByLabelText('개발 진단')).toBeNull();
   });
+
+  it('중심 영역을 정할 정보가 부족하면 정적 종료 화면 대신 추가 질문 화면으로 간다', async () => {
+    respondGate('no_coverage', {
+      reason: 'PRIMARY_DOMAIN_UNDETERMINED',
+      primaryDomain: null,
+      coverage: null,
+    });
+    await renderScreen();
+
+    await submit();
+
+    expect(router.push).toHaveBeenCalledWith('/ambiguous');
+    expect(router.push).not.toHaveBeenCalledWith('/no-coverage');
+  });
+
+  it('실제 범위 밖이면 기존 정적 종료 화면으로 간다', async () => {
+    respondGate('no_coverage', {
+      reason: 'PRIMARY_DOMAIN_NOT_COVERED',
+      primaryDomain: 'other_uncovered',
+    });
+    await renderScreen();
+
+    await submit();
+
+    expect(router.push).toHaveBeenCalledWith('/no-coverage');
+    expect(router.push).not.toHaveBeenCalledWith('/ambiguous');
+  });
 });
 
 describe('첫 화면 · 개발 진단 — 개인정보/호출 횟수', () => {

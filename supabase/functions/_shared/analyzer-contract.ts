@@ -177,7 +177,7 @@ primaryDomain은 사용자가 처한 삶의 핵심 상황을 나타냅니다.
 [Domain Priority]
 
 domainPriority는 문장에서 중심 영역을 정할 수 있는지를 나타냅니다.
-값은 resolved 또는 needs_choice 둘 중 하나입니다.
+값은 resolved, needs_choice, needs_detail 중 하나입니다.
 
 resolved:
 - 문제가 하나이거나, 사용자가 한 영역을 중심으로 말한 경우입니다.
@@ -197,6 +197,15 @@ needs_choice:
 - ${fallbackDomain}은 후보로 넣지 않습니다.
 - 감정, 원인, 결과, 과거 배경을 별도 후보로 만들지 않습니다.
 - 세 가지 이상이 언급되더라도, 가장 분명하게 서로 독립된 두 영역만 후보로 넣습니다.
+
+needs_detail:
+- 사용자가 힘듦이나 고민이 있다는 사실은 표현했지만, 어떤 삶의 상황이나 신앙적 질문인지
+  중심 영역을 정할 근거가 아직 없는 경우입니다.
+- 이때 primaryDomain은 null, domainChoiceCandidates와 secondaryDomains는 빈 배열로 둡니다.
+- 가능한 영역을 추측해서 후보로 만들지 않습니다.
+- 짧은 문장이어도 영역이 분명하면 needs_detail을 사용하지 않습니다.
+- 앱의 현재 영역 밖에 있는 구체적인 고민은 needs_detail이 아니라 resolved와
+  primaryDomain = ${fallbackDomain}으로 표시합니다.
 
 예:
 
@@ -227,6 +236,15 @@ needs_choice:
 → resolved, primaryDomain = financial_hardship, secondaryDomains = [chronic_illness]
 (치료 중단 걱정은 병원비 부담에서 생긴 결과이므로 두 문제를 독립된 후보로 만들지 않습니다.)
 
+"요즘 너무 힘들어요."
+→ needs_detail, primaryDomain = null,
+  domainChoiceCandidates = [], secondaryDomains = []
+(힘들다는 사실만으로는 중심 삶의 영역을 정할 근거가 없습니다.)
+
+"휴대폰 배경화면 색을 무엇으로 할지 고민돼요."
+→ resolved, primaryDomain = ${fallbackDomain}, secondaryDomains = []
+(고민의 내용은 구체적이지만 현재 앱이 다루는 삶의 영역 밖입니다.)
+
 secondaryDomains는 resolved에서만 사용합니다.
 실제로 복합적인 상황이 함께 존재할 때만 넣고, 태그를 풍성하게 만들기 위해 추가하지 않습니다.
 단순한 감정 반응을 억지로 secondary domain으로 만들지 않습니다.
@@ -234,7 +252,7 @@ secondaryDomains는 resolved에서만 사용합니다.
 primaryDomain과 같은 값을 secondaryDomains에 다시 넣지 않습니다.
 
 안전 신호(safety)는 domainPriority와 상관없이 항상 정확히 표시합니다.
-needs_choice라는 이유로 안전 신호를 빼거나 약하게 표시하지 않습니다.
+needs_choice나 needs_detail이라는 이유로 안전 신호를 빼거나 약하게 표시하지 않습니다.
 
 사용자가 꿈·환상·징조를 말하더라도, 그것이 하나님의 직접 메시지인지 아닌지 단정하지 않습니다.
 

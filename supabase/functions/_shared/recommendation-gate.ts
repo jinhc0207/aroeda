@@ -1,12 +1,13 @@
 /**
- * Recommendation Gate V1
+ * Recommendation Gate V2
  *
  * 규칙 문서: docs/RECOMMENDATION_GATE.md
  *
  * 순서가 중요하다.
  *   1. 안전이 먼저다.
  *   2. 먼저 다룰 삶의 영역이 정해졌는지 본다(domainPriority).
- *      정해지지 않았으면(needs_choice) 카드를 고르지 않고 domain_choice로 돌려준다.
+ *      정보가 부족하면(needs_detail) 추가 질문 사유로, 두 영역 사이 선택이면(needs_choice)
+ *      domain_choice로 돌려준다.
  *   3. 사용자의 핵심 상황(primaryDomain)을 지금 카드가 다룰 수 있는지 본다.
  *   4. 다룰 수 있을 때만 후보 카드를 만든다. 후보는 primaryDomain의 카드뿐이다.
  *   5. 그 후보들 사이에서만 기존 Matcher 점수를 쓰고, 최고점이 동점이면 임의로 고르지 않는다.
@@ -35,9 +36,9 @@ import { resolveAnalysisForChosenDomain } from './domain-choice-resolution.ts';
  *
  * 선택 결과(어느 route로 가는지, 어느 카드가 뽑히는지)에 영향을 주는 규칙이 하나라도
  * 바뀌면 반드시 이 버전을 올린다. 주석·서식만 바꾸는 것으로는 올리지 않는다.
- * 이번 작업(환경 결속 계층 추가)은 이 파일의 동작을 바꾸지 않았으므로 v1을 유지한다.
+ * needs_detail 분기를 추가해 route의 의미가 바뀌었으므로 v2다.
  */
-export const RECOMMENDATION_GATE_CONTRACT_VERSION = 'recommendation-gate/v1';
+export const RECOMMENDATION_GATE_CONTRACT_VERSION = 'recommendation-gate/v2';
 
 export type GateRoute = 'safety' | 'domain_choice' | 'no_coverage' | 'recommend' | 'ambiguous';
 
@@ -45,6 +46,7 @@ export type GateRoute = 'safety' | 'domain_choice' | 'no_coverage' | 'recommend'
 export type GateReason =
   | 'SAFETY_FIRST'
   | 'DOMAIN_PRIORITY_UNRESOLVED'
+  | 'PRIMARY_DOMAIN_UNDETERMINED'
   | 'PRIMARY_DOMAIN_NOT_COVERED'
   | 'CARD_SELECTED'
   | 'TOP_SCORE_TIE';
@@ -122,21 +124,36 @@ export function runRecommendationGate<TDomain extends string = SituationDomain>(
 ): GateResult<TDomain> {
   const { domainPriority, primaryDomain, safety } = analysis;
   const needsChoice = domainPriority === 'needs_choice';
+  const needsDetail = domainPriority === 'needs_detail';
+  const unresolved = needsChoice || needsDetail;
 
   // STEP 1 · 안전이 먼저다.
   // 영역 선택이 필요한 사연이어도 safety가 먼저이고, 영역 선택과 후보별 결과를 내보내지 않는다.
   if (safety.level !== 'normal') {
     return {
       ...emptyResult(analysis),
-      primaryDomain: needsChoice ? null : primaryDomain,
-      secondaryDomains: needsChoice ? [] : analysis.secondaryDomains,
-      coverage: needsChoice ? null : getCoverage(primaryDomain, cards),
+      primaryDomain: unresolved ? null : primaryDomain,
+      secondaryDomains: unresolved ? [] : analysis.secondaryDomains,
+      coverage: unresolved ? null : getCoverage(primaryDomain, cards),
       route: 'safety',
       reason: 'SAFETY_FIRST',
     };
   }
 
-  // STEP 2 · 먼저 다룰 영역이 정해졌는가.
+  // STEP 2-1 · 중심 영역을 정할 정보가 아직 충분한가.
+  // 가능한 영역을 추측하지 않고, 앱이 상담형 추가 질문을 할 수 있는 이유를 명시한다.
+  if (needsDetail) {
+    return {
+      ...emptyResult(analysis),
+      primaryDomain: null,
+      secondaryDomains: [],
+      coverage: null,
+      route: 'no_coverage',
+      reason: 'PRIMARY_DOMAIN_UNDETERMINED',
+    };
+  }
+
+  // STEP 2-2 · 먼저 다룰 영역이 정해졌는가.
   // 정해지지 않았으면 top-level 카드는 고르지 않고 두 후보를 보존한다. no_coverage로 표현하지 않는다.
   // 두 후보 각각은 고른 영역 기준 resolved 분석으로 바꾼 뒤 같은 Primary-First 계산을 한 번씩만 한다.
   // (runResolvedGate는 runRecommendationGate를 다시 부르지 않는다.)

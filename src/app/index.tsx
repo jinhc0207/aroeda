@@ -100,7 +100,13 @@ export default function SituationScreen() {
     }
 
     if (outcome.status === 'route') {
-      router.push(outcome.route === 'no_coverage' ? '/no-coverage' : `/${outcome.route}`);
+      router.push(
+        outcome.route === 'no_coverage'
+          ? outcome.needsClarification
+            ? '/ambiguous'
+            : '/no-coverage'
+          : `/${outcome.route}`,
+      );
       return;
     }
 

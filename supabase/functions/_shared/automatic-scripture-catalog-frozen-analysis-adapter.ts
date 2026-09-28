@@ -25,7 +25,7 @@ import {
   type SafetyBoundarySnapshotCase,
 } from './automatic-scripture-catalog-analysis-snapshot-contract.ts';
 import { validateAnalysisSnapshotAgainstCurrentEnvironment } from './automatic-scripture-catalog-analysis-environment.ts';
-import { FROZEN_ANALYSIS_SNAPSHOT_V1 } from './automatic-scripture-catalog-analysis-snapshot-v1.ts';
+import { FROZEN_ANALYSIS_SNAPSHOT_V2 } from './automatic-scripture-catalog-analysis-snapshot-v2.ts';
 import { runRecommendationGate, type GateResult } from './recommendation-gate.ts';
 import type { ScriptureCard } from './scripture-cards.ts';
 import type { SituationDomain } from './situation-domains.ts';
@@ -193,12 +193,12 @@ export async function buildFrozenAnalysisDeterministicAdapters(
 }
 
 /**
- * 운영 조립부가 임의 스냅샷을 주입하지 않고, 저장소가 버전 관리하는 v1 산출물만
+ * 운영 조립부가 임의 스냅샷을 주입하지 않고, 저장소가 버전 관리하는 v2 산출물만
  * 선택하도록 하는 진입점. 나머지 resolvePassageText·candidateGeneration adapter는
  * executor 조립 경계에서 별도로 넣어야 하며 이 함수는 그것을 통과한 척 만들지 않는다.
  */
 export async function buildVersionedFrozenAnalysisDeterministicAdapters(
   baseCatalog: ScriptureCatalogSnapshot,
 ): Promise<FrozenAnalysisAdapterBuildResult> {
-  return buildFrozenAnalysisDeterministicAdapters(FROZEN_ANALYSIS_SNAPSHOT_V1, baseCatalog);
+  return buildFrozenAnalysisDeterministicAdapters(FROZEN_ANALYSIS_SNAPSHOT_V2, baseCatalog);
 }

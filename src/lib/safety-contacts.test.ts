@@ -235,7 +235,7 @@ describe('안전 연락처 · E. 기존 흐름은 그대로', () => {
     const helper = stripComments(read('./request-recommendation.ts'));
     assert.ok(
       helper.includes(
-        'const { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions } =',
+        'const { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions, reason } =',
       ),
     );
     assert.equal(helper.includes('safetyLevel'), false);

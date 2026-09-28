@@ -168,7 +168,8 @@ export type CorpusRegressionCaseExpectation =
     }
   | {
       expectedRoute: 'no_coverage';
-      expectedPrimaryDomain: typeof FALLBACK_DOMAIN;
+      /** null은 추가 정보 필요, other_uncovered는 실제 지원 범위 밖을 뜻한다. */
+      expectedPrimaryDomain: typeof FALLBACK_DOMAIN | null;
     };
 
 export type CorpusRegressionSnapshotCase = AnalysisSnapshotCaseCommon & {
@@ -374,8 +375,8 @@ function validateCaseExpectation(kind: AnalysisSnapshotCaseKind, value: unknown,
 
   if (value.expectedRoute === 'no_coverage') {
     const errors = exactFields(value, CORPUS_NO_COVERAGE_FIELDS, label);
-    if (value.expectedPrimaryDomain !== FALLBACK_DOMAIN) {
-      errors.push(`${label}.expectedPrimaryDomain: no_coverage면 '${FALLBACK_DOMAIN}'이어야 합니다.`);
+    if (value.expectedPrimaryDomain !== FALLBACK_DOMAIN && value.expectedPrimaryDomain !== null) {
+      errors.push(`${label}.expectedPrimaryDomain: no_coverage면 '${FALLBACK_DOMAIN}' 또는 null이어야 합니다.`);
     }
     return errors;
   }
@@ -457,11 +458,20 @@ function validateCrossConsistency(
       errors.push(`${label}: expectedDomainChoiceCandidates가 analysis.domainChoiceCandidates와 순서까지 정확히 같아야 합니다.`);
     }
   } else if (exp.expectedRoute === 'no_coverage') {
-    if (analysis.domainPriority !== 'resolved') {
-      errors.push(`${label}: expectedRoute가 no_coverage면 analysis.domainPriority가 resolved여야 합니다.`);
-    }
-    if (analysis.primaryDomain !== FALLBACK_DOMAIN) {
-      errors.push(`${label}: expectedRoute가 no_coverage면 analysis.primaryDomain이 '${FALLBACK_DOMAIN}'이어야 합니다.`);
+    if (exp.expectedPrimaryDomain === null) {
+      if (analysis.domainPriority !== 'needs_detail') {
+        errors.push(`${label}: expectedPrimaryDomain이 null인 no_coverage면 analysis.domainPriority가 needs_detail이어야 합니다.`);
+      }
+      if (analysis.primaryDomain !== null) {
+        errors.push(`${label}: expectedPrimaryDomain이 null인 no_coverage면 analysis.primaryDomain이 null이어야 합니다.`);
+      }
+    } else {
+      if (analysis.domainPriority !== 'resolved') {
+        errors.push(`${label}: 실제 범위 밖 no_coverage면 analysis.domainPriority가 resolved여야 합니다.`);
+      }
+      if (analysis.primaryDomain !== FALLBACK_DOMAIN) {
+        errors.push(`${label}: 실제 범위 밖 no_coverage면 analysis.primaryDomain이 '${FALLBACK_DOMAIN}'이어야 합니다.`);
+      }
     }
   }
 

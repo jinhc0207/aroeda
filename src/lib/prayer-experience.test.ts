@@ -288,7 +288,9 @@ describe('기도 경험 · G. 앞의 흐름은 그대로', () => {
     // 안전·미다룸·모호는 gate가 준 이름으로 그대로 옮겨 간다.
     // 첫 화면은 그 이름을 직접 적지 않고 받은 값을 쓴다.
     assert.ok(index.includes("outcome.status === 'route'"));
-    assert.ok(index.includes("outcome.route === 'no_coverage' ? '/no-coverage'"));
+    assert.ok(index.includes("outcome.needsClarification"));
+    assert.ok(index.includes("? '/ambiguous'"));
+    assert.ok(index.includes(": '/no-coverage'"));
     assert.ok(index.includes('`/${outcome.route}`'));
 
     // 그 이름의 주인은 여전히 요청 계약 쪽이다.

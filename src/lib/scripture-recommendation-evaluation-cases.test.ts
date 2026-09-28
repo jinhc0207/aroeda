@@ -231,15 +231,23 @@ describe('scripture-recommendation-evaluation-cases · preferred/acceptable 카�
     }
   });
 
-  it('no_coverage 정답은 카드 정답 없이 other_uncovered를 기대한다', () => {
+  it('no_coverage 정답은 카드 정답 없이 추가 질문(null)과 실제 범위 밖(other_uncovered)을 구분한다', () => {
     const cases = EVALUATION_CASES.filter((item) => item.expectedRoute === 'no_coverage');
     assert.deepEqual(cases.map((item) => item.id), ['EVAL-111', 'EVAL-117', 'EVAL-143']);
     for (const item of cases) {
-      assert.equal(item.expectedPrimaryDomain, 'other_uncovered');
+      assert.ok(item.expectedPrimaryDomain === null || item.expectedPrimaryDomain === 'other_uncovered');
       assert.equal('preferredCardId' in item, false);
       assert.equal('acceptableCardIds' in item, false);
       assert.equal('expectedDomainChoiceCandidates' in item, false);
     }
+    assert.deepEqual(
+      cases.map((item) => [item.id, item.expectedPrimaryDomain]),
+      [
+        ['EVAL-111', null],
+        ['EVAL-117', null],
+        ['EVAL-143', 'other_uncovered'],
+      ],
+    );
   });
 
   it('rationale이 비어 있지 않다 (사람이 검수하기 위한 설명. 의미가 맞는지는 자동 검증하지 않는다)', () => {
@@ -442,17 +450,17 @@ describe('scripture-recommendation-evaluation-cases · 2026-09-16 검수 수정 
   });
 });
 
-describe('scripture-recommendation-evaluation-cases · betrayal 영역 일관성 검수 (EVAL-068)', () => {
-  it('원본 코퍼스와 실제 Analyzer에 맞춰 injustice_mistreatment·SC-046을 고정한다', () => {
+describe('scripture-recommendation-evaluation-cases · betrayal 의미 검수 (EVAL-068)', () => {
+  it('명시적 부당대우나 손해가 없는 관계 배신은 relationship_conflict_forgiveness·SC-017로 고정한다', () => {
     const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-068')!;
     assert.ok(item, 'EVAL-068을 찾지 못했습니다.');
     assert.equal(item.text, '신뢰했던 사람이 뒤통수를 쳐서 배신감이 커요.');
     assert.equal(item.domain, 'injustice_mistreatment');
     assert.equal(item.rank, 18);
     assert.equal(item.cluster, 'betrayal');
-    assert.equal(item.expectedPrimaryDomain, 'injustice_mistreatment');
-    assert.equal(item.preferredCardId, 'SC-046');
-    assert.deepEqual(item.acceptableCardIds, ['SC-046', 'SC-008']);
+    assert.equal(item.expectedPrimaryDomain, 'relationship_conflict_forgiveness');
+    assert.equal(item.preferredCardId, 'SC-017');
+    assert.deepEqual(item.acceptableCardIds, ['SC-017']);
   });
 });
 

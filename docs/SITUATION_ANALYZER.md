@@ -84,11 +84,13 @@ Situation Analysis의 `confidence`는
 원칙만 먼저 정한다.
 
 - 최고 점수가 낮거나 confidence가 낮으면 임의의 성경본문을 강하게 추천하지 않는다.
-- Analyzer 자신은 질문 문구를 만들지 않는다. `domainPriority === 'needs_choice'`이거나 Gate가 카드 동점
-  `ambiguous`를 돌려주면 앱이 추가 질문을 구성하고, 사용자가 답하면 전체 상황을 Analyzer에 다시 보낸다.
+- Analyzer 자신은 질문 문구를 만들지 않는다. `domainPriority === 'needs_detail'`이면 중심 영역을 정할
+  정보가 부족하다는 뜻이고, `needs_choice`이면 두 영역 사이 선택이 필요하다는 뜻이다. 이 두 경우와
+  Gate의 카드 동점 `ambiguous`에서 앱이 추가 질문을 구성하고, 사용자가 답하면 전체 상황을 Analyzer에
+  다시 보낸다.
 - 추가 질문은 두 경로를 합쳐 최대 3번이며 매번 결과를 다시 판정한다. 안전 신호가 나오면 즉시 안전
-  경로를 우선한다. 계속 `needs_choice`이면 두 후보를 직접 고르게 하고, 계속 `ambiguous`이면 임의로
-  한 말씀을 고르지 않은 채 질문을 멈춘다.
+  경로를 우선한다. 계속 `needs_choice`이면 두 후보를 직접 고르게 하고, 계속 `needs_detail` 또는
+  `ambiguous`이면 임의로 한 말씀을 고르지 않은 채 질문을 멈춘다.
 - 관련 규칙은 docs/SCRIPTURE_MATCHING.md의 '낮은 확신' 항목과 함께 관리한다.
 
 ---
@@ -97,7 +99,7 @@ Situation Analysis의 `confidence`는
 
 ```ts
 {
-  domainPriority: 'resolved' | 'needs_choice',
+  domainPriority: 'resolved' | 'needs_choice' | 'needs_detail',
   primaryDomain: SituationDomain | null,
   domainChoiceCandidates: SituationDomain[],
   secondaryDomains: SituationDomain[],

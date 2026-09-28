@@ -248,6 +248,12 @@ async function runPrayerGuidance(
     return unavailable('prayer_guidance_safety_first');
   }
 
+  // 중심 영역을 정할 정보가 부족하면 요청으로 받은 영역을 억지로 끼워 넣지 않는다.
+  // 추가 질문은 추천 흐름의 책임이며, 기도문 함수에서는 기존 unavailable로 닫는다.
+  if (analyzed.analysis.domainPriority === 'needs_detail') {
+    return unavailable('prayer_guidance_domain_not_detected');
+  }
+
   // 사용자가 고른 영역이 다시 살핀 결과 안에 실제로 있는가.
   // needs_choice면 두 후보 중 하나, resolved면 primary 또는 secondary여야 한다.
   // 없으면 거절한다. 요청 값을 분석 결과에 억지로 넣지 않는다.

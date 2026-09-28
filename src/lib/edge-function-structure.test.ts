@@ -154,7 +154,7 @@ describe('Analyzer 규칙 동일성', () => {
     // 지시문에 그대로 나열되는 태그 목록이 길어졌다. Analyzer Tag Stability
     // Correction v3(2026-09-16)으로 실제 full 평가에서 확인한 영역 경계와 구체 태그 우선
     // 예시를 추가했다. 실제 INSTRUCTIONS.length를 계산해 갱신한 값이다.
-    assert.equal(INSTRUCTIONS.length, 16503, '지시문 길이가 달라졌습니다.');
+    assert.equal(INSTRUCTIONS.length, 17151, '지시문 길이가 달라졌습니다.');
     for (const marker of [
       '[level]',
       '[자살 / 자해]',
@@ -164,6 +164,9 @@ describe('Analyzer 규칙 동일성', () => {
       '[Situation Domain]',
       '[Domain Priority]',
       'needs_choice',
+      'needs_detail',
+      '요즘 너무 힘들어요.',
+      '휴대폰 배경화면 색을 무엇으로 할지 고민돼요.',
       '가짜 중심 영역을 만들지 않습니다',
       '안전 신호(safety)는 domainPriority와 상관없이',
       '하나님의 직접 메시지인지 아닌지 단정하지 않습니다',
@@ -256,7 +259,7 @@ describe('Analyzer 규칙 동일성', () => {
     for (const key of ['oneOf', 'anyOf', 'allOf']) assert.equal(key in schema, false, key);
 
     const { domainPriority, primaryDomain, domainChoiceCandidates } = SITUATION_ANALYSIS_SCHEMA.properties;
-    assert.deepEqual(domainPriority, { type: 'string', enum: ['resolved', 'needs_choice'] });
+    assert.deepEqual(domainPriority, { type: 'string', enum: ['resolved', 'needs_choice', 'needs_detail'] });
 
     // nullable은 OpenAI Structured Outputs 문서의 형태: type 배열 + enum에 null 포함.
     assert.deepEqual(primaryDomain.type, ['string', 'null']);

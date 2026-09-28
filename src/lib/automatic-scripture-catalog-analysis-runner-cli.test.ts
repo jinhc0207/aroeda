@@ -102,8 +102,8 @@ function buildValidAnalysisForCaseId(caseId: string): SituationAnalysis {
     };
   }
   return {
-    domainPriority: 'resolved',
-    primaryDomain: 'other_uncovered',
+    domainPriority: expected.expectedPrimaryDomain === null ? 'needs_detail' : 'resolved',
+    primaryDomain: expected.expectedPrimaryDomain,
     domainChoiceCandidates: [],
     secondaryDomains: [],
     situationTags: [],

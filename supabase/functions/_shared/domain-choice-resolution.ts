@@ -45,6 +45,9 @@ export function resolveAnalysisForChosenDomain<TDomain extends string>(
   ) return null;
   const chosen = chosenDomain as TDomain;
 
+  // 중심 영역 후보 자체가 없는 정보 부족 상태에서는 사용자가 고른 값을 끼워 넣지 않는다.
+  if (analysis.domainPriority === 'needs_detail') return null;
+
   if (analysis.domainPriority === 'needs_choice') {
     if (!analysis.domainChoiceCandidates.includes(chosen)) return null;
     return {

@@ -177,6 +177,14 @@ describe('Situation Analyzer 규격 · 영역 우선순위', () => {
     secondaryDomains: [],
   });
 
+  const needsDetail = (): SituationAnalysis => ({
+    ...baseAnalysis(),
+    domainPriority: 'needs_detail',
+    primaryDomain: null,
+    domainChoiceCandidates: [],
+    secondaryDomains: [],
+  });
+
   const failsWith = (value: unknown, fragment: string) => {
     const result = validateSituationAnalysis(value);
     assert.equal(result.valid, false, `통과하면 안 됩니다: ${JSON.stringify(value)}`);
@@ -195,6 +203,21 @@ describe('Situation Analyzer 규격 · 영역 우선순위', () => {
   it('needs_choice 기본 형태는 통과한다', () => {
     const result = validateSituationAnalysis(needsChoice());
     assert.equal(result.valid, true, result.errors.join(' / '));
+  });
+
+  it('needs_detail은 중심 영역·선택 후보·보조 영역이 모두 비어 있을 때만 통과한다', () => {
+    const valid = validateSituationAnalysis(needsDetail());
+    assert.equal(valid.valid, true, valid.errors.join(' / '));
+
+    failsWith({ ...needsDetail(), primaryDomain: 'fear_uncertainty' }, 'needs_detail이면 primaryDomain은 null이어야 합니다');
+    failsWith(
+      { ...needsDetail(), domainChoiceCandidates: ['fear_uncertainty', 'financial_hardship'] },
+      'needs_detail이면 domainChoiceCandidates는 비어 있어야 합니다',
+    );
+    failsWith(
+      { ...needsDetail(), secondaryDomains: ['fear_uncertainty'] },
+      'needs_detail이면 secondaryDomains는 비어 있어야 합니다',
+    );
   });
 
   it('domainPriority가 없거나 허용되지 않는 값이면 실패한다', () => {
@@ -267,5 +290,11 @@ describe('Situation Analyzer 규격 · 영역 우선순위', () => {
     failsWith({ ...needsChoice(), confidence: 2 }, 'confidence는 0과 1 사이');
     const withSafety = { ...needsChoice(), safety: { level: 'caution', categories: ['abuse'] } };
     assert.equal(validateSituationAnalysis(withSafety).valid, true);
+  });
+
+  it('needs_detail이어도 안전 신호 검증은 약해지지 않는다', () => {
+    failsWith({ ...needsDetail(), safety: { level: 'urgent', categories: [] } }, 'categories가 최소 하나');
+    const urgent = { ...needsDetail(), safety: { level: 'urgent' as const, categories: ['suicide' as const] } };
+    assert.equal(validateSituationAnalysis(urgent).valid, true);
   });
 });

@@ -110,8 +110,8 @@ function buildValidAnalysisForPlanCase(planCase: AnalysisSnapshotPlanCase): Situ
   }
   // no_coverage
   return {
-    domainPriority: 'resolved',
-    primaryDomain: 'other_uncovered',
+    domainPriority: expected.expectedPrimaryDomain === null ? 'needs_detail' : 'resolved',
+    primaryDomain: expected.expectedPrimaryDomain,
     domainChoiceCandidates: [],
     secondaryDomains: [],
     situationTags: [],
@@ -182,7 +182,7 @@ describe('automatic-scripture-catalog-analysis-snapshot-builder · 1) 결정적 
       } else {
         assert.deepEqual(expectedKeys, ['expectedPrimaryDomain', 'expectedRoute']);
         const projectedExpected = projected.expected as CorpusRegressionCaseExpectation & { expectedRoute: 'no_coverage' };
-        assert.equal(projectedExpected.expectedPrimaryDomain, 'other_uncovered');
+        assert.equal(projectedExpected.expectedPrimaryDomain, original.expectedPrimaryDomain);
       }
       // domain·rank·cluster·smoke·isNewCardSmoke·rationale은 계획 어디에도 없어야 한다.
       assert.ok(!('domain' in projected));

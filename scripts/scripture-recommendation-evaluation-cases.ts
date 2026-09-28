@@ -76,7 +76,8 @@ export type DomainChoiceExpectation = {
 export type NoCoverageExpectation = {
   id: string;
   text: string;
-  expectedPrimaryDomain: 'other_uncovered';
+  /** null이면 중심 영역을 정할 정보가 부족해 추가 질문이 필요하다. */
+  expectedPrimaryDomain: 'other_uncovered' | null;
   expectedRoute: 'no_coverage';
   rationale: string;
 };
@@ -1122,12 +1123,12 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'injustice_mistreatment',
     rank: 18,
     cluster: 'betrayal',
-    expectedPrimaryDomain: 'injustice_mistreatment',
+    expectedPrimaryDomain: 'relationship_conflict_forgiveness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-046',
-    acceptableCardIds: ['SC-046', 'SC-008'],
+    preferredCardId: 'SC-017',
+    acceptableCardIds: ['SC-017'],
     rationale:
-      '원본 코퍼스가 injustice_mistreatment의 betrayal 사례로 분류하고, 인접한 EVAL-067·069와 실제 Analyzer도 같은 영역으로 판단한다. 배신과 억울함을 다루는 SC-046을 preferred로, 더 넓은 불의·부당대우를 다루는 SC-008을 acceptable로 둔다.',
+      '이 문장은 부당대우·강압·물질적 손해보다 신뢰 관계에서 받은 배신과 상처를 직접 말한다. 관계 갈등과 상처 준 사람을 다루는 SC-017만 현재 문장에 직접 대응하므로 preferred이자 유일한 acceptable로 둔다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1766,10 +1767,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'burnout_exhaustion',
     rank: 17,
     cluster: 'rest',
-    expectedPrimaryDomain: 'other_uncovered',
+    expectedPrimaryDomain: null,
     expectedRoute: 'no_coverage',
     rationale:
-      '감정이 무뎌졌다는 사실만 있고 지속적 탈진·일 과부하·휴식 필요 등 소진의 원인이 없다. 현재 17개 영역 중 하나를 추측하지 않고 no_coverage로 두는 것이 정답이다.',
+      '감정이 무뎌졌다는 사실만 있고 원인이나 가장 힘든 지점이 없어 중심 영역을 정할 수 없다. 실제 범위 밖으로 단정하지 않고 추가 설명을 듣는 no_coverage가 정답이다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -1854,10 +1855,10 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     domain: 'burnout_exhaustion',
     rank: 18,
     cluster: 'limits',
-    expectedPrimaryDomain: 'other_uncovered',
+    expectedPrimaryDomain: null,
     expectedRoute: 'no_coverage',
     rationale:
-      '회복하고 싶고 멈추고 싶다는 표현만으로는 무엇에서 회복하려는지, 무엇을 멈추려는지 알 수 없다. 소진을 추론하지 않고 no_coverage로 두는 것이 정답이다.',
+      '회복하고 싶고 멈추고 싶다는 표현만으로는 무엇에서 회복하려는지, 무엇을 멈추려는지 알 수 없다. 소진을 추론하지 않고 추가 설명을 듣는 no_coverage가 정답이다.',
     smoke: false,
     isNewCardSmoke: false,
   },

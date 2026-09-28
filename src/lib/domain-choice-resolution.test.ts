@@ -51,6 +51,15 @@ const unchangedParts = (analysis: SituationAnalysis) => ({
 });
 
 describe('영역 선택 해석 · needs_choice', () => {
+  it('needs_detail은 선택할 후보가 없으므로 어떤 영역도 해석하지 않는다', () => {
+    const value: SituationAnalysis = {
+      ...needsChoice,
+      domainPriority: 'needs_detail',
+      domainChoiceCandidates: [],
+    };
+    assert.equal(resolveAnalysisForChosenDomain(value, 'financial_hardship'), null);
+  });
+
   it('첫 후보를 고르면 그 영역이 primary, 나머지 후보가 secondary다', () => {
     const result = resolveAnalysisForChosenDomain(needsChoice, 'financial_hardship');
     assert.ok(result);

@@ -39,20 +39,27 @@ function Probe() {
   return null;
 }
 
-function InitialSituation({ children }: { children: React.ReactNode }) {
-  const { situation, setSituation } = useSituation();
+function InitialSituation({
+  children,
+  initialClarificationRound = 0,
+}: {
+  children: React.ReactNode;
+  initialClarificationRound?: number;
+}) {
+  const { situation, setSituation, setClarificationRound } = useSituation();
   useEffect(() => {
     setSituation('생활비가 모자라요');
-  }, [setSituation]);
+    setClarificationRound(initialClarificationRound);
+  }, [initialClarificationRound, setClarificationRound, setSituation]);
   if (!situation) return null;
   return children;
 }
 
-const renderScreen = () =>
+const renderScreen = (initialClarificationRound = 0) =>
   render(
     <SituationProvider>
       <Probe />
-      <InitialSituation>
+      <InitialSituation initialClarificationRound={initialClarificationRound}>
         <AmbiguousScreen />
       </InitialSituation>
     </SituationProvider>,
@@ -65,6 +72,14 @@ const gateResponse = (result: Record<string, unknown>) => ({
 
 const ambiguousResponse = () =>
   gateResponse({ route: 'ambiguous', primaryDomain: 'financial_hardship', selectedCardId: null });
+
+const needsDetailResponse = () =>
+  gateResponse({
+    route: 'no_coverage',
+    reason: 'PRIMARY_DOMAIN_UNDETERMINED',
+    primaryDomain: null,
+    selectedCardId: null,
+  });
 
 beforeEach(() => {
   invoke.mockReset();
@@ -137,6 +152,55 @@ describe('ambiguous 화면 · 추가 질문', () => {
     expect(invoke).toHaveBeenCalledTimes(3);
     expect(probe!.selectedCardId).toBeNull();
     expect(probe!.clarificationRound).toBe(3);
+  });
+
+  it('추가 답변도 넓으면 같은 최대 3회 질문 흐름을 이어간다', async () => {
+    invoke.mockResolvedValue(needsDetailResponse() as never);
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '그냥 모든 일이 힘들어요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    expect(await screen.findByText('그 어려움이 가장 크게 느껴지는 구체적인 순간은 언제인가요?')).toBeTruthy();
+    expect(screen.getByLabelText('추가 상황 설명')).toBeTruthy();
+    expect(router.push).not.toHaveBeenCalledWith('/no-coverage');
+    expect(probe!.clarificationRound).toBe(1);
+  });
+
+  it('domain_choice 등 앞선 흐름에서 질문을 두 번 썼으면 needs_detail은 한 번만 더 묻고 합계 3회에서 멈춘다', async () => {
+    invoke.mockResolvedValue(needsDetailResponse() as never);
+    await renderScreen(2);
+
+    expect(
+      await screen.findByText('그 일이 지금 나에게 어떤 영향을 주고 있으며, 가장 바라는 도움은 무엇인가요?'),
+    ).toBeTruthy();
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '여전히 무엇이 가장 힘든지 잘 모르겠어요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    expect(
+      await screen.findByText('여전히 한 말씀으로 좁히기 어려워요. 임의로 고르지 않고 여기서 질문을 멈출게요.'),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText('추가 상황 설명')).toBeNull();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(router.push).not.toHaveBeenCalledWith('/no-coverage');
+    expect(probe!.clarificationRound).toBe(3);
+  });
+
+  it('추가 답변이 실제 범위 밖이면 정적 종료 화면으로 간다', async () => {
+    invoke.mockResolvedValue(
+      gateResponse({
+        route: 'no_coverage',
+        reason: 'PRIMARY_DOMAIN_NOT_COVERED',
+        primaryDomain: 'other_uncovered',
+        selectedCardId: null,
+      }) as never,
+    );
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByLabelText('추가 상황 설명'), '휴대폰 배경화면 색을 고르는 문제예요.');
+    await fireEvent.press(screen.getByLabelText('추가 설명으로 다시 말씀 찾기'));
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith('/no-coverage'));
   });
 
   it('추가 분석이 영역 선택을 요구하면 같은 질문 횟수를 유지한 채 영역 선택 화면으로 간다', async () => {

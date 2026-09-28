@@ -478,8 +478,33 @@ describe('automatic-scripture-catalog-analysis-snapshot-contract', () => {
     const wrongPrimary = { ...CORP_NO_COVERAGE_CASE, analysis: { ...NO_COVERAGE_ANALYSIS, primaryDomain: 'fear_uncertainty' as const } };
     const result = await validateAnalysisSnapshot(stale(baseline, { cases: [wrongPrimary, SAFE_CASE] }));
     assert.deepEqual(result.errors, [
-      "snapshot.cases[0]: expectedRoute가 no_coverage면 analysis.primaryDomain이 'other_uncovered'이어야 합니다.",
+      "snapshot.cases[0]: 실제 범위 밖 no_coverage면 analysis.primaryDomain이 'other_uncovered'이어야 합니다.",
     ]);
+  });
+
+  it('13b) 추가 정보가 필요한 no_coverage는 needs_detail + null일 때만 통과한다', async () => {
+    const needsDetailCase = {
+      ...CORP_NO_COVERAGE_CASE,
+      expected: { expectedRoute: 'no_coverage' as const, expectedPrimaryDomain: null },
+      analysis: {
+        ...NO_COVERAGE_ANALYSIS,
+        domainPriority: 'needs_detail' as const,
+        primaryDomain: null,
+      },
+    };
+    const baseline = await buildValidSnapshot([needsDetailCase, SAFE_CASE]);
+    assert.deepEqual((await validateAnalysisSnapshot(baseline)).errors, []);
+
+    const wrongPriority = {
+      ...needsDetailCase,
+      analysis: {
+        ...needsDetailCase.analysis,
+        domainPriority: 'resolved' as const,
+        primaryDomain: 'other_uncovered' as const,
+      },
+    };
+    const result = await validateAnalysisSnapshot(stale(baseline, { cases: [wrongPriority, SAFE_CASE] }));
+    assert.ok(result.errors.some((error) => error.includes('domainPriority가 needs_detail이어야 합니다')));
   });
 
   it('14) corpus_regression에 non-normal safety가 있으면 거절한다', async () => {

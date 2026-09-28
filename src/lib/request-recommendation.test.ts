@@ -245,6 +245,29 @@ describe('말씀 추천 요청', () => {
     }
   });
 
+  it('중심 영역을 정할 정보가 부족한 no_coverage만 추가 질문 표시를 붙인다', async () => {
+    const needsDetail = gatePayload('no_coverage', null, null);
+    needsDetail.result.reason = 'PRIMARY_DOMAIN_UNDETERMINED';
+    const { deps } = fakeDeps({ outcome: { ok: true, data: needsDetail } });
+    assert.deepEqual(await requestRecommendation('요즘 너무 힘들어요.', deps), {
+      status: 'route',
+      route: 'no_coverage',
+      needsClarification: true,
+    });
+  });
+
+  it('실제 범위 밖이거나 알 수 없는 사유인 no_coverage에는 추가 질문 표시를 붙이지 않는다', async () => {
+    for (const reason of ['PRIMARY_DOMAIN_NOT_COVERED', 'UNKNOWN_REASON', undefined]) {
+      const payload = gatePayload('no_coverage', null, 'other_uncovered');
+      payload.result.reason = reason as never;
+      const { deps } = fakeDeps({ outcome: { ok: true, data: payload } });
+      assert.deepEqual(await requestRecommendation('휴대폰 배경화면 색을 고민해요.', deps), {
+        status: 'route',
+        route: 'no_coverage',
+      });
+    }
+  });
+
   it('429는 사용량 제한으로 구분한다', async () => {
     const { deps } = fakeDeps({ outcome: { ok: false, httpStatus: 429, retryAfterSeconds: 43200 } });
     const outcome = await requestRecommendation('두렵습니다.', deps);

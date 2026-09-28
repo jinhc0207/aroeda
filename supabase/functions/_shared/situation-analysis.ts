@@ -17,7 +17,7 @@ import { FALLBACK_DOMAIN, SITUATION_DOMAINS, type SituationDomain } from './situ
  * needs_choice: 서로 독립적인 두 영역이 함께 있지만, 문장에서 어느 쪽을 먼저 다룰지 정할 근거가 부족하다.
  *   두 문제의 실제 중요도가 같다고 단정하는 뜻이 아니다. 두 후보의 배열 순서도 우선순위가 아니다.
  */
-export const DOMAIN_PRIORITY_STATUSES = ['resolved', 'needs_choice'] as const;
+export const DOMAIN_PRIORITY_STATUSES = ['resolved', 'needs_choice', 'needs_detail'] as const;
 export type DomainPriorityStatus = (typeof DOMAIN_PRIORITY_STATUSES)[number];
 
 /** needs_choice일 때 후보는 정확히 이 개수다. */
@@ -140,7 +140,7 @@ export function validateSituationAnalysisForDomains(
 
   // primaryDomain: 값이 있으면 표준 domain이어야 한다. null 허용 여부는 상태별로 아래에서 본다.
   if (analysis.primaryDomain === undefined) {
-    errors.push('primaryDomain이 없습니다. needs_choice면 null을 넣습니다.');
+    errors.push('primaryDomain이 없습니다. needs_choice나 needs_detail이면 null을 넣습니다.');
   } else if (analysis.primaryDomain !== null && !isAllowedDomain(analysis.primaryDomain)) {
     errors.push(`primaryDomain 값이 표준 domain이 아닙니다: ${String(analysis.primaryDomain)}`);
   }
@@ -213,6 +213,16 @@ export function validateSituationAnalysisForDomains(
     }
     if (secondaryAreArray && (analysis.secondaryDomains as unknown[]).length > 0) {
       errors.push('domainPriority가 needs_choice면 secondaryDomains는 비어 있어야 합니다.');
+    }
+  } else if (priority === 'needs_detail') {
+    if (analysis.primaryDomain !== null && analysis.primaryDomain !== undefined) {
+      errors.push('domainPriority가 needs_detail이면 primaryDomain은 null이어야 합니다.');
+    }
+    if (candidatesAreArray && (candidates as unknown[]).length > 0) {
+      errors.push('domainPriority가 needs_detail이면 domainChoiceCandidates는 비어 있어야 합니다.');
+    }
+    if (secondaryAreArray && (analysis.secondaryDomains as unknown[]).length > 0) {
+      errors.push('domainPriority가 needs_detail이면 secondaryDomains는 비어 있어야 합니다.');
     }
   }
 

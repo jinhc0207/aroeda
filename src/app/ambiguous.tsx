@@ -30,8 +30,9 @@ import {
 import { useSituation } from '@/state/situation';
 
 /**
- * 영역은 정해졌지만 여러 말씀이 동점인 ambiguous 화면.
- * 임의로 한 장을 고르지 않고 최대 3번 상황을 더 들은 뒤 같은 추천 절차를 다시 실행한다.
+ * 한 말씀을 고르기 어려운 상황에서 추가 설명을 듣는 화면.
+ * 영역이 아직 정해지지 않았거나 여러 말씀이 동점이면 최대 3번 상황을 더 들은 뒤
+ * 같은 추천 절차를 다시 실행한다.
  * domain_choice와 질문 횟수를 공유하므로 두 경로를 오가더라도 총 3번을 넘지 않는다.
  */
 export default function AmbiguousScreen() {
@@ -122,7 +123,8 @@ export default function AmbiguousScreen() {
     }
 
     if (outcome.status === 'route') {
-      if (outcome.route === 'ambiguous') {
+      if (outcome.route === 'ambiguous' ||
+          (outcome.route === 'no_coverage' && outcome.needsClarification)) {
         const nextRound = clarificationRound + 1;
         setClarificationRound(nextRound);
         setDetail('');

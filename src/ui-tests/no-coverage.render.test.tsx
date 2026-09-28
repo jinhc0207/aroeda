@@ -31,6 +31,13 @@ beforeEach(() => {
 });
 
 describe('no-coverage 화면 · 뒤로가기 계약', () => {
+  it('실제 범위 밖 종료 화면에는 추가 설명 입력칸이 없다', async () => {
+    await render(<NoCoverageScreen />);
+
+    expect(screen.queryByLabelText('추가 상황 설명')).toBeNull();
+    expect(screen.getByLabelText('다시 이야기하기')).toBeTruthy();
+  });
+
   it('뒤로 갈 곳이 있으면(canGoBack true) router.back()을 쓴다 — 선택 화면으로 돌아간다', async () => {
     router.canGoBack.mockReturnValue(true);
     await render(<NoCoverageScreen />);

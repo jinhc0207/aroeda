@@ -201,13 +201,15 @@ Matcher에는 Situation Analysis 전체를 그대로 넘기고, Gate는 그 결�
 서버 로그에는 고정된 내부 코드(`prayer_guidance_safety_first`, `prayer_guidance_domain_not_detected` 등)만 남기고
 사용자 문장·선택 영역·카드 번호는 남기지 않는다. `selectedDomain`은 저장하지 않는다.
 
-### 앱(client)의 domain_choice·ambiguous 처리 (2026-09-14 구현, 2026-09-27 단계형 추가 질문)
+### 앱(client)의 needs_detail·domain_choice·ambiguous 처리 (2026-09-14 구현, 2026-09-28 보완)
 
 서버 계약과 별개로 미뤄져 있던 앱 쪽 연결이 이제 구현되어 있다.
 
 - `src/lib/request-recommendation.ts`: `GATE_ROUTES`에 `domain_choice`가 있고, `domainChoiceCandidates`/
   `domainChoiceOptions`를 검증한 뒤 `{ status: 'domain_choice', options }`로 돌려준다.
   일반 `recommend`도 `primaryDomain`을 함께 검증해 `cardId`와 `selectedDomain`을 함께 돌려준다.
+  `no_coverage` 중 정확히 `reason === 'PRIMARY_DOMAIN_UNDETERMINED'`인 응답만 추가 질문 표시를 붙인다.
+  실제 범위 밖(`NO_COVERAGE_FOR_PRIMARY_DOMAIN`)이나 알 수 없는 사유를 추가 질문으로 추정하지 않는다.
 - `src/lib/request-prayer-guidance.ts`: 요청 본문이 정확히 `{ situation, cardId, selectedDomain }`이고,
   선택 영역이 표준값이 아니거나 없으면 서버를 부르지 않는다.
 - `src/state/situation.tsx`: `selectedDomain`, `domainChoiceOptions`, 두 경로가 공유하는
@@ -244,10 +246,11 @@ Matcher에는 Situation Analysis 전체를 그대로 넘기고, Gate는 그 결�
     가드가 풀린다. 포커스되지 않은 동안(다른 화면이 앞에 있는 동안) 내 정보 삭제 등으로
     `domainChoiceOptions`가 비워져도 지금 앞에 있는 화면을 갑자기 바꾸지 않고, 이 화면이 다시
     포커스됐을 때만 옵션이 없다는 것을 보고 홈(`/`)으로 보낸다. 옵션 없이 직접 들어온 경우도 같다.
-- `src/app/ambiguous.tsx`: 영역은 정해졌지만 카드가 동점이면 곧바로 추가 질문과 입력칸을 보여준다.
+- `src/app/ambiguous.tsx`: 영역 정보가 부족하거나 카드가 동점이면 곧바로 추가 질문과 입력칸을 보여준다.
   사용자가 답하면 같은 추천 절차를 다시 실행하고, 말씀이 정해지면 즉시 `/scripture`로 간다.
-  계속 동점이면 핵심 어려움 → 구체적인 순간 → 현재 영향과 바라는 도움을 차례로 묻고, 합계 3번 뒤에는
-  임의로 카드를 고르지 않은 채 멈춘다. 중간에 `domain_choice`로 바뀌어도 공유 횟수를 유지한다.
+  계속 `needs_detail` 또는 동점이면 핵심 어려움 → 구체적인 순간 → 현재 영향과 바라는 도움을 차례로
+  묻고, 합계 3번 뒤에는 임의로 카드를 고르지 않은 채 멈춘다. 중간에 `domain_choice`로 바뀌어도 공유
+  횟수를 유지한다.
 - `src/app/index.tsx`, `src/app/prayer.tsx`: 위 함수들과 화면을 실제로 연결했다. 첫 화면에서
   `/scripture`·`/domain-choice` 어느 쪽으로 가든 모두 `router.push`다.
 - 사용자용 영역 이름은 `src/data/domain-labels.ts`에 있다. 내부 영문 domain 코드는 화면에 쓰지 않는다.

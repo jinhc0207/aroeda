@@ -840,6 +840,37 @@ const needsChoiceOf = (
   });
 
 describe('Recommendation Gate · 영역 선택 필요(domain_choice)', () => {
+  it('needs_detail은 카드를 고르지 않고 추가 질문 사유가 있는 no_coverage로 닫힌다', () => {
+    const result = runRecommendationGate(analysisOf({
+      domainPriority: 'needs_detail',
+      primaryDomain: null,
+      domainChoiceCandidates: [],
+      secondaryDomains: [],
+    }));
+    assert.equal(result.route, 'no_coverage');
+    assert.equal(result.reason, 'PRIMARY_DOMAIN_UNDETERMINED');
+    assert.equal(result.domainPriority, 'needs_detail');
+    assert.equal(result.primaryDomain, null);
+    assert.equal(result.coverage, null);
+    assert.deepEqual(result.domainChoiceCandidates, []);
+    assert.deepEqual(result.eligibleCardIds, []);
+    assert.equal(result.selectedCardId, null);
+  });
+
+  it('needs_detail에 안전 신호가 있으면 추가 질문보다 safety가 먼저다', () => {
+    const result = runRecommendationGate(analysisOf({
+      domainPriority: 'needs_detail',
+      primaryDomain: null,
+      domainChoiceCandidates: [],
+      secondaryDomains: [],
+      safety: { level: 'urgent', categories: ['suicide'] },
+    }));
+    assert.equal(result.route, 'safety');
+    assert.equal(result.reason, 'SAFETY_FIRST');
+    assert.equal(result.primaryDomain, null);
+    assert.equal(result.coverage, null);
+  });
+
   it('needs_choice이고 safety가 normal이면 domain_choice로 두 후보를 보존하고 top-level 카드는 고르지 않는다', () => {
     const result = runRecommendationGate(
       needsChoiceOf(['financial_hardship', 'fear_uncertainty'], {

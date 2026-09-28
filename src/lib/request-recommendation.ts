@@ -94,7 +94,12 @@ export type RecommendationOutcome =
   | { status: 'recommend'; cardId: string; selectedDomain: string; card?: RuntimeCardView }
   /** 중심 영역을 하나로 정할 근거가 없어, 사용자가 고를 두 후보를 그대로 전달한다. */
   | { status: 'domain_choice'; options: [DomainChoiceOption, DomainChoiceOption] }
-  | { status: 'route'; route: Exclude<GateRouteName, 'recommend' | 'domain_choice'> }
+  | {
+      status: 'route';
+      route: Exclude<GateRouteName, 'recommend' | 'domain_choice'>;
+      /** 중심 영역을 정할 정보가 부족해 기존 추가 질문 흐름으로 이어가야 한다. */
+      needsClarification?: true;
+    }
   /**
    * auth: 세션 준비 실패 / rate_limited: 사용량 제한 / general: 그 밖의 실패
    * diagnostic은 개발 모드에서만 화면에 낸다. 사용자 문구(kind)는 바꾸지 않는다.
@@ -149,6 +154,7 @@ function parseGateResponse(data: unknown): {
   primaryDomain: unknown;
   domainChoiceCandidates: unknown;
   domainChoiceOptions: unknown;
+  reason: unknown;
   cards: unknown;
   domains: unknown;
 } | null {
@@ -160,11 +166,11 @@ function parseGateResponse(data: unknown): {
   if (ok !== true) return null;
   if (typeof result !== 'object' || result === null) return null;
 
-  const { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions } =
+  const { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions, reason } =
     result as Record<string, unknown>;
   if (!isGateRoute(route)) return null;
 
-  return { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions, cards, domains };
+  return { route, selectedCardId, primaryDomain, domainChoiceCandidates, domainChoiceOptions, reason, cards, domains };
 }
 
 function parseRuntimeViews(cards: unknown, domains: unknown) {
@@ -320,7 +326,13 @@ export async function requestRecommendation(
   }
 
   if (parsed.route !== 'recommend') {
-    return { status: 'route', route: parsed.route };
+    return {
+      status: 'route',
+      route: parsed.route,
+      ...(parsed.route === 'no_coverage' && parsed.reason === 'PRIMARY_DOMAIN_UNDETERMINED'
+        ? { needsClarification: true as const }
+        : {}),
+    };
   }
 
   // recommend인데 카드가 없거나 우리가 모르는 id면 임의의 카드로 대체하지 않는다.

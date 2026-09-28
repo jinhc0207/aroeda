@@ -2375,3 +2375,45 @@ Supabase 호스팅 Edge Function에는 `SUPABASE_SERVICE_ROLE_KEY`가 기본 환
 같은 릴리스로 배포한다. 요청마다 기준 카탈로그 전체(현재 JSON 약 82.5KB)를 읽는 구조는 기능상
 정확하지만 운영 비용·지연 관찰 대상이며, 캐시는 포인터 전환 즉시성·fail-closed 정책을 함께 설계한
 후 별도 단계에서 다룬다.
+
+## 9-29. 정보 부족과 실제 범위 밖의 분리, 고정 분석 스냅샷 v2 (2026-09-28, 후속)
+
+짧고 넓은 입력을 실제 범위 밖으로 곧바로 종료하던 문제를 고쳤다. Analyzer의
+`domainPriority`에 `needs_detail`을 추가하고, 이 상태는 `primaryDomain: null`, 빈
+`domainChoiceCandidates`, 빈 `secondaryDomains`일 때만 유효하게 했다. 안전 신호는 이 분기보다
+먼저 처리된다. Gate는 `needs_detail`을 카드 추천으로 추측하지 않고
+`no_coverage + PRIMARY_DOMAIN_UNDETERMINED`로 내보낸다. 앱은 이 정확한 조합만 기존 최대 3회
+추가 질문 흐름으로 연결한다. 구체적이지만 카탈로그 범위 밖인 입력은 기존 정적 종료 화면에 남고,
+알 수 없는 실패 사유도 추가 질문으로 추정하지 않는다. 기도 도움 재분석에서 `needs_detail`이 나오면
+선택 영역을 억지로 끼워 넣지 않고 생성 전에 닫는다.
+
+이 계약 변경은 Analyzer 지시문·schema와 Recommendation Gate 버전을 바꾸므로 v1 고정 분석은
+자체 계약과 지문은 여전히 유효하지만 현재 환경과는 맞지 않는다. 차이는
+`analyzerInstructionsHash`, `analyzerSchemaHash`, `recommendationGate` 세 필드로 명시적으로
+검출된다. v1 파일은 과거 기록으로 보존하고, 156건을 새 환경에서 다시 분석한
+`automatic-scripture-catalog-analysis-snapshot-v2.ts`를 추가해 버전 진입점만 v2로 전환했다.
+
+재생성 중 EVAL-068(`신뢰했던 사람이 뒤통수를 쳐서 배신감이 커요.`)이 오래된 평가 기대값과 충돌해
+멈췄다. 이 문장은 명시적인 부당 처분·강압·금전 손해보다 신뢰 관계에서 받은 배신과 상처를 말하므로
+기대 영역을 `relationship_conflict_forgiveness`, preferred/acceptable을 `SC-017`로 교정했다.
+이미 저장된 앞 67건은 새 156건 계획에 하나씩 다시 검증한 뒤에만 새 plan fingerprint로 원자
+재결속했고, EVAL-068부터 재개해 156건을 완료했다.
+
+v2 산출물은 구조 계약과 현재 환경 대조를 모두 통과한다.
+
+- source corpus artifact hash:
+  `sart_b55819db9bed4906b685c7c3c79ad905630fdbda5782809b0b10c3002547dbb6`
+- frozen analysis artifact hash:
+  `sart_e2ab62942209f46f600e645f15bb6dafae0755bb3826cca7f6b2d5d138ee4880`
+- snapshot fingerprint:
+  `sart_9b05fb6cfdbaf014c48e52b655d3ccade5b7fc6097c9666081f7589c5bc38591`
+
+현재 기준 catalog 재생 결과는 domain match 153/153, acceptable match 146/153, safety false
+positive 0/153이다. V1·V2 모두 raw response·reasoning·token usage·사용자/세션 식별자를 저장하지
+않으며, 로컬 checkpoint와 JSON snapshot은 `.gitignore`에서 별도 디렉터리로 제외한다. 생성 과정은
+OpenAI 분석 호출만 수행했고 Supabase·DB·배포·push는 수행하지 않았다.
+
+최종 검증은 관련 핵심 테스트 476/476, `npm run test:logic` 4630/4630,
+`npm run test:ui` 137/137(9 suites), `npx --no-install tsc --noEmit` 오류 0,
+`git diff --check` 통과, package 파일 무변경, 고위험 비밀값 패턴 0건이다. 로컬 JSON과 Git 고정
+V2 상수도 canonical JSON으로 동일함을 다시 확인했다.

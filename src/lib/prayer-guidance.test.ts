@@ -1244,6 +1244,20 @@ describe('기도 도움 · L. 선택 영역을 서버가 다시 확인한다', (
     }
   });
 
+  it('needs_detail 재분석은 요청의 selectedDomain을 억지로 끼워 넣지 않고 기도문 생성 전에 닫는다', async () => {
+    const outcome = await run({
+      analysisOverrides: {
+        domainPriority: 'needs_detail',
+        primaryDomain: null,
+        domainChoiceCandidates: [],
+        secondaryDomains: [],
+      },
+      selectedDomain: 'fear_uncertainty',
+      cardId: CARD.id,
+    });
+    assertRejected(outcome, 'needs_detail');
+  });
+
   it('needs_choice + 첫 후보 + 그 영역 카드 → 성공', async () => {
     const overrides = needsChoice(['fear_uncertainty', 'financial_hardship'], {
       spiritualQuestionTags: ['지혜'],

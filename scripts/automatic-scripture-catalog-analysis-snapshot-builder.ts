@@ -55,7 +55,6 @@ import {
   buildCurrentAnalysisSnapshotEnvironment,
   validateAnalysisSnapshotAgainstCurrentEnvironment,
 } from '../supabase/functions/_shared/automatic-scripture-catalog-analysis-environment.ts';
-import { FALLBACK_DOMAIN } from '../supabase/functions/_shared/situation-domains.ts';
 import type { SituationAnalysis } from '../supabase/functions/_shared/situation-analysis.ts';
 
 /* ------------------------------------------------------------------ */
@@ -92,7 +91,7 @@ function projectCorpusRegressionExpectation(item: EvaluationCase): CorpusRegress
       ],
     };
   }
-  return { expectedRoute: 'no_coverage', expectedPrimaryDomain: FALLBACK_DOMAIN };
+  return { expectedRoute: 'no_coverage', expectedPrimaryDomain: item.expectedPrimaryDomain };
 }
 
 /** `EVALUATION_CASES`의 기존 EVAL-001~EVAL-153 ID를 그대로 caseId로 쓴다. */

@@ -64,3 +64,4 @@ example
 # 정하지만, 로컬에서 직접 --execute를 돌려볼 때는 이 이름의 디렉터리를 쓰는 관례를 둔다.
 # *.json을 통째로 무시하지 않는다 — 이 디렉터리 이름만 좁게 뺀다.
 /automatic-scripture-catalog-analysis-runner.local/
+/automatic-scripture-catalog-analysis-runner-v2.local/
