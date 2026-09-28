@@ -45,7 +45,7 @@ const EXISTING_EXPANSION_DOMAINS: ExpansionDomain[] = [
  * 이 값이 바뀌면 기존 140문장의 문구·순위·클러스터 중 하나가 달라졌다는 뜻이다.
  */
 const EXISTING_EXPANSION_FINGERPRINT =
-  '189fa67c19a22d5ed5e811e30e37d40861759969e6b433bda7752e17678082b2';
+  '68ef1be82f9241226831cc664557f58360d5e2fccb2761b4309c51a3701a5033';
 
 const fingerprintOf = (rows: readonly { rank: number; domain: string; cluster: string; text: string }[]) =>
   crypto
@@ -123,7 +123,7 @@ describe('단일 영역 코퍼스 (EXPANSION_SCENARIOS)', () => {
     }
   });
 
-  it('기존 확장 영역 7개의 140문장을 문구·순위·클러스터까지 그대로 유지한다', () => {
+  it('내부 테스트 문구 교정 후 확장 영역 7개의 140문장을 새 지문으로 고정한다', () => {
     const rows = EXPANSION_SCENARIOS.filter((item) => EXISTING_EXPANSION_DOMAINS.includes(item.domain));
     assert.equal(rows.length, 140);
     assert.equal(
@@ -326,7 +326,7 @@ describe('조사 근거 (SCENARIO_RESEARCH_BASIS)', () => {
 
 /** 이 평가 세트를 추가하기 직전에 계산한 기존 데이터의 SHA-256 지문(JSON 직렬화 기준). */
 const PROTECTED_DATA_FINGERPRINTS = {
-  expansion: '5e1fb744eeb7bbb47a70b7ca14ce340d1849534e80f0c9f1f04d1c9bae0fc5c3',
+  expansion: '10e9e2e1efbf0b98fc9ffbf17b4d428bd35776a28ff3f362efe5f5a9a0de9fc9',
   compound: '38cb2b3916359dc67520db370ea7eac1d15b0ce1f54c616587d9754344264243',
   safetyBoundary: '6638a60c82e52b8793b6991a79455e6151998620cb9a810300320959f7f48577',
   reviewedNonBoundary: '8e77e9baf0db8ca60f255ebde643d653aa1f6eedb1d9809e805e7250fcc752ba',
@@ -479,14 +479,14 @@ describe('영역 선택 필요 평가 세트 · 문구 교정 회귀 (v2)', () =
 });
 
 describe('영역 선택 필요 평가 세트 · 기존 데이터 보존', () => {
-  it('기존 코퍼스 수량과 140문장 지문이 그대로다', () => {
+  it('코퍼스 수량과 내부 테스트 문구 교정 후 140문장 지문이 그대로다', () => {
     assert.equal(EXPANSION_SCENARIOS.length, 340);
     assert.equal(COMPOUND_SCENARIOS.length, 68);
     const rows = EXPANSION_SCENARIOS.filter((item) => EXISTING_EXPANSION_DOMAINS.includes(item.domain));
     assert.equal(fingerprintOf(rows), EXISTING_EXPANSION_FINGERPRINT);
   });
 
-  it('단일·복합 코퍼스 전체(rationale 포함)가 추가 전과 같다', () => {
+  it('단일·복합 코퍼스 전체(rationale 포함)가 문구 교정 후 지문과 같다', () => {
     assert.equal(jsonFingerprint(EXPANSION_SCENARIOS), PROTECTED_DATA_FINGERPRINTS.expansion);
     assert.equal(jsonFingerprint(COMPOUND_SCENARIOS), PROTECTED_DATA_FINGERPRINTS.compound);
   });

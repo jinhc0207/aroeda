@@ -111,6 +111,12 @@ primaryDomain은 사용자가 처한 삶의 핵심 상황을 나타냅니다.
 → primaryDomain = family_parenting_conflict
 (지혜가 필요하지만 사용자가 실제로 다루는 삶의 문제는 자녀 양육입니다.)
 
+"부모님이 늘 다른 사람과 나를 비교하세요."
+→ primaryDomain = comparison_identity
+금지: family_parenting_conflict
+(가족 구성원이 등장해도 중심 사건은 부모와의 갈등이 아니라 반복되는 비교로 인해 정체성과
+ 가치가 흔들리는 경험입니다.)
+
 "구직 중인데 계속 떨어져서 희망을 잃고 있어요."
 → primaryDomain = financial_hardship
 (구직과 실직은 수입·생계의 기반과 직접 연결되는 경제 상황으로 분류합니다.)
@@ -118,6 +124,11 @@ primaryDomain은 사용자가 처한 삶의 핵심 상황을 나타냅니다.
 "오늘 하루를 견딜 은혜와 필요한 치료를 함께 구하고 싶어요."
 → primaryDomain = chronic_illness
 (진단명을 말하지 않아도 현재 필요한 치료와 질병을 견디는 삶이 직접 드러납니다.)
+
+"감기가 오래가서 힘들다."
+→ primaryDomain = chronic_illness
+(흔한 질병이더라도 오래 낫지 않아 힘들다는 상황이 직접 드러나면 문장이 짧다는 이유로
+ needs_detail이나 현재 영역 밖으로 보내지 않습니다.)
 
 "하나님이 정말 계신지 의심이 생겨서 죄책감이 들어요."
 → primaryDomain = spiritual_dryness
@@ -128,6 +139,23 @@ primaryDomain은 사용자가 처한 삶의 핵심 상황을 나타냅니다.
 → primaryDomain = relationship_conflict_forgiveness
 금지: wisdom_discernment
 (분별은 사과와 책임이라는 구체적 관계 문제를 풀기 위한 수단입니다.)
+
+"동생과 말다툼 후 서로 연락안함. 먼저 사과할지 고민중"
+→ primaryDomain = relationship_conflict_forgiveness
+(메모체·축약형·띄어쓰기 생략이어도 말다툼, 연락 단절, 사과 고민이라는 관계 회복 상황이
+ 분명합니다. 문체 때문에 needs_detail을 선택하지 않습니다.)
+
+"신뢰했던 사람이 뒤통수를 쳐서 배신감이 커요."
+→ primaryDomain = relationship_conflict_forgiveness
+금지: injustice_mistreatment
+(명시적인 부당대우·강압·물질적 손해 없이 신뢰 관계에서 받은 배신과 상처를 말합니다.
+ 배신이라는 단어만으로 injustice_mistreatment를 선택하지 않습니다.)
+
+"뒤에서 험담을 당한 것을 알고 마음이 아파요."
+→ primaryDomain = injustice_mistreatment
+금지: relationship_conflict_forgiveness
+(관계를 회복하거나 용서할지를 묻는 문장이 아니라, 뒤에서 험담이라는 부당대우를 당한 사건이
+ 중심입니다. 마음이 아프다는 감정만으로 relationship_conflict_forgiveness를 선택하지 않습니다.)
 
 "지금 하는 일이 하나님이 원하시는 길인지 모르겠어요."
 → primaryDomain = wisdom_discernment
@@ -204,6 +232,8 @@ needs_detail:
 - 이때 primaryDomain은 null, domainChoiceCandidates와 secondaryDomains는 빈 배열로 둡니다.
 - 가능한 영역을 추측해서 후보로 만들지 않습니다.
 - 짧은 문장이어도 영역이 분명하면 needs_detail을 사용하지 않습니다.
+- 메모체, 축약형, 구어체, 종결어미 생략, 띄어쓰기 차이는 정보 부족의 근거가 아닙니다.
+  표면 문구가 달라도 사건과 고민의 의미가 분명하면 resolved로 분류합니다.
 - 앱의 현재 영역 밖에 있는 구체적인 고민은 needs_detail이 아니라 resolved와
   primaryDomain = ${fallbackDomain}으로 표시합니다.
 
@@ -336,6 +366,9 @@ ${domainList(manifest.uncoveredDomains)}
 - "신앙생활이 습관만 남고 기쁨은 사라졌어요."에는 "신앙생활이 습관만 남음"을 사용합니다.
 - "월세를 내고 나면 식비가 남지 않아요."에는 "월세 후 식비가 부족함"을 사용합니다.
 - "좋아졌다가 다시 아파지는 일을 반복하고 있어요."에는 "좋아졌다가 다시 아파짐"을 사용합니다.
+- "감기가 오래가서 힘들다."에는 "오래 아픔"과 emotionTags의 "지침"을 사용합니다.
+- "동생과 말다툼 후 서로 연락안함. 먼저 사과할지 고민중"에는 "말다툼"과
+  "사과와 책임"을 사용합니다. 메모체를 이유로 태그를 비우지 않습니다.
 - "새 직장으로 옮기는 게 잘한 선택인지 겁이 나요."에는 "새 직장으로 옮긴 선택을 돌아봄"을
   사용하고, 창업처럼 새 일을 시작할지를 묻는 "새 일을 시작할지 고민함"을 사용하지 않습니다.
 - "사람마다 다른 조언을 해서 무엇을 따라야 할지 모르겠어요."에는

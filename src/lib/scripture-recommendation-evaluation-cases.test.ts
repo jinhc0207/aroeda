@@ -451,6 +451,18 @@ describe('scripture-recommendation-evaluation-cases · 2026-09-16 검수 수정 
 });
 
 describe('scripture-recommendation-evaluation-cases · betrayal 의미 검수 (EVAL-068)', () => {
+  it('관계 회복 요청이 없는 험담 피해는 injustice_mistreatment·SC-008로 고정한다', () => {
+    const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-065')!;
+    assert.ok(item, 'EVAL-065를 찾지 못했습니다.');
+    assert.equal(item.text, '뒤에서 험담을 당한 것을 알고 마음이 아파요.');
+    assert.equal(item.domain, 'injustice_mistreatment');
+    assert.equal(item.rank, 7);
+    assert.equal(item.cluster, 'bullying');
+    assert.equal(item.expectedPrimaryDomain, 'injustice_mistreatment');
+    assert.equal(item.preferredCardId, 'SC-008');
+    assert.deepEqual(item.acceptableCardIds, ['SC-008']);
+  });
+
   it('명시적 부당대우나 손해가 없는 관계 배신은 relationship_conflict_forgiveness·SC-017로 고정한다', () => {
     const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-068')!;
     assert.ok(item, 'EVAL-068을 찾지 못했습니다.');
@@ -475,6 +487,26 @@ describe('scripture-recommendation-evaluation-cases · 실제 의미 검수 (EVA
   });
 });
 
+describe('scripture-recommendation-evaluation-cases · 내부 테스트 표현 민감도 회귀', () => {
+  it('짧은 감기 문장도 질병·회복 지연으로 보고 SC-029를 기대한다', () => {
+    const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-141')!;
+    assert.ok(item, 'EVAL-141을 찾지 못했습니다.');
+    assert.equal(item.text, '감기가 오래가서 힘들다.');
+    assert.equal(item.expectedPrimaryDomain, 'chronic_illness');
+    assert.equal(item.preferredCardId, 'SC-029');
+    assert.deepEqual(item.acceptableCardIds, ['SC-029']);
+  });
+
+  it('메모체 관계 문장도 관계 회복으로 보고 SC-031을 기대한다', () => {
+    const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-153')!;
+    assert.ok(item, 'EVAL-153을 찾지 못했습니다.');
+    assert.equal(item.text, '동생과 말다툼 후 서로 연락안함. 먼저 사과할지 고민중');
+    assert.equal(item.expectedPrimaryDomain, 'relationship_conflict_forgiveness');
+    assert.equal(item.preferredCardId, 'SC-031');
+    assert.deepEqual(item.acceptableCardIds, ['SC-031']);
+  });
+});
+
 describe('scripture-recommendation-evaluation-cases · 존재 가치 비교 의미 검수 (EVAL-057)', () => {
   it('다른 사람의 기준으로 존재 가치를 판단하는 사례는 SC-044만 허용한다', () => {
     const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-057')!;
@@ -483,6 +515,18 @@ describe('scripture-recommendation-evaluation-cases · 존재 가치 비교 의�
     assert.equal(item.expectedPrimaryDomain, 'comparison_identity');
     assert.equal(item.preferredCardId, 'SC-044');
     assert.deepEqual(item.acceptableCardIds, ['SC-044']);
+  });
+
+  it('부모가 반복해서 다른 사람과 비교하는 사례는 comparison_identity·SC-044로 고정한다', () => {
+    const item = recommendationCases.find((candidate) => candidate.id === 'EVAL-059')!;
+    assert.ok(item, 'EVAL-059를 찾지 못했습니다.');
+    assert.equal(item.text, '부모님이 늘 다른 사람과 나를 비교하세요.');
+    assert.equal(item.domain, 'comparison_identity');
+    assert.equal(item.rank, 10);
+    assert.equal(item.cluster, 'family_comparison');
+    assert.equal(item.expectedPrimaryDomain, 'comparison_identity');
+    assert.equal(item.preferredCardId, 'SC-044');
+    assert.deepEqual(item.acceptableCardIds, ['SC-044', 'SC-007']);
   });
 });
 

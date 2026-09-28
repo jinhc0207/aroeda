@@ -2417,3 +2417,50 @@ OpenAI 분석 호출만 수행했고 Supabase·DB·배포·push는 수행하지 
 `npm run test:ui` 137/137(9 suites), `npx --no-install tsc --noEmit` 오류 0,
 `git diff --check` 통과, package 파일 무변경, 고위험 비밀값 패턴 0건이다. 로컬 JSON과 Git 고정
 V2 상수도 canonical JSON으로 동일함을 다시 확인했다.
+
+## 9-30. 내부 테스트 표현 민감도 교정과 고정 분석 스냅샷 v3 (2026-09-29, 후속)
+
+내부 테스트에서 뜻은 분명하지만 짧거나 메모체인 두 입력이 기대 경로로 가지 않는 문제가 확인됐다.
+`감기가 오래가서 힘들다.`는 실제 범위 밖 종료로, `동생과 말다툼 후 서로 연락안함. 먼저 사과할지
+고민중`은 추가 질문으로 흘렀다. 원인은 문장의 의미보다 길이·문체 차이가 `needs_detail` 판단에
+영향을 주는 것이었다. Analyzer 지시문에 두 원문과 기대 영역을 명시하고, 메모체·축약형·구어체·
+종결어미 생략·띄어쓰기 차이는 정보 부족의 근거가 아니라는 규칙을 추가했다. 340문장 코퍼스의
+해당 두 자리를 실제 제보 문장으로 교체하고 EVAL-141·EVAL-153이 각각 `chronic_illness`/SC-029,
+`relationship_conflict_forgiveness`/SC-031을 기대하도록 고정했다.
+
+156건 재생성 과정에서는 이전에도 출력이 흔들렸던 세 경계가 반복해서 드러났다. 부모가 다른 사람과
+비교하는 EVAL-059는 `comparison_identity`, 뒤에서 험담을 당한 EVAL-065는
+`injustice_mistreatment`, 명시적 손해 없이 신뢰 관계에서 배신당한 EVAL-068은
+`relationship_conflict_forgiveness`로 구분하는 정확한 예시와 금지 영역을 지시문에 추가했다.
+세 문장과 실제 제보 두 문장을 함께 사전 실행해 모두 `resolved`와 기대 영역으로 통과한 뒤, 빈 새
+체크포인트에서 156건을 다시 실행했다. 중간 실패 체크포인트는 새 지시문과 섞지 않았고, 완료된 JSON만
+`automatic-scripture-catalog-analysis-snapshot-v3.ts`로 고정했다. 버전 진입점은 v3를 선택하며 v1·v2
+파일은 감사 기록으로 그대로 남긴다. v2는 자체 구조 계약은 계속 통과하지만 현재 환경 대조에서는
+`analyzerInstructionsHash` 차이로 명시적으로 거절된다.
+
+v3 산출물 지문은 다음과 같다.
+
+- source corpus artifact hash:
+  `sart_fb9ddd4e5a6557ea74a4c5296a92f127c5cf7b9cb4def9eb09a5e59582eafdbf`
+- frozen analysis artifact hash:
+  `sart_40496a12b3cb98e4f3625997657f8993feb67f3a63babdb8e400c3856b978812`
+- snapshot fingerprint:
+  `sart_f96c435340877bb8006ccfcd9caa6f2add149ab8c42ce108447b9f214c57fecf`
+
+현재 기준 catalog 재생 결과는 domain match 153/153, acceptable match 142/153, safety false
+positive 0/153이다. 실제 제보 두 건은 모두 기대 카드까지 추천한다. acceptable 불일치 11건은
+EVAL-018·032·042·044·068·073·074·084·123·134·148이며, 숨기거나 사람이 산출물을 고치지 않고
+생성 결과 그대로 고정했다. v2의 146/153보다 낮은 값이므로 이 스냅샷을 Analyzer 정확도 인증으로
+해석하지 않는다. 후보 변경 전후에 같은 분석을 재생해 추가 회귀를 찾는 결정적 기준이라는 기존
+경계를 유지하며, 해당 11건의 평가 기대값 또는 태그 안정화는 별도 의미 검수 대상으로 남긴다.
+
+v3도 raw response·reasoning·token usage·사용자/세션 식별자를 저장하지 않는다. 로컬 checkpoint와
+JSON snapshot은 정확한 전용 디렉터리만 `.gitignore`로 제외하며, 생성 과정에서는 OpenAI 분석 호출만
+수행했다. Supabase·DB·배포·push는 수행하지 않았다.
+
+최종 검증은 고정 분석 adapter 24/24, 자동 Scripture Catalog 전체 850/850,
+`npm run test:logic` 4639/4639, `npm run test:ui` 137/137(9 suites),
+`npx --no-install tsc --noEmit` 오류 0, `git diff --check` 통과, package 파일 무변경,
+고위험 비밀값 패턴 0건이다. 로컬 JSON과 Git 고정 v3 상수도 canonical JSON으로 동일하다.
+EVAL-059 지시문 블록을 임시 제거한 mutation에서는 정적 프롬프트 검사와 현재 환경 결속 검사가
+실패했고, 같은 실행에서 원본을 바이트 단위로 복원한 뒤 전체 검증을 다시 통과했다.

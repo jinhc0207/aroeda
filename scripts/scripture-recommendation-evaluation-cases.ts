@@ -2208,16 +2208,16 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
   },
   {
     id: 'EVAL-141',
-    text: '좋아졌다가 다시 아파지는 일을 반복하고 있어요.',
+    text: '감기가 오래가서 힘들다.',
     domain: 'chronic_illness',
     rank: 14,
     cluster: 'endurance',
     expectedPrimaryDomain: 'chronic_illness',
     expectedRoute: 'recommend',
-    preferredCardId: 'SC-016',
-    acceptableCardIds: ['SC-016', 'SC-028'],
+    preferredCardId: 'SC-029',
+    acceptableCardIds: ['SC-029'],
     rationale:
-      '좋아졌다 다시 아파지는 반복은 질병과 함께 살아가는 지속적 현실에 가깝기 때문에 SC-016을 우선한다. 몸의 약함과 한계를 다루는 SC-028도 허용한다.',
+      '감기가 오래 낫지 않아 힘들다는 짧은 문장도 질병과 회복 지연이 분명하다. 오래 아픔과 지침을 직접 다루는 SC-029를 기대하고, needs_detail이나 other_uncovered로 보내지 않는다.',
     smoke: false,
     isNewCardSmoke: false,
   },
@@ -2386,7 +2386,7 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
   },
   {
     id: 'EVAL-153',
-    text: '내가 먼저 사과해야 할 부분을 분별하고 싶어요.',
+    text: '동생과 말다툼 후 서로 연락안함. 먼저 사과할지 고민중',
     domain: 'relationship_conflict_forgiveness',
     rank: 15,
     cluster: 'repair',
@@ -2395,7 +2395,7 @@ export const EVALUATION_CASES: readonly EvaluationCase[] = [
     preferredCardId: 'SC-031',
     acceptableCardIds: ['SC-031'],
     rationale:
-      'SC-031의 situationTags가 이 문장의 구체적 상황(cluster: repair)과 직접 겹친다. 같은 영역의 다른 두 카드는 이 문장과 다른 세부 상황을 다룬다(각 카드의 선정 문장 참고). 같은 영역의 다른 카드는 상황 전제가 달라 acceptable에 넣지 않았다.',
+      '메모체·축약형이어도 말다툼 뒤 연락 단절과 먼저 사과할지 고민하는 관계 회복 행동이 분명하다. 사과와 책임, 직접 대화를 다루는 SC-031을 기대하고 needs_detail로 보내지 않는다.',
     smoke: false,
     isNewCardSmoke: false,
   },

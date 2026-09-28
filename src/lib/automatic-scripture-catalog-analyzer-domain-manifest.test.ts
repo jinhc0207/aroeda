@@ -92,6 +92,46 @@ const scenarios = (cardIds: readonly string[]) => ({
 });
 
 describe('자동 Scripture Catalog · 동적 Analyzer domain manifest', () => {
+  it('내부 테스트에서 확인한 축약형·짧은 질병 문장을 표면 문구 때문에 needs_detail로 보내지 않는다', () => {
+    const instructions = buildAnalyzerInstructions(STATIC_ANALYZER_DOMAIN_MANIFEST);
+    assert.equal(
+      instructions.includes(['"감기가 오래가서 힘들다."', '→ primaryDomain = chronic_illness'].join('\n')),
+      true,
+    );
+    assert.equal(
+      instructions.includes([
+        '"부모님이 늘 다른 사람과 나를 비교하세요."',
+        '→ primaryDomain = comparison_identity',
+        '금지: family_parenting_conflict',
+      ].join('\n')),
+      true,
+    );
+    assert.equal(
+      instructions.includes([
+        '"동생과 말다툼 후 서로 연락안함. 먼저 사과할지 고민중"',
+        '→ primaryDomain = relationship_conflict_forgiveness',
+      ].join('\n')),
+      true,
+    );
+    assert.equal(
+      instructions.includes([
+        '"신뢰했던 사람이 뒤통수를 쳐서 배신감이 커요."',
+        '→ primaryDomain = relationship_conflict_forgiveness',
+        '금지: injustice_mistreatment',
+      ].join('\n')),
+      true,
+    );
+    assert.equal(
+      instructions.includes([
+        '"뒤에서 험담을 당한 것을 알고 마음이 아파요."',
+        '→ primaryDomain = injustice_mistreatment',
+        '금지: relationship_conflict_forgiveness',
+      ].join('\n')),
+      true,
+    );
+    assert.match(instructions, /메모체, 축약형, 구어체, 종결어미 생략, 띄어쓰기 차이는 정보 부족의 근거가 아닙니다/);
+  });
+
   it('운영 정적 지시문·schema·manifest 지문 투영은 기존 값과 동일하다', () => {
     assert.equal(buildAnalyzerInstructions(STATIC_ANALYZER_DOMAIN_MANIFEST), INSTRUCTIONS);
     assert.deepEqual(buildSituationAnalysisSchema(STATIC_ANALYZER_DOMAIN_MANIFEST), SITUATION_ANALYSIS_SCHEMA);

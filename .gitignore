@@ -65,3 +65,7 @@ example
 # *.json을 통째로 무시하지 않는다 — 이 디렉터리 이름만 좁게 뺀다.
 /automatic-scripture-catalog-analysis-runner.local/
 /automatic-scripture-catalog-analysis-runner-v2.local/
+/automatic-scripture-catalog-analysis-runner-v3.local/
+/automatic-scripture-catalog-analysis-runner-v3-final.local/
+/automatic-scripture-catalog-analysis-runner-v3-final2.local/
+/automatic-scripture-catalog-analysis-runner-v3-final3.local/
