@@ -2478,3 +2478,44 @@ Function을 같은 CLI 명령으로 운영 프로젝트에 배포했다. 배포 
 - `동생과 말다툼 후 서로 연락안함. 먼저 사과할지 고민중` → 추가 질문 없이 마태복음 18:15–17(SC-031)
 
 두 결과 모두 고정 분석 v3의 기대값과 일치한다.
+
+## 9-31. acceptable blind spot 의미 재검수와 고정 분석 스냅샷 v4 (2026-09-29)
+
+v3에서 같은 기대 영역 안의 다른 카드가 선택됐던 EVAL-042·044·084·134를 다시 검토했다.
+EVAL-042는 SC-023을 우선하고 SC-013을 허용하되 완전 탈진 단서가 필요한 SC-022는 제외했고,
+EVAL-134는 SC-027을 우선하면서 경제적 필요와 걱정을 함께 다루는 SC-015도 허용했다. EVAL-044는
+조용한 임재 갈망을 쉼 욕구로 부풀리지 않게 했고, EVAL-084는 선택 과제를 `지혜`·`간구` 등으로
+중복 표시하지 않게 했다. 전역 Gate 점수나 카드 태그를 바꾸는 방식은 다른 사례 회귀와 활성
+catalog 불일치를 만들 수 있어 채택하지 않았다.
+
+전체 재생 중 인접 경계도 명시했다. EVAL-110의 활동 의미 상실은 `burnout_exhaustion`, 원인이
+드러나지 않은 EVAL-111의 감정 무감각은 `needs_detail`, EVAL-086의 엇갈린 조언 판단은
+`wisdom_discernment`다. 여섯 경계를 실제 분석으로 확인한 뒤 새 체크포인트에서 156건을 완료했고,
+완료 JSON만 `automatic-scripture-catalog-analysis-snapshot-v4.ts`로 고정했다. 버전 진입점은 v4를
+선택하며 v1·v2·v3 파일은 감사 기록으로 보존한다.
+
+v4 산출물 지문은 다음과 같다.
+
+- source corpus artifact hash:
+  `sart_53d0b5e09be47203809a2e0688289229eca09147446ee1815011bbdd6fc6905f`
+- frozen analysis artifact hash:
+  `sart_bd8ace5fb00034ea0d480826b1195f8dfac7d9b812c935c232c52e7bedddc902`
+- snapshot fingerprint:
+  `sart_d5be39d691bff40261c1bd9f793ab6ce4d65ea8011b89ed830211ce333ce192d`
+
+현재 기준 catalog 재생 결과는 domain match 153/153, acceptable match 144/153, safety false
+positive 0/153이다. 이번 대상 EVAL-042·044·084·134는 모두 통과한다. 남은 acceptable 불일치
+9건은 EVAL-018·026·033·054·073·077·105·148·149이며 생성 결과를 사람이 사후 수정하지 않았다.
+v3보다 2건 개선됐지만 모델 태그 변동 때문에 고친 4건과 전체 증가분은 같지 않다. 이 스냅샷은
+후보 변경 전후 회귀를 결정적으로 비교하는 기준이지 Analyzer 일반 정확도 인증이 아니다.
+
+v4도 raw response·reasoning·token usage·사용자/세션 식별자를 저장하지 않는다. 로컬 checkpoint와
+JSON snapshot은 전용 `.local` 디렉터리에만 두며 Git에 넣지 않는다. 생성 과정은 승인된 고정 평가
+문장의 OpenAI 분석만 수행했고 Supabase·DB·배포·push는 수행하지 않았다.
+
+회귀 방어를 임시로 무력화한 결과, EVAL-042의 acceptable을 이전 값으로 되돌리면 해당 의미 검수가
+실패했고, EVAL-044 지시문을 제거하면 정적 프롬프트 검사와 현재 환경 결속을 포함한 14건이
+실패했다. 두 변경은 SHA-256으로 바이트 단위 복원을 확인했다. 최종 검증은 고정 분석·평가·구조
+집중 테스트 152/152, 자동 Scripture Catalog 전체 854/854, `npm run test:logic` 4643/4643,
+`npm run test:ui` 137/137(9 suites), `npx --no-install tsc --noEmit` 오류 0,
+`git diff --check` 통과다. 로컬 최종 JSON과 Git 고정 v4 상수도 canonical JSON으로 동일하다.

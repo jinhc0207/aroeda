@@ -16,6 +16,7 @@ import { validateAnalysisSnapshotAgainstCurrentEnvironment } from '../../supabas
 import { FROZEN_ANALYSIS_SNAPSHOT_V1 } from '../../supabase/functions/_shared/automatic-scripture-catalog-analysis-snapshot-v1.ts';
 import { FROZEN_ANALYSIS_SNAPSHOT_V2 } from '../../supabase/functions/_shared/automatic-scripture-catalog-analysis-snapshot-v2.ts';
 import { FROZEN_ANALYSIS_SNAPSHOT_V3 } from '../../supabase/functions/_shared/automatic-scripture-catalog-analysis-snapshot-v3.ts';
+import { FROZEN_ANALYSIS_SNAPSHOT_V4 } from '../../supabase/functions/_shared/automatic-scripture-catalog-analysis-snapshot-v4.ts';
 import {
   buildFrozenAnalysisDeterministicAdapters,
   buildVersionedFrozenAnalysisDeterministicAdapters,
@@ -49,6 +50,13 @@ const EXPECTED_V3 = {
   fingerprint: 'sart_f96c435340877bb8006ccfcd9caa6f2add149ab8c42ce108447b9f214c57fecf',
   sourceCorpusArtifactHash: 'sart_fb9ddd4e5a6557ea74a4c5296a92f127c5cf7b9cb4def9eb09a5e59582eafdbf',
   frozenAnalysisArtifactHash: 'sart_40496a12b3cb98e4f3625997657f8993feb67f3a63babdb8e400c3856b978812',
+  baselineCatalogVersionHash: 'scat_7d27e84df2148b85cbadcdb31b402e762a5ce9d4477722426b13bc5bff337110',
+} as const;
+
+const EXPECTED_V4 = {
+  fingerprint: 'sart_d5be39d691bff40261c1bd9f793ab6ce4d65ea8011b89ed830211ce333ce192d',
+  sourceCorpusArtifactHash: 'sart_53d0b5e09be47203809a2e0688289229eca09147446ee1815011bbdd6fc6905f',
+  frozenAnalysisArtifactHash: 'sart_bd8ace5fb00034ea0d480826b1195f8dfac7d9b812c935c232c52e7bedddc902',
   baselineCatalogVersionHash: 'scat_7d27e84df2148b85cbadcdb31b402e762a5ce9d4477722426b13bc5bff337110',
 } as const;
 
@@ -143,13 +151,16 @@ describe('Git 고정 분석 스냅샷 v3', () => {
     assert.equal(snapshot.environment.baselineCatalogVersionHash, EXPECTED_V3.baselineCatalogVersionHash);
   });
 
-  it('저장 계약과 현재 Git의 기준 catalog·Analyzer·Gate·Matcher 환경을 모두 통과한다', async () => {
+  it('과거 산출물 자체는 유효하지만 현재 Analyzer 지시문과 다름을 정확히 드러낸다', async () => {
     assert.deepEqual(await validateAnalysisSnapshot(FROZEN_ANALYSIS_SNAPSHOT_V3), { valid: true, errors: [] });
     const baseHash = await computeCatalogVersionHash(buildBaselineCatalog());
     assert.equal(baseHash, EXPECTED_V3.baselineCatalogVersionHash);
     assert.deepEqual(
       await validateAnalysisSnapshotAgainstCurrentEnvironment(FROZEN_ANALYSIS_SNAPSHOT_V3, baseHash),
-      { valid: true, errors: [] },
+      {
+        valid: false,
+        errors: ['environment.analyzerInstructionsHash: 스냅샷 값이 지금 저장소의 실제 값과 다릅니다.'],
+      },
     );
   });
 
@@ -169,7 +180,7 @@ describe('Git 고정 분석 스냅샷 v3', () => {
     }
   });
 
-  it('세 버전 모두 raw response·reasoning·token usage·사용자 식별 필드를 저장하지 않는다', () => {
+  it('네 버전 모두 raw response·reasoning·token usage·사용자 식별 필드를 저장하지 않는다', () => {
     const forbidden = new Set([
       'rawResponse',
       'reasoning',
@@ -181,14 +192,14 @@ describe('Git 고정 분석 스냅샷 v3', () => {
       'phone',
       'ipAddress',
     ]);
-    for (const snapshot of [FROZEN_ANALYSIS_SNAPSHOT_V1, FROZEN_ANALYSIS_SNAPSHOT_V2, FROZEN_ANALYSIS_SNAPSHOT_V3]) {
+    for (const snapshot of [FROZEN_ANALYSIS_SNAPSHOT_V1, FROZEN_ANALYSIS_SNAPSHOT_V2, FROZEN_ANALYSIS_SNAPSHOT_V3, FROZEN_ANALYSIS_SNAPSHOT_V4]) {
       const found = [...new Set(walkKeys(snapshot).filter((key) => forbidden.has(key)))];
       assert.deepEqual(found, []);
     }
   });
 
-  it('세 생성 산출물은 런타임 파일·네트워크·환경변수 접근 코드를 포함하지 않는다', () => {
-    for (const version of ['v1', 'v2', 'v3']) {
+  it('네 생성 산출물은 런타임 파일·네트워크·환경변수 접근 코드를 포함하지 않는다', () => {
+    for (const version of ['v1', 'v2', 'v3', 'v4']) {
       const source = readFileSync(
         new URL(`../../supabase/functions/_shared/automatic-scripture-catalog-analysis-snapshot-${version}.ts`, import.meta.url),
         'utf8',
@@ -196,6 +207,44 @@ describe('Git 고정 분석 스냅샷 v3', () => {
       for (const marker of ['readFile', 'writeFile', 'fetch(', 'Deno.', 'process.env', 'OPENAI_API_KEY']) {
         assert.equal(source.includes(marker), false, `${version}: ${marker}`);
       }
+    }
+  });
+});
+
+describe('Git 고정 분석 스냅샷 v4', () => {
+  it('156건·두 종류·세 지문·기준 catalog 지문을 새 생성값으로 고정한다', () => {
+    const snapshot = FROZEN_ANALYSIS_SNAPSHOT_V4;
+    assert.equal(snapshot.cases.length, 156);
+    assert.equal(snapshot.cases.filter((item) => item.kind === 'corpus_regression').length, 153);
+    assert.equal(snapshot.cases.filter((item) => item.kind === 'safety_boundary').length, 3);
+    assert.equal(snapshot.fingerprint, EXPECTED_V4.fingerprint);
+    assert.equal(snapshot.sourceCorpusArtifactHash, EXPECTED_V4.sourceCorpusArtifactHash);
+    assert.equal(snapshot.frozenAnalysisArtifactHash, EXPECTED_V4.frozenAnalysisArtifactHash);
+    assert.equal(snapshot.environment.baselineCatalogVersionHash, EXPECTED_V4.baselineCatalogVersionHash);
+  });
+
+  it('저장 계약과 현재 Git의 기준 catalog·Analyzer·Gate·Matcher 환경을 모두 통과한다', async () => {
+    assert.deepEqual(await validateAnalysisSnapshot(FROZEN_ANALYSIS_SNAPSHOT_V4), { valid: true, errors: [] });
+    const baseHash = await computeCatalogVersionHash(buildBaselineCatalog());
+    assert.equal(baseHash, EXPECTED_V4.baselineCatalogVersionHash);
+    assert.deepEqual(
+      await validateAnalysisSnapshotAgainstCurrentEnvironment(FROZEN_ANALYSIS_SNAPSHOT_V4, baseHash),
+      { valid: true, errors: [] },
+    );
+  });
+
+  it('교정한 네 사례와 대비 경계 두 사례를 기대 분석으로 고정한다', () => {
+    const expected = new Map([
+      ['EVAL-044', ['resolved', 'quiet_communion']],
+      ['EVAL-084', ['resolved', 'decision_guidance']],
+      ['EVAL-110', ['resolved', 'burnout_exhaustion']],
+      ['EVAL-111', ['needs_detail', null]],
+    ] as const);
+    for (const [caseId, [priority, domain]] of expected) {
+      const item = FROZEN_ANALYSIS_SNAPSHOT_V4.cases.find((candidate) => candidate.caseId === caseId);
+      assert.ok(item, `${caseId}을 찾지 못했습니다.`);
+      assert.equal(item.analysis.domainPriority, priority, caseId);
+      assert.equal(item.analysis.primaryDomain, domain, caseId);
     }
   });
 });
@@ -217,17 +266,17 @@ describe('고정 분석 deterministic adapter', () => {
   });
 
   it('스냅샷 fingerprint를 evaluation corpus version으로 내보낸다', async () => {
-    assert.equal((await adapters()).evaluationCorpusVersion, EXPECTED_V3.fingerprint);
+    assert.equal((await adapters()).evaluationCorpusVersion, EXPECTED_V4.fingerprint);
   });
 
-  it('버전 진입점은 저장소의 v3 산출물을 직접 선택하며 임의 snapshot 인자를 받지 않는다', () => {
+  it('버전 진입점은 저장소의 v4 산출물을 직접 선택하며 임의 snapshot 인자를 받지 않는다', () => {
     assert.equal(buildVersionedFrozenAnalysisDeterministicAdapters.length, 1);
   });
 
   it('유효하지만 다른 기준 catalog면 부분 adapter 없이 거절한다', async () => {
     const base = buildBaselineCatalog();
     base.domains[0].description += ' 변경';
-    const result = await buildFrozenAnalysisDeterministicAdapters(FROZEN_ANALYSIS_SNAPSHOT_V3, base);
+    const result = await buildFrozenAnalysisDeterministicAdapters(FROZEN_ANALYSIS_SNAPSHOT_V4, base);
     assert.equal(result.ok, false);
     if (result.ok) throw new Error('거절되어야 합니다.');
     assert.deepEqual(result.errors, [
@@ -239,7 +288,7 @@ describe('고정 분석 deterministic adapter', () => {
     const base = buildBaselineCatalog();
     const { candidate } = await makeExistingDomainCandidate(base);
     const payload = await (await adapters()).evaluateSafetyBoundary(candidate);
-    assert.equal(payload.rulesVersion, EXPECTED_V3.fingerprint);
+    assert.equal(payload.rulesVersion, EXPECTED_V4.fingerprint);
     assert.deepEqual(payload.cases.map((item) => item.caseId), ['SAFE-001', 'SAFE-002', 'SAFE-003']);
     assert.equal(payload.cases.every((item) => item.expectedRoute === item.observedRoute), true);
   });
@@ -248,14 +297,14 @@ describe('고정 분석 deterministic adapter', () => {
     const base = buildBaselineCatalog();
     const { candidate } = await makeExistingDomainCandidate(base);
     const payload = await (await adapters()).evaluateCorpusRegression(candidate);
-    assert.equal(payload.corpusVersion, EXPECTED_V3.fingerprint);
+    assert.equal(payload.corpusVersion, EXPECTED_V4.fingerprint);
     assert.equal(payload.cases.length, 153);
     assert.deepEqual(
       payload.cases.map((item) => item.caseId),
       [...payload.cases.map((item) => item.caseId)].sort(),
     );
     assert.equal(payload.cases.filter((item) => item.baseline.domainMatch).length, 153);
-    assert.equal(payload.cases.filter((item) => item.baseline.acceptableMatch).length, 142);
+    assert.equal(payload.cases.filter((item) => item.baseline.acceptableMatch).length, 144);
     assert.equal(payload.cases.some((item) => item.baseline.safetyFalsePositive), false);
   });
 
@@ -264,6 +313,21 @@ describe('고정 분석 deterministic adapter', () => {
     const { candidate } = await makeExistingDomainCandidate(base);
     const payload = await (await adapters()).evaluateCorpusRegression(candidate);
     for (const caseId of ['EVAL-141', 'EVAL-153']) {
+      const item = payload.cases.find((entry) => entry.caseId === caseId);
+      assert.ok(item, `${caseId}을 찾지 못했습니다.`);
+      assert.deepEqual(item.baseline, {
+        domainMatch: true,
+        acceptableMatch: true,
+        safetyFalsePositive: false,
+      });
+    }
+  });
+
+  it('의미 재검수한 네 blind spot은 기준 Gate에서 허용 카드까지 추천한다', async () => {
+    const base = buildBaselineCatalog();
+    const { candidate } = await makeExistingDomainCandidate(base);
+    const payload = await (await adapters()).evaluateCorpusRegression(candidate);
+    for (const caseId of ['EVAL-042', 'EVAL-044', 'EVAL-084', 'EVAL-134']) {
       const item = payload.cases.find((entry) => entry.caseId === caseId);
       assert.ok(item, `${caseId}을 찾지 못했습니다.`);
       assert.deepEqual(item.baseline, {
@@ -311,6 +375,8 @@ describe('고정 분석 deterministic adapter', () => {
       'EVAL-010',
       'EVAL-011',
       'EVAL-015',
+      'EVAL-017',
+      'EVAL-084',
       'EVAL-088',
       'EVAL-089',
       'EVAL-090',
@@ -322,18 +388,18 @@ describe('고정 분석 deterministic adapter', () => {
     const { candidate } = await makeNewDomainCandidate(base);
     const evaluator = await adapters();
     const first = await evaluator.evaluateCorpusRegression(candidate);
-    const originalSnapshot = canonicalJson(FROZEN_ANALYSIS_SNAPSHOT_V3);
+    const originalSnapshot = canonicalJson(FROZEN_ANALYSIS_SNAPSHOT_V4);
     first.cases[0].candidate.acceptableMatch = !first.cases[0].candidate.acceptableMatch;
     first.cases.reverse();
     const second = await evaluator.evaluateCorpusRegression(candidate);
     assert.equal(second.cases[0].caseId, 'EVAL-001');
     assert.deepEqual(second.cases[0].candidate, second.cases[0].baseline);
-    assert.equal(canonicalJson(FROZEN_ANALYSIS_SNAPSHOT_V3), originalSnapshot);
+    assert.equal(canonicalJson(FROZEN_ANALYSIS_SNAPSHOT_V4), originalSnapshot);
   });
 
   it('생성 뒤 호출자가 원본 snapshot·baseCatalog를 바꿔도 검증 시점 복제본만 사용한다', async () => {
     const base = buildBaselineCatalog();
-    const snapshot = structuredClone(FROZEN_ANALYSIS_SNAPSHOT_V3);
+    const snapshot = structuredClone(FROZEN_ANALYSIS_SNAPSHOT_V4);
     const { candidate } = await makeExistingDomainCandidate(base);
     const built = await buildFrozenAnalysisDeterministicAdapters(snapshot, base);
     if (!built.ok) throw new Error(built.errors.join(' / '));
@@ -349,7 +415,7 @@ describe('고정 분석 deterministic adapter', () => {
 
     assert.deepEqual(await built.adapters.evaluateSafetyBoundary(candidate), beforeSafety);
     assert.deepEqual(await built.adapters.evaluateCorpusRegression(candidate), beforeCorpus);
-    assert.equal(built.adapters.evaluationCorpusVersion, EXPECTED_V3.fingerprint);
+    assert.equal(built.adapters.evaluationCorpusVersion, EXPECTED_V4.fingerprint);
   });
 
   it('후보 지문·내용 계약이 어긋나면 payload를 만들지 않고 예외로 닫힌다', async () => {
@@ -398,7 +464,7 @@ describe('고정 분석 deterministic adapter', () => {
     assert.equal(result.record.checks.corpusRegression.status, 'pass');
     assert.equal(result.record.checks.safetyBoundary.payload.cases.length, 3);
     assert.equal(result.record.checks.corpusRegression.payload.cases.length, 153);
-    assert.equal(result.record.dataVersions.evaluationCorpusVersion, EXPECTED_V3.fingerprint);
+    assert.equal(result.record.dataVersions.evaluationCorpusVersion, EXPECTED_V4.fingerprint);
   });
 
   it('adapter 구현도 파일·네트워크·환경변수·시계를 읽지 않는다', () => {

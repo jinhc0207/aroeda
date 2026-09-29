@@ -530,15 +530,17 @@ describe('scripture-recommendation-evaluation-cases · 존재 가치 비교 의�
   });
 });
 
-describe('scripture-recommendation-evaluation-cases · full 평가 뒤 의미 재검수 6건', () => {
+describe('scripture-recommendation-evaluation-cases · full 평가 뒤 의미 재검수 8건', () => {
   const byId = new Map(recommendationCases.map((item) => [item.id, item]));
   const expected = [
     ['EVAL-012', 'wisdom_discernment', 'SC-010', ['SC-010']],
     ['EVAL-025', 'waiting_unanswered_prayer', 'SC-036', ['SC-036', 'SC-003']],
     ['EVAL-026', 'waiting_unanswered_prayer', 'SC-036', ['SC-036', 'SC-003']],
+    ['EVAL-042', 'burnout_exhaustion', 'SC-023', ['SC-023', 'SC-013']],
     ['EVAL-044', 'quiet_communion', 'SC-005', ['SC-005', 'SC-041']],
     ['EVAL-084', 'decision_guidance', 'SC-002', ['SC-002']],
     ['EVAL-128', 'financial_hardship', 'SC-026', ['SC-026', 'SC-015']],
+    ['EVAL-134', 'financial_hardship', 'SC-027', ['SC-027', 'SC-015']],
   ] as const;
 
   it('각 사례의 영역·preferred·acceptable을 문장 의미에 맞게 고정한다', () => {
